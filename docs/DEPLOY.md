@@ -52,4 +52,4 @@ Dashboard Cloudflare → Workers & Pages → ledgy → Settings → Domains & Ro
 - Gli indirizzi `/api/in/<token>` sono pubblici per scelta: è da lì che i telefoni mandano le notifiche. Ogni token vale per un solo telefono e si revoca da "Cattura automatica".
 - Tutto il resto dell'API richiede la password.
 - Il database si esporta in qualsiasi momento da Altro → I tuoi dati, oppure con `npx wrangler d1 export ledgy --remote --output backup.sql`.
-- D1 tiene in automatico la cronologia degli ultimi 30 giorni: per tornare indietro `npx wrangler d1 time-travel restore ledgy --timestamp <data ISO>`.
+- D1 tiene in automatico la cronologia (7 giorni sul piano gratuito, 30 su quello a pagamento): per tornare indietro `npx wrangler d1 time-travel restore ledgy --timestamp <data ISO>`.
