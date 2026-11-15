@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { appLabel } from '../shared/apps';
+import { appLabel, guessAppFromTitle } from '../shared/apps';
 import { isLikelyDuplicate, sha256Hex } from '../shared/dedupe';
 import { formatMoney, roundMilli, toMilli } from '../shared/money';
 import { cleanMerchantName, parseNotification, parseWithParser, type AiHint, type ParserDef } from '../shared/notification';
@@ -51,7 +51,8 @@ export interface CaptureResult {
 }
 
 /** Dalla notifica al movimento: lettura, cambio, regole, doppioni. */
-export async function processCapture(db: D1Database, deviceId: string | null, p: CapturePayload, existingCaptureId?: string): Promise<CaptureResult> {
+export async function processCapture(db: D1Database, deviceId: string | null, payload: CapturePayload, existingCaptureId?: string): Promise<CaptureResult> {
+  const p = { ...payload, app: payload.app || guessAppFromTitle(payload.title) };
   const text = (p.text ?? '').toString().trim();
   if (!text) bad('Testo della notifica mancante');
   const hint: AiHint | null = p.hint ?? (p.amount != null ? { amount: p.amount, currency: p.currency, merchant: p.merchant, category: p.category } : null);

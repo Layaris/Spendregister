@@ -12,6 +12,22 @@ Funzioni scelte, decisioni e note tecniche: [docs/funzioni.md](docs/funzioni.md)
 - In GitHub Actions ogni `actions/upload-artifact` usa `retention-days: 1`.
 - Repository pulito: niente build, file generati, screenshot o file temporanei nel repo.
 
+## Comandi
+
+- `npm test`: test della logica condivisa (importi, lettura notifiche, regole, doppioni).
+- `npm run typecheck`: controllo dei tipi di web app e Worker.
+- `npm run build`: compila la web app in `dist/`.
+- Sviluppo in locale: `npm run db:migrate:local`, un file `.dev.vars` con `APP_PASSWORD=...`, poi `npm run build && npx wrangler dev`.
+- `python3 tools/shortcut/build_shortcut.py`: rigenera il comando iPhone non firmato in `tools/shortcut/out/` (ignorata da git).
+- Pubblicazione: [docs/DEPLOY.md](docs/DEPLOY.md).
+
+## Struttura
+
+- `shared/`: logica pura usata da Worker, web app e test (importi, lettura notifiche, regole, doppioni).
+- `worker/`: API su Hono e D1. `capture.ts` è il percorso notifica → movimento.
+- `src/`: web app React. Navigazione con l'hash (`#/movimenti`, `#/m/<id>`).
+- `migrations/`: schema D1. Importi interi in millesimi; segno negativo = uscita. `occurred_at` tiene il fuso del telefono, `occurred_utc` serve per ordinare e confrontare.
+
 ## Architettura decisa
 
 - Frontend: React + Capacitor, un solo codice per web (PWA), Android e iOS. Parti native piccole in Kotlin (lettore notifiche) e Swift (App Intents, estensione Condividi).
