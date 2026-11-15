@@ -18,7 +18,7 @@ Funzioni scelte, decisioni e note tecniche: [docs/funzioni.md](docs/funzioni.md)
 - `npm run typecheck`: controllo dei tipi di web app e Worker.
 - `npm run build`: compila la web app in `dist/`.
 - Sviluppo in locale: `npm run db:migrate:local`, un file `.dev.vars` con `APP_PASSWORD=...`, poi `npm run build && npx wrangler dev`.
-- `python3 tools/shortcut/build_shortcut.py`: rigenera il comando iPhone non firmato in `tools/shortcut/out/` (ignorata da git).
+- `python3 tools/shortcut/build_shortcut.py`: rigenera il comando iPhone non firmato in `tools/shortcut/out/` (ignorata da git). La versione firmata con HubSign, servita dall'app a `/ledgy.shortcut`, è `public/ledgy.shortcut`: se cambia lo script, va rifirmata e sostituita.
 - Pubblicazione: [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Struttura

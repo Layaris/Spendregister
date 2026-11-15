@@ -21,7 +21,7 @@ export CLOUDFLARE_ACCOUNT_ID="<account id>"
 
 # 1. Database D1: copia il "database_id" stampato dal comando
 npx wrangler d1 create ledgy
-# 2. Metti quel valore in wrangler.jsonc, al posto di 00000000-0000-0000-0000-000000000000
+# 2. Metti quel valore in wrangler.jsonc (già fatto per il database attuale: 48dc70af-…)
 # 3. Crea le tabelle
 npx wrangler d1 migrations apply ledgy --remote
 # 4. Compila e pubblica (stampa l'indirizzo https://ledgy.<sottodominio>.workers.dev)

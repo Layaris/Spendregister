@@ -12,7 +12,7 @@
     {
       "binding": "DB",
       "database_name": "ledgy",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "48dc70af-3f0d-46ab-a832-e9661ccf63b2",
       "migrations_dir": "migrations"
     }
   ],
