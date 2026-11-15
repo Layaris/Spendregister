@@ -33,6 +33,23 @@ Brainstorm concluso il 15 novembre 2026. Il proprietario ha scelto ogni funzione
 - Senza app nativa: azione "Ottieni contenuto URL" con POST JSON verso il webhook.
 - Con app nativa: App Intent "Aggiungi spesa" in Swift che salva o invia da solo, senza dipendere dal JavaScript (plugin di riferimento: `@capgo/capacitor-app-intents`).
 
+#### Il comando attuale del proprietario ("Wallet Multivaluta EUR v5", 72 azioni)
+
+- Parte dall'automazione "Notifica" e riceve il testo completo della notifica.
+- Usa "Usa modello" con Apple Intelligence per estrarre `amount`, `currency`, `merchant` e `category` come dizionario. È gratuito e resta sul telefono.
+- Controlli da riportare nel server: formato dell'importo (regex per migliaia e decimali), codice valuta di 3 lettere, importo effettivamente presente nel testo della notifica (contro le invenzioni del modello), valute con 3 decimali (BHD, IQD, JOD, KWD, LYD, OMR, TND), separatore ambiguo tipo `1.234` o `1,234`, importo maggiore di zero, arrotondamento al centesimo.
+- Cambio: `GET https://api.frankfurter.dev/v2/rate/{VALUTA}/EUR`, campo `rate`.
+- Alla fine chiama l'App Intent di Wallet `com.budgetbakers.BudgetBakers.AddTransactionIntent` con conto "Contanti", `merchantName` e `rawAmount` in EUR. La categoria letta da Apple Intelligence non viene usata.
+
+#### Comando Ledgy e installazione con un tocco
+
+- Il comando Ledgy riparte da quello attuale: tiene la lettura con Apple Intelligence, ma invece di Wallet invia al webhook il testo grezzo, l'app di provenienza, l'ora e la lettura di Apple Intelligence. Il server applica i suoi lettori per banca, i controlli, le regole, il cambio e l'anti-duplicati. Così su iPhone non si consuma la quota Gemini.
+- Se l'invio fallisce, il comando salva la spesa in un file sul telefono e la rimanda alla volta successiva.
+- Il file firmato è generico, senza token. Dopo l'installazione la web app passa il token al comando (pulsante "Attiva" che lo esegue con il token come input) e il comando lo salva sul telefono. Il token non passa da servizi di terzi.
+- Da iOS 27 un file di comando può contenere anche la sua automazione (`WFWorkflowTriggers`, per esempio `WFNotificationTrigger` con `SelectedApps`): un utente ha verificato a settembre 2026 che reimportando il file l'automazione funziona. Fonte: https://github.com/electrikmilk/cherri/issues/214
+- Firma: HubSign di RoutineHub (richiede l'abbonamento Developer di RoutineHub) firma via API o modulo web, ma a novembre 2026 toglie `WFWorkflowTriggers`: con HubSign l'automazione va creata a mano, con una guida. Firmando su un Mac con macOS 27 l'automazione resta nel file.
+- Android: la web app genera il file della macro MacroDroid già configurato con indirizzo e token; un tocco lo apre in MacroDroid. Formato del file `.macro` e flusso di importazione da verificare su un'esportazione reale.
+
 ### Cattura su Android
 
 - `NotificationListenerService` nell'app nativa.
