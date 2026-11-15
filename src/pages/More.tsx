@@ -208,10 +208,71 @@ function SettingsSection() {
         <ErrorBox error={error} />
         <button className="btn" disabled={busy || !pw.current || !pw.next}>Cambia password</button>
       </form>
-      <span className="muted" style={{ fontSize: 13 }}>
-        Recupero via email: {store.settings.mail_configured ? 'attivo. Dalla schermata di accesso puoi chiedere un link per una nuova password.' : 'non ancora configurato sul server (servono RESEND_API_KEY e RECOVERY_EMAIL).'}
-      </span>
+      <RecoveryCode />
     </section>
+  );
+}
+
+/** Codice di recupero, come in Multifolio: serve se dimentichi la password. Si vede una volta sola. */
+function RecoveryCode() {
+  const store = useStore();
+  const [asking, setAsking] = useState(false);
+  const [password, setPassword] = useState('');
+  const [code, setCode] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const exists = !!store.settings.recovery_created_at;
+
+  const create = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    try {
+      const r = await api<{ code: string }>('/recovery-code', { method: 'POST', json: { password } });
+      setCode(r.code);
+      setPassword('');
+      setAsking(false);
+      await store.refresh();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(code ?? ''); store.toast('Codice copiato'); } catch { store.toast('Copia non riuscita: selezionalo a mano'); }
+  };
+
+  return (
+    <div className="stack" style={{ gap: 8 }}>
+      <span className="label">Codice di recupero</span>
+      {code ? (
+        <div className="stack" style={{ gap: 8, background: 'var(--warn-soft)', borderRadius: 14, padding: 12 }}>
+          <span style={{ fontSize: 14, fontWeight: 600 }}>Salvalo adesso nel portachiavi o scrivilo su carta: non lo vedrai più.</span>
+          <div className="raw" style={{ fontSize: 17, textAlign: 'center', letterSpacing: '0.06em', background: 'var(--card)' }}>{code}</div>
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn grow" onClick={copy}>Copia</button>
+            <button className="btn primary grow" onClick={() => setCode(null)}>L'ho salvato</button>
+          </div>
+        </div>
+      ) : (
+        <span className="muted" style={{ fontSize: 13 }}>
+          {exists
+            ? `Attivo dal ${new Date(store.settings.recovery_created_at!).toLocaleDateString('it-IT')}. Se dimentichi la password, nella schermata di accesso premi "Password dimenticata?" e inserisci il codice.`
+            : 'Non ancora creato. Senza codice, se dimentichi la password serve il tuo agente su Cloudflare per reimpostarla.'}
+        </span>
+      )}
+      {!code && (asking ? (
+        <form className="stack" style={{ gap: 8 }} onSubmit={create}>
+          <input className="input" type="password" autoComplete="current-password" placeholder="Password attuale" aria-label="Password attuale per creare il codice" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
+          {exists && <span className="muted" style={{ fontSize: 13 }}>Il codice vecchio smetterà di valere.</span>}
+          <ErrorBox error={error} />
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn primary grow" disabled={!password}>Crea il codice</button>
+            <button type="button" className="btn" onClick={() => { setAsking(false); setError(null); }}>Annulla</button>
+          </div>
+        </form>
+      ) : (
+        <button className="btn" onClick={() => setAsking(true)}>{exists ? 'Crea un nuovo codice di recupero' : 'Crea il codice di recupero'}</button>
+      ))}
+    </div>
   );
 }
 

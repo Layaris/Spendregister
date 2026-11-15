@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { changePassword, login, logout, requestReset, requireSession, resetPassword } from './auth';
+import { changePassword, createRecoveryCode, login, logout, recoverWithCode, requireSession } from './auth';
 import { backupApi } from './backup';
 import { captureAdminApi, inboundApi } from './capture';
 import { catalogApi } from './catalog';
@@ -34,10 +34,10 @@ app.post('/api/logout', async (c) => {
   await logout(c);
   return c.json({ ok: true });
 });
-app.post('/api/password/forgot', async (c) => c.json({ ok: true, ...(await requestReset(c)) }));
-app.post('/api/password/reset', async (c) => {
-  const b = await body<{ token?: string; password?: string }>(c);
-  await resetPassword(c, b.token ?? '', b.password ?? '');
+// Password dimenticata: codice di recupero + nuova password (entra subito).
+app.post('/api/password/recover', async (c) => {
+  const b = await body<{ code?: string; password?: string }>(c);
+  await recoverWithCode(c, b.code ?? '', b.password ?? '');
   return c.json({ ok: true });
 });
 
@@ -47,6 +47,10 @@ app.route('/api/in', inboundApi);
 const priv = new Hono<{ Bindings: Env }>();
 priv.use('*', requireSession);
 priv.get('/me', (c) => c.json({ ok: true }));
+priv.post('/recovery-code', async (c) => {
+  const b = await body<{ password?: string }>(c);
+  return c.json({ code: await createRecoveryCode(c, b.password ?? '') });
+});
 priv.put('/password', async (c) => {
   const b = await body<{ current?: string; next?: string }>(c);
   await changePassword(c, b.current ?? '', b.next ?? '');
@@ -64,13 +68,12 @@ app.all('/api/*', (c) => c.json({ error: 'Percorso non trovato' }, 404));
 export default {
   fetch: app.fetch,
   async scheduled(_controller: ScheduledController, env: Env) {
-    // Pulizia notturna: sessioni e link scaduti, tentativi vecchi, notifiche scartate da oltre 90 giorni.
+    // Pulizia notturna: sessioni scadute, tentativi vecchi, notifiche scartate da oltre 90 giorni.
     const now = new Date().toISOString();
     const day = new Date(Date.now() - 86400_000).toISOString();
     const old = new Date(Date.now() - 90 * 86400_000).toISOString();
     await env.DB.batch([
       env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(now),
-      env.DB.prepare('DELETE FROM password_resets WHERE expires_at < ?').bind(day),
       env.DB.prepare('DELETE FROM login_attempts WHERE at < ?').bind(day),
       env.DB.prepare("DELETE FROM captures WHERE received_at < ? AND status IN ('duplicate', 'ignored', 'unrecognized')").bind(old),
     ]);

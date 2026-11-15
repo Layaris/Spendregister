@@ -28,7 +28,7 @@ export default async function setup(project: TestProject) {
   writeFileSync(join(dir, 'none.env'), '');
   proc = spawn('npx', [
     'wrangler', 'dev', '--port', String(PORT), '--ip', '127.0.0.1', '--persist-to', dir, '--env-file', join(dir, 'none.env'),
-    '--var', `APP_PASSWORD:${TEST_PASSWORD}`, '--var', 'MAIL_DRY_RUN:1', '--var', 'FX_FIXED:IDR:0.00005,SGD:0.7,USD:0.9',
+    '--var', `APP_PASSWORD:${TEST_PASSWORD}`, '--var', 'FX_FIXED:IDR:0.00005,SGD:0.7,USD:0.9',
   ], { stdio: 'ignore', env: { ...process.env, CI: '1' }, detached: true });
   const base = `http://127.0.0.1:${PORT}`;
   let ready = false;

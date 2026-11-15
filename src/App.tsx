@@ -4,7 +4,7 @@ import { Icon } from './icons';
 import { Add } from './pages/Add';
 import { Capture } from './pages/Capture';
 import { Home } from './pages/Home';
-import { Login, ResetPassword } from './pages/Login';
+import { Login } from './pages/Login';
 import { ComingSoon, More } from './pages/More';
 import { Movements } from './pages/Movements';
 import { Review } from './pages/Review';
@@ -17,14 +17,12 @@ import { StoreProvider, useStore } from './store';
 export function App() {
   const [auth, setAuth] = useState<'checking' | 'in' | 'out'>('checking');
   const logout = useCallback(() => setAuth('out'), []);
-  const [page, token] = useRoute();
 
   useEffect(() => {
     setUnauthorizedHandler(logout);
     api('/me').then(() => setAuth('in')).catch(() => setAuth('out'));
   }, [logout]);
 
-  if (page === 'reset' && token) return <ResetPassword token={token} onDone={() => setAuth('out')} />;
   if (auth === 'checking') return <main className="app"><div className="empty">Caricamento…</div></main>;
   if (auth === 'out') return <Login onDone={() => setAuth('in')} />;
   return (

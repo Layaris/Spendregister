@@ -1,4 +1,4 @@
-// Test d'integrazione: il vero Worker con D1 locale, tassi fissi (IDR 0.00005, SGD 0.7) e email simulate.
+// Test d'integrazione: il vero Worker con D1 locale e tassi fissi (IDR 0.00005, SGD 0.7).
 // I test sono in ordine e condividono il database.
 import { beforeAll, describe, expect, inject, it } from 'vitest';
 
@@ -69,7 +69,7 @@ describe('accesso', () => {
     expect(b.accounts.map((a: any) => a.name)).toEqual(['Contanti']);
     expect(b.categories.length).toBeGreaterThan(50);
     expect(b.settings.timezone).toBe('Asia/Makassar');
-    expect(b.settings.mail_configured).toBe(true);
+    expect(b.settings.recovery_created_at).toBeNull();
     expect((await me.get('/api/rules')).json.items.map((r: any) => r.name)).toContain('Grab');
   });
 });
@@ -432,27 +432,47 @@ describe('password', () => {
     expect((await new Client('10.2.2.2').post('/api/login', { password: PASSWORD })).status).toBe(401);
     expect((await new Client('10.2.2.3').post('/api/login', { password: NEW_PASSWORD })).status).toBe(200);
   });
-  it('recupera la password con il link via email (una sola volta)', async () => {
-    const forgot = await new Client().post('/api/password/forgot');
-    expect(forgot.status).toBe(200);
-    const token = forgot.json.debug_link.split('#/reset/')[1];
-    expect((await new Client().post('/api/password/reset', { token, password: 'corta' })).status).toBe(400);
-    expect((await new Client().post('/api/password/reset', { token, password: 'recuperata-dalla-mail-789' })).status).toBe(200);
-    expect((await new Client().post('/api/password/reset', { token, password: 'di-nuovo-stesso-link-0' })).status).toBe(400);
-    expect((await me.get('/api/me')).status).toBe(401);
-    const fresh = new Client('10.3.3.3');
-    expect((await fresh.post('/api/login', { password: 'recuperata-dalla-mail-789' })).status).toBe(200);
+  it('senza codice di recupero il recupero non è possibile', async () => {
+    expect((await new Client('10.5.5.1').post('/api/password/recover', { code: 'AAAA-BBBB-CCCC-DDDD-EEEE-FFFF', password: 'qualunque-cosa-1' })).status).toBe(400);
   });
-  it('limita le richieste di recupero', async () => {
-    const c = new Client();
-    await c.post('/api/password/forgot');
-    await c.post('/api/password/forgot');
-    expect((await c.post('/api/password/forgot')).status).toBe(429);
+  let code = '';
+  it('crea il codice di recupero solo con la password giusta e lo mostra una volta', async () => {
+    expect((await me.post('/api/recovery-code', { password: 'sbagliata' })).status).toBe(400);
+    const r = await me.post('/api/recovery-code', { password: NEW_PASSWORD });
+    expect(r.status).toBe(200);
+    code = r.json.code;
+    expect(code).toMatch(/^[A-HJ-NP-Z2-9]{4}(-[A-HJ-NP-Z2-9]{4}){5}$/);
+    expect((await me.get('/api/bootstrap')).json.settings.recovery_created_at).toBeTruthy();
+    expect(JSON.stringify((await me.get('/api/backup/export?table=settings')).json)).not.toContain('recovery');
+  });
+  it('un codice nuovo annulla il vecchio', async () => {
+    const old = code;
+    code = (await me.post('/api/recovery-code', { password: NEW_PASSWORD })).json.code;
+    expect(code).not.toBe(old);
+    expect((await new Client('10.5.5.2').post('/api/password/recover', { code: old, password: 'con-il-vecchio-codice-1' })).status).toBe(401);
+  });
+  it('recupera la password con il codice: entra subito e chiude le altre sessioni', async () => {
+    const c = new Client('10.5.5.3');
+    expect((await c.post('/api/password/recover', { code, password: 'corta' })).status).toBe(400);
+    // Minuscole e spazi vanno bene: il codice si normalizza.
+    const loose = code.toLowerCase().replace(/-/g, ' ');
+    expect((await c.post('/api/password/recover', { code: loose, password: 'recuperata-con-il-codice-789' })).status).toBe(200);
+    expect((await c.get('/api/me')).status).toBe(200);
+    expect((await me.get('/api/me')).status).toBe(401);
+    expect((await new Client('10.3.3.3').post('/api/login', { password: NEW_PASSWORD })).status).toBe(401);
+    expect((await new Client('10.3.3.4').post('/api/login', { password: 'recuperata-con-il-codice-789' })).status).toBe(200);
+    // Il codice resta valido per una prossima volta.
+    expect((await new Client('10.5.5.4').post('/api/password/recover', { code, password: 'recuperata-con-il-codice-789' })).status).toBe(200);
+  });
+  it('blocca chi prova codici a raffica', async () => {
+    const attacker = new Client('10.8.8.8');
+    for (let i = 0; i < 10; i++) expect((await attacker.post('/api/password/recover', { code: `ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZ${i}`, password: 'tentativo-lungo-1' })).status).toBe(401);
+    expect((await attacker.post('/api/password/recover', { code, password: 'tentativo-lungo-1' })).status).toBe(429);
   });
   it('blocca chi sbaglia la password troppe volte', async () => {
     const attacker = new Client('10.9.9.9');
     for (let i = 0; i < 10; i++) expect((await attacker.post('/api/login', { password: `tentativo-${i}` })).status).toBe(401);
-    expect((await attacker.post('/api/login', { password: 'recuperata-dalla-mail-789' })).status).toBe(429);
-    expect((await new Client('10.4.4.4').post('/api/login', { password: 'recuperata-dalla-mail-789' })).status).toBe(200);
+    expect((await attacker.post('/api/login', { password: 'recuperata-con-il-codice-789' })).status).toBe(429);
+    expect((await new Client('10.4.4.4').post('/api/login', { password: 'recuperata-con-il-codice-789' })).status).toBe(200);
   });
 });

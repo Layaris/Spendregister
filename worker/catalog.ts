@@ -3,8 +3,7 @@ import { roundMilli, toMilli } from '../shared/money';
 import { evaluateRules, type RuleDefinition } from '../shared/rules';
 import { isValidTimeZone } from '../shared/time';
 import { getEurRate } from './fx';
-import { bad, body, getTimeZone, newId, notFound, nowIso, runBatch, setSetting, type Env } from './lib';
-import { mailConfigured } from './mail';
+import { bad, body, getSetting, getTimeZone, newId, notFound, nowIso, runBatch, setSetting, type Env } from './lib';
 import { loadRules, ruleInputFromTx, type TxRow } from './transactions';
 
 export const catalogApi = new Hono<{ Bindings: Env }>();
@@ -34,7 +33,7 @@ catalogApi.get('/bootstrap', async (c) => {
     categories: categories.results,
     labels: labels.results,
     review_count: review?.n ?? 0,
-    settings: { timezone: await getTimeZone(db), mail_configured: mailConfigured(c.env) },
+    settings: await publicSettings(db),
   });
 });
 
@@ -211,7 +210,11 @@ catalogApi.post('/rules/:id/apply', async (c) => {
 
 // ---- Impostazioni ----
 
-catalogApi.get('/settings', async (c) => c.json({ timezone: await getTimeZone(c.env.DB), mail_configured: mailConfigured(c.env) }));
+async function publicSettings(db: D1Database) {
+  return { timezone: await getTimeZone(db), recovery_created_at: await getSetting(db, 'recovery_created_at') };
+}
+
+catalogApi.get('/settings', async (c) => c.json(await publicSettings(c.env.DB)));
 
 catalogApi.put('/settings', async (c) => {
   const b = await body<{ timezone?: string }>(c);

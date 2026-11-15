@@ -2,7 +2,7 @@
 // Uso: avvia il Worker (vedi CLAUDE.md), poi
 //   NODE_PATH=$(npm root -g) E2E_URL=http://127.0.0.1:8787 E2E_PASSWORD=... node tests/e2e/smoke.mjs
 // Controlla che ogni schermata si apra senza errori e senza uscire dallo schermo, e prova i flussi
-// principali: accesso, revisione, inserimento, regola, impostazioni, backup (esporta e aggiungi).
+// principali: accesso, recupero, revisione, inserimento, regola, impostazioni, codice di recupero, backup.
 import { createRequire } from 'node:module';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -24,6 +24,9 @@ page.on('console', (m) => { if (m.type() === 'error' && !m.text().includes('401'
 
 await page.goto(BASE);
 check(await page.isVisible('text=Password dimenticata?'), 'la schermata di accesso offre il recupero');
+await page.click('text=Password dimenticata?');
+check(await page.isVisible('text=Codice di recupero'), '"Password dimenticata?" chiede il codice di recupero');
+await page.click("text=Torna all'accesso");
 await page.fill('input[type=password]', PASSWORD);
 await page.click('button:has-text("Entra")');
 await page.waitForSelector('.tabbar');
@@ -79,6 +82,16 @@ await page.waitForTimeout(600);
 check((await api('/api/settings')).timezone === 'Asia/Jakarta', 'salva il fuso orario');
 await page.selectOption('select:near(:text("Fuso orario"))', 'Asia/Makassar');
 await page.waitForTimeout(400);
+
+// Codice di recupero: si crea con la password e si vede una volta sola.
+await page.click('button:has-text("Crea il codice di recupero")');
+await page.fill('input[aria-label="Password attuale per creare il codice"]', PASSWORD);
+await page.click('button:has-text("Crea il codice")');
+await page.waitForSelector('text=non lo vedrai più');
+const shown = (await page.textContent('.raw')).trim();
+check(/^[A-Z2-9]{4}(-[A-Z2-9]{4}){5}$/.test(shown), 'mostra il codice di recupero nel formato giusto');
+await page.click("button:has-text(\"L'ho salvato\")");
+check(await page.isVisible('text=Attivo dal'), 'dopo il salvataggio il codice risulta attivo e non è più visibile');
 
 // Backup: esporta e reimporta in "aggiungi" (non deve duplicare nulla).
 const before = (await api('/api/transactions?limit=500')).items.length;

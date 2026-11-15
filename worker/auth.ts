@@ -2,7 +2,6 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { MiddlewareHandler } from 'hono';
 import { sha256Hex } from '../shared/dedupe';
 import { getSetting, HttpError, nowIso, randomToken, setSetting, type AppContext, type Env } from './lib';
-import { mailConfigured, sendMail } from './mail';
 
 const COOKIE = 'ledgy_session';
 const DAYS = 90;
@@ -115,32 +114,45 @@ export async function changePassword(c: AppContext, current: string, next: strin
   await c.env.DB.prepare('DELETE FROM sessions WHERE id <> ?').bind(keep ?? '').run();
 }
 
-/** Recupero: il link va sempre e solo all'indirizzo configurato sul server. */
-export async function requestReset(c: AppContext): Promise<{ debug_link?: string }> {
-  const env = c.env;
-  if (!mailConfigured(env)) throw new HttpError(503, 'Il recupero via email non è configurato sul server.');
-  if ((await recentAttempts(env.DB, 'reset', 60)) >= 3) throw new HttpError(429, "Hai già chiesto 3 link nell'ultima ora. Controlla la posta o riprova più tardi.");
-  await env.DB.prepare("INSERT INTO login_attempts (key, at) VALUES ('reset', ?)").bind(nowIso()).run();
-  const token = randomToken(32);
-  const expires = new Date(Date.now() + 30 * 60_000).toISOString();
-  await env.DB.prepare('INSERT INTO password_resets (token_hash, created_at, expires_at) VALUES (?, ?, ?)').bind(await sha256Hex(token), nowIso(), expires).run();
-  const link = `${new URL(c.req.url).origin}/#/reset/${token}`;
-  await sendMail(env, 'Ledgy: nuova password',
-    `Hai chiesto di reimpostare la password di Ledgy.\n\nApri questo link entro 30 minuti:\n${link}\n\nSe non sei stato tu, ignora questa email: la password attuale resta valida.`);
-  return env.MAIL_DRY_RUN === '1' ? { debug_link: link } : {};
+// ---- Codice di recupero (come in Multifolio): niente email, niente servizi esterni ----
+
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // senza 0/O e 1/I, che si confondono
+
+/** 24 caratteri (circa 120 bit) in gruppi da 4: ABCD-EFGH-… */
+export function newRecoveryCode(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  const chars = [...bytes].map((b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
+  return chars.match(/.{4}/g)!.join('-');
 }
 
-export async function resetPassword(c: AppContext, token: string, password: string): Promise<void> {
+function normalizeCode(code: string): string {
+  return code.toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+/** Crea un nuovo codice (il vecchio smette di valere). Serve la password attuale. Il codice si vede solo ora. */
+export async function createRecoveryCode(c: AppContext, password: string): Promise<string> {
+  if (!(await checkPassword(c.env, password))) throw new HttpError(400, 'La password attuale non è corretta');
+  const code = newRecoveryCode();
+  await setSetting(c.env.DB, 'recovery_hash', await hashPassword(normalizeCode(code)));
+  await setSetting(c.env.DB, 'recovery_created_at', nowIso());
+  return code;
+}
+
+/** Password dimenticata: codice di recupero + nuova password. Chiude tutte le sessioni e apre questa. */
+export async function recoverWithCode(c: AppContext, code: string, password: string): Promise<void> {
   const db = c.env.DB;
+  const key = clientKey(c);
+  if ((await recentAttempts(db, key, WINDOW_MIN)) >= MAX_PER_IP || (await recentAttempts(db, 'tutti', WINDOW_MIN)) >= MAX_TOTAL) {
+    throw new HttpError(429, `Troppi tentativi sbagliati. Riprova tra ${WINDOW_MIN} minuti.`);
+  }
+  const stored = await getSetting(db, 'recovery_hash');
+  if (!stored) throw new HttpError(400, 'Non hai ancora creato un codice di recupero. Il tuo agente può reimpostare la password da Cloudflare (vedi docs/DEPLOY.md).');
+  if (normalizeCode(code).length !== 24 || !(await verifyHash(stored, normalizeCode(code)))) {
+    await recordAttempt(db, key);
+    throw new HttpError(401, 'Codice di recupero errato');
+  }
   if (password.length < MIN_PASSWORD) throw new HttpError(400, `La nuova password deve avere almeno ${MIN_PASSWORD} caratteri`);
-  const hash = await sha256Hex(token);
-  const row = await db.prepare('SELECT expires_at, used_at FROM password_resets WHERE token_hash = ?').bind(hash).first<{ expires_at: string; used_at: string | null }>();
-  if (!row || row.used_at || row.expires_at < nowIso()) throw new HttpError(400, 'Il link non è valido o è scaduto. Chiedine uno nuovo.');
   await setSetting(db, 'password_hash', await hashPassword(password));
-  await db.batch([
-    db.prepare('UPDATE password_resets SET used_at = ? WHERE token_hash = ?').bind(nowIso(), hash),
-    db.prepare('DELETE FROM sessions'),
-    // Sblocca gli accessi, ma tiene il conteggio dei link chiesti.
-    db.prepare("DELETE FROM login_attempts WHERE key <> 'reset'"),
-  ]);
+  await db.batch([db.prepare('DELETE FROM sessions'), db.prepare('DELETE FROM login_attempts')]);
+  await startSession(c);
 }

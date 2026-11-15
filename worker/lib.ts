@@ -5,12 +5,6 @@ export interface Env {
   ASSETS: Fetcher;
   /** Password iniziale; dopo un cambio dall'app vale quella salvata nel database. */
   APP_PASSWORD?: string;
-  /** Recupero password via email (Resend). */
-  RESEND_API_KEY?: string;
-  RECOVERY_EMAIL?: string;
-  MAIL_FROM?: string;
-  /** Solo per i test: non invia email e restituisce il link di recupero. */
-  MAIL_DRY_RUN?: string;
   /** Solo per i test: tassi fissi, es. "IDR:0.00005,SGD:0.7". */
   FX_FIXED?: string;
 }

@@ -61,13 +61,13 @@ curl -s -o /dev/null -w "%{http_code}\n" -X POST https://ledgy.<sottodominio>.wo
   -H 'content-type: application/json' -d '{"password":"prova-sbagliata"}'          # 401; 500 = migrazione mancante, 503 = APP_PASSWORD mancante
 ```
 
-Tabelle attese: accounts, captures, categories, devices, fx_rates, labels, login_attempts, parsers, password_resets, rules, sessions, settings, transaction_labels, transactions (più le tabelle interne `d1_migrations` e `_cf_KV`).
+Tabelle attese: accounts, captures, categories, devices, fx_rates, labels, login_attempts, parsers, rules, sessions, settings, transaction_labels, transactions (più le tabelle interne `d1_migrations` e `_cf_KV`).
 
 ## Problemi tipici
 
 | Sintomo | Causa | Rimedio |
 |---|---|---|
-| Accesso: "Errore interno del server" | Codice nuovo senza la migrazione `0002_auth_backup` | `npx wrangler d1 migrations apply ledgy --remote` |
+| Accesso: "Errore interno del server" | Codice nuovo senza le migrazioni `0002`/`0003` | `npx wrangler d1 migrations apply ledgy --remote` |
 | Accesso: "Password non configurata sul server" | Manca il secret `APP_PASSWORD` | `npx wrangler secret put APP_PASSWORD` |
 | `git pull` si ferma per modifiche locali | `wrangler.jsonc` modificato a mano | `git reset --hard origin/claude/friendly-johnson-c89c0f` |
 | Due database "ledgy" o id diverso in `wrangler.jsonc` | `d1 create` rifatto per errore | Tenere quello con id `48dc70af-…`; l'altro si cancella solo se vuoto |
@@ -79,25 +79,32 @@ Tabelle attese: accounts, captures, categories, devices, fx_rates, labels, login
 - **Database**: Storage & Databases → D1 → **ledgy**.
 - **Password e chiavi**: Workers & Pages → ledgy → Settings → Variables and Secrets.
 
-## Recupero password via email (facoltativo ma consigliato)
+## Password e recupero
 
-Il link per una nuova password parte con [Resend](https://resend.com) (piano gratuito) e arriva sempre e solo all'indirizzo `RECOVERY_EMAIL`.
-
-1. Registrati su resend.com con l'indirizzo email su cui vuoi ricevere il link.
-2. API Keys → Create API Key (permesso "Sending access") e copiala.
-3. Imposta i due segreti:
+- `APP_PASSWORD` (secret) è la password iniziale. Dopo un cambio da Altro → Impostazioni, o un recupero, vale quella nuova, salvata nel database come impronta (PBKDF2).
+- **Recupero, come in Multifolio, senza email**: in Altro → Impostazioni si crea un *codice di recupero* (24 caratteri, mostrato una volta sola). Se si dimentica la password: schermata di accesso → "Password dimenticata?" → codice + nuova password. Nessun servizio esterno da configurare.
+- Dopo 10 tentativi sbagliati (password o codice) dallo stesso indirizzo IP l'accesso si blocca per 15 minuti.
+- **Emergenza** (persi sia la password sia il codice): l'agente reimposta la password iniziale e cancella quella salvata nel database, così torna a valere il secret.
 
 ```bash
-npx wrangler secret put RESEND_API_KEY     # la chiave appena creata
-npx wrangler secret put RECOVERY_EMAIL     # lo stesso indirizzo dell'account Resend
+npx wrangler secret put APP_PASSWORD
+npx wrangler d1 execute ledgy --remote --command "DELETE FROM settings WHERE key = 'password_hash'"
 ```
 
-Senza un dominio verificato su Resend il mittente è `onboarding@resend.dev`, che può scrivere solo all'indirizzo dell'account Resend: per questo `RECOVERY_EMAIL` deve essere quello. Con un dominio verificato si può impostare anche `MAIL_FROM` (per esempio `Ledgy <ledgy@tuodominio.com>`).
+## Pulizia di Cloudflare
 
-## Password
+Su Cloudflare per Ledgy servono solo tre cose: il Worker **ledgy**, il database D1 **ledgy** (id `48dc70af-3f0d-46ab-a832-e9661ccf63b2`) e il secret **APP_PASSWORD**. Tutto il resto creato per Ledgy si può togliere. Non toccare risorse di altri progetti (per esempio Multifolio).
 
-- `APP_PASSWORD` è la password iniziale. Dopo un cambio da Altro → Impostazioni, o un recupero via email, vale quella nuova, salvata nel database come impronta (PBKDF2): il secret resta solo come riserva finché non si cambia la password la prima volta.
-- Dopo 10 tentativi sbagliati dallo stesso indirizzo IP l'accesso si blocca per 15 minuti.
+```bash
+npx wrangler secret list                     # tenere solo APP_PASSWORD
+npx wrangler secret delete RESEND_API_KEY    # e così per RECOVERY_EMAIL, MAIL_FROM, MAIL_DRY_RUN, FX_FIXED se presenti
+npx wrangler d1 list                         # altri database con "ledgy" o "spendregister" nel nome: npx wrangler d1 delete <nome>
+npx wrangler pages project list              # progetti Pages "ledgy"/"spendregister": npx wrangler pages project delete <nome>
+npx wrangler kv namespace list               # namespace con quei nomi: npx wrangler kv namespace delete --namespace-id <id>
+npx wrangler r2 bucket list                  # bucket con quei nomi: npx wrangler r2 bucket delete <nome>
+```
+
+La tabella `password_resets` del vecchio recupero via email la cancella da sola la migrazione `0003_recovery_code`.
 
 ## Dominio personalizzato (facoltativo)
 
