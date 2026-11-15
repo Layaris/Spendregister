@@ -3,7 +3,7 @@ import { api, type Stats, type Tx } from '../api';
 import { Icon } from '../icons';
 import { useApi, useStore } from '../store';
 import { CategoryIcon, Money, TxRow } from '../ui';
-import { eur, formatDayShort, monthPeriod, pct, relativeTime } from '../util';
+import { eur, formatDayShort, formatMoney, monthPeriod, pct, relativeTime } from '../util';
 
 interface Device { id: string; name: string; last_seen_at: string | null; last_capture_at: string | null }
 
@@ -96,7 +96,7 @@ export function Home() {
             {store.accounts.map((a) => (
               <div key={a.id} className="card" style={{ minWidth: 150, gap: 4 }}>
                 <span className="muted" style={{ fontSize: 13 }}>{a.name}</span>
-                <span className="big money" style={{ fontSize: 20 }}>{eur(a.balance)}</span>
+                <span className="big money" style={{ fontSize: 20 }}>{formatMoney(a.balance, a.currency)}</span>
               </div>
             ))}
           </div>

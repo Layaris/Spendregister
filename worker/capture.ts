@@ -4,7 +4,8 @@ import { isLikelyDuplicate, sha256Hex } from '../shared/dedupe';
 import { formatMoney, roundMilli, toMilli } from '../shared/money';
 import { cleanMerchantName, parseNotification, parseWithParser, type AiHint, type ParserDef } from '../shared/notification';
 import { evaluateRules } from '../shared/rules';
-import { bad, body, HttpError, newId, notFound, nowIso, randomToken, type Env } from './lib';
+import { normalizePostedAt } from '../shared/time';
+import { bad, body, getTimeZone, HttpError, newId, notFound, nowIso, randomToken, type Env } from './lib';
 import { categoryFromHistory, convertToEur, defaultAccountId, insertTransaction, loadRules } from './transactions';
 
 interface CapturePayload {
@@ -35,14 +36,6 @@ async function deviceForToken(db: D1Database, token: string) {
   return dev;
 }
 
-/** Normalizza l'ora inviata dal telefono, conservando il fuso. */
-function normalizeTime(s: string | null | undefined): string {
-  if (!s) return nowIso();
-  const t = s.trim();
-  if (/^\d{10,13}$/.test(t)) return new Date(Number(t.length === 10 ? Number(t) * 1000 : t)).toISOString();
-  return Number.isNaN(Date.parse(t)) ? nowIso() : t;
-}
-
 export interface CaptureResult {
   status: 'created' | 'review' | 'duplicate' | 'ignored' | 'unrecognized';
   capture_id: string;
@@ -52,8 +45,8 @@ export interface CaptureResult {
 
 /** Dalla notifica al movimento: lettura, cambio, regole, doppioni. */
 export async function processCapture(db: D1Database, deviceId: string | null, payload: CapturePayload, existingCaptureId?: string): Promise<CaptureResult> {
-  const p = { ...payload, app: payload.app || guessAppFromTitle(payload.title) };
-  const text = (p.text ?? '').toString().trim();
+  const p = { ...payload, title: payload.title ? String(payload.title).slice(0, 300) : null, app: payload.app ? String(payload.app).slice(0, 200) : guessAppFromTitle(payload.title) };
+  const text = (p.text ?? '').toString().trim().slice(0, 4000);
   if (!text) bad('Testo della notifica mancante');
   const hint: AiHint | null = p.hint ?? (p.amount != null ? { amount: p.amount, currency: p.currency, merchant: p.merchant, category: p.category } : null);
   const hash = await sha256Hex(`${p.app ?? ''}|${p.title ?? ''}|${text}`);
@@ -89,7 +82,7 @@ export async function processCapture(db: D1Database, deviceId: string | null, pa
     return { status: 'unrecognized', capture_id: captureId };
   }
 
-  const occurred = normalizeTime(p.posted_at);
+  const occurred = normalizePostedAt(p.posted_at, await getTimeZone(db));
   const sign = parsed.direction === 'income' ? 1 : -1;
   const amount = roundMilli(toMilli(parsed.amount), parsed.currency) * sign;
   const conv = await convertToEur(db, amount, parsed.currency, occurred);

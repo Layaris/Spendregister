@@ -38,13 +38,14 @@ export function Review() {
         <ReviewCard key={t.id} t={t}
           onConfirm={(category) => act(() => api(`/transactions/${t.id}/confirm`, { method: 'POST', json: { category_id: category } }), `${t.merchant ?? 'Spesa'}: ${store.catName(category)}`)}
           onMerge={() => act(() => api(`/transactions/${t.id}/merge`, { method: 'POST' }), 'Doppione unito')}
+          onKeep={() => act(() => api(`/transactions/${t.id}/not-duplicate`, { method: 'POST' }), 'Tenute come due spese')}
           onDelete={() => act(() => api(`/transactions/${t.id}`, { method: 'DELETE' }), 'Movimento scartato')} />
       ))}
     </div>
   );
 }
 
-function ReviewCard({ t, onConfirm, onMerge, onDelete }: { t: Tx; onConfirm: (c: string | null) => void; onMerge: () => void; onDelete: () => void }) {
+function ReviewCard({ t, onConfirm, onMerge, onKeep, onDelete }: { t: Tx; onConfirm: (c: string | null) => void; onMerge: () => void; onKeep: () => void; onDelete: () => void }) {
   const { catName } = useStore();
   const [category, setCategory] = useState<string | null>(t.category_id);
   const [picking, setPicking] = useState(false);
@@ -70,7 +71,7 @@ function ReviewCard({ t, onConfirm, onMerge, onDelete }: { t: Tx; onConfirm: (c:
       {t.duplicate_of ? (
         <div className="row" style={{ gap: 8 }}>
           <button className="btn dark grow" onClick={onMerge}>Unisci in uno</button>
-          <button className="btn" onClick={() => onConfirm(t.category_id)}>Sono due spese</button>
+          <button className="btn" onClick={onKeep}>Sono due spese</button>
         </div>
       ) : t.review_choices.length > 0 && !picking ? (
         <div className="row" style={{ gap: 8 }}>

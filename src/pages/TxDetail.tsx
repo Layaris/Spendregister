@@ -108,7 +108,7 @@ export function TxDetail({ id }: { id: string }) {
           <h2 className="h2">Come è stato registrato</h2>
           {t.capture && <div className="raw">{[t.capture.title, t.capture.text].filter(Boolean).join('\n')}</div>}
           <ul style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 6, fontSize: 14 }}>
-            {t.capture && <li>Notifica {t.card ? `di ${t.card} ` : ''}ricevuta {formatWhen(t.capture.received_at.slice(0, 19))} (UTC)</li>}
+            {t.capture && <li>Notifica {t.card ? `di ${t.card} ` : ''}ricevuta il {new Intl.DateTimeFormat('it-IT', { timeZone: store.settings.timezone, day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(t.capture.received_at))}</li>}
             {t.capture?.detail && <li>Letta con: {t.capture.detail}</li>}
             {t.merchant_raw && t.merchant_raw !== t.merchant && <li>Nome pulito: “{t.merchant_raw}” → {t.merchant}</li>}
             {t.rules.map((r) => <li key={r.id}>Regola applicata: <a href={`#/regole/${r.id}`}>{r.name}</a></li>)}

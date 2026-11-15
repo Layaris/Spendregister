@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { getEurRate } from './fx';
 import { bad, type Env } from './lib';
 
 export const statsApi = new Hono<{ Bindings: Env }>();
@@ -16,8 +17,8 @@ statsApi.get('/', async (c) => {
   const to = c.req.query('to');
   if (!from || !to) bad('Servono from e to');
   const db = c.env.DB;
-  const base = "deleted_at IS NULL AND type <> 'transfer' AND substr(occurred_at, 1, 10) >= ? AND substr(occurred_at, 1, 10) < ?";
-  const tBase = "t.deleted_at IS NULL AND t.type <> 'transfer' AND substr(t.occurred_at, 1, 10) >= ? AND substr(t.occurred_at, 1, 10) < ?";
+  const base = "deleted_at IS NULL AND duplicate_of IS NULL AND type <> 'transfer' AND substr(occurred_at, 1, 10) >= ? AND substr(occurred_at, 1, 10) < ?";
+  const tBase = "t.deleted_at IS NULL AND t.duplicate_of IS NULL AND t.type <> 'transfer' AND substr(t.occurred_at, 1, 10) >= ? AND substr(t.occurred_at, 1, 10) < ?";
   const [prevFrom, prevTo] = shiftPeriod(from, to);
 
   const [totals, prev, byCategory, byNature, byMerchant, daily] = await Promise.all([
@@ -62,14 +63,20 @@ statsApi.get('/balance', async (c) => {
   const days = Math.min(Number(c.req.query('days')) || 30, 366);
   const db = c.env.DB;
   const start = new Date(Date.now() - (days - 1) * 86400_000).toISOString().slice(0, 10);
-  const initial = await db.prepare("SELECT COALESCE(SUM(initial_balance), 0) AS v FROM accounts WHERE currency = 'EUR'").first<{ v: number }>();
-  const before = await db.prepare('SELECT COALESCE(SUM(amount_eur), 0) AS v FROM transactions WHERE deleted_at IS NULL AND substr(occurred_at, 1, 10) < ?')
+  const { results: accounts } = await db.prepare('SELECT currency, initial_balance FROM accounts WHERE archived = 0').all<{ currency: string; initial_balance: number }>();
+  let initial = 0;
+  for (const a of accounts) {
+    if (!a.initial_balance) continue;
+    const rate = await getEurRate(db, a.currency, new Date().toISOString().slice(0, 10));
+    initial += rate ? Math.round(a.initial_balance * rate.eurPerUnit) : 0;
+  }
+  const before = await db.prepare('SELECT COALESCE(SUM(amount_eur), 0) AS v FROM transactions WHERE deleted_at IS NULL AND duplicate_of IS NULL AND substr(occurred_at, 1, 10) < ?')
     .bind(start).first<{ v: number }>();
   const { results } = await db
-    .prepare('SELECT substr(occurred_at, 1, 10) AS day, SUM(amount_eur) AS delta FROM transactions WHERE deleted_at IS NULL AND substr(occurred_at, 1, 10) >= ? GROUP BY day ORDER BY day')
+    .prepare('SELECT substr(occurred_at, 1, 10) AS day, SUM(amount_eur) AS delta FROM transactions WHERE deleted_at IS NULL AND duplicate_of IS NULL AND substr(occurred_at, 1, 10) >= ? GROUP BY day ORDER BY day')
     .bind(start).all<{ day: string; delta: number }>();
   const deltas = new Map(results.map((r) => [r.day, r.delta]));
-  let running = (initial?.v ?? 0) + (before?.v ?? 0);
+  let running = initial + (before?.v ?? 0);
   const series: Array<{ day: string; balance: number }> = [];
   for (let i = 0; i < days; i++) {
     const day = new Date(Date.parse(`${start}T00:00:00Z`) + i * 86400_000).toISOString().slice(0, 10);

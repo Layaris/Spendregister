@@ -1,8 +1,10 @@
 import { Hono } from 'hono';
 import { roundMilli, toMilli } from '../shared/money';
 import { evaluateRules, type RuleDefinition } from '../shared/rules';
+import { isValidTimeZone } from '../shared/time';
 import { getEurRate } from './fx';
-import { bad, body, newId, notFound, nowIso, runBatch, type Env } from './lib';
+import { bad, body, getTimeZone, newId, notFound, nowIso, runBatch, setSetting, type Env } from './lib';
+import { mailConfigured } from './mail';
 import { loadRules, ruleInputFromTx, type TxRow } from './transactions';
 
 export const catalogApi = new Hono<{ Bindings: Env }>();
@@ -18,7 +20,7 @@ catalogApi.get('/bootstrap', async (c) => {
     db.prepare(`SELECT a.id, a.currency, a.initial_balance,
                   COALESCE(SUM(CASE WHEN t.currency = a.currency THEN t.amount ELSE NULL END), 0) AS same_cur,
                   COALESCE(SUM(CASE WHEN t.currency <> a.currency THEN t.amount_eur ELSE NULL END), 0) AS other_eur
-                FROM accounts a LEFT JOIN transactions t ON t.account_id = a.id AND t.deleted_at IS NULL
+                FROM accounts a LEFT JOIN transactions t ON t.account_id = a.id AND t.deleted_at IS NULL AND t.duplicate_of IS NULL
                 GROUP BY a.id`).all<{ id: string; currency: string; initial_balance: number; same_cur: number; other_eur: number }>(),
   ]);
   const bal = new Map(balances.results.map((b) => [b.id, b]));
@@ -32,6 +34,7 @@ catalogApi.get('/bootstrap', async (c) => {
     categories: categories.results,
     labels: labels.results,
     review_count: review?.n ?? 0,
+    settings: { timezone: await getTimeZone(db), mail_configured: mailConfigured(c.env) },
   });
 });
 
@@ -146,9 +149,36 @@ catalogApi.delete('/rules/:id', async (c) => {
   return c.json({ ok: true });
 });
 
-/** Quanti movimenti passati cambierebbero categoria con questa regola (la fascia "chiedimi" non tocca il passato). */
-async function historyChanges(db: D1Database, def: RuleDefinition, ruleId: string) {
-  const { results } = await db.prepare("SELECT * FROM transactions WHERE deleted_at IS NULL AND type <> 'transfer'").all<TxRow>();
+// Anteprima e applicazione allo storico lavorano a pagine (vedi il limite di CPU in backup.ts):
+// il browser richiama finché `next` non è null. La fascia "chiedimi" non tocca il passato.
+const PAGE = 800;
+
+/** Traduce in SQL le condizioni che si possono filtrare nel database, per leggere meno righe. */
+function sqlPrefilter(def: RuleDefinition): { where: string[]; args: unknown[] } {
+  const where: string[] = [];
+  const args: unknown[] = [];
+  for (const c of def.conditions) {
+    const v = String(c.value).toLowerCase();
+    if (c.field === 'merchant' && ['contains', 'equals', 'starts'].includes(c.op)) {
+      const pattern = c.op === 'contains' ? `%${v}%` : c.op === 'starts' ? `${v}%` : v;
+      where.push('(LOWER(COALESCE(merchant, \'\')) LIKE ? OR LOWER(COALESCE(merchant_raw, \'\')) LIKE ?)');
+      args.push(pattern, pattern);
+    } else if (c.field === 'currency' && c.op === 'equals') {
+      where.push('currency = ?');
+      args.push(String(c.value).toUpperCase());
+    }
+  }
+  return { where, args };
+}
+
+async function historyPage(db: D1Database, def: RuleDefinition, ruleId: string, after: number) {
+  const pre = sqlPrefilter(def);
+  const { results } = await db
+    .prepare(`SELECT rowid AS _rowid, id, type, merchant, merchant_raw, card, currency, account_id, amount_eur, occurred_at, source, category_id
+              FROM transactions WHERE rowid > ? AND deleted_at IS NULL AND type <> 'transfer' ${pre.where.map((w) => `AND ${w}`).join(' ')}
+              ORDER BY rowid LIMIT ?`)
+    .bind(after, ...pre.args, PAGE)
+    .all<TxRow & { _rowid: number }>();
   const rule = { id: ruleId, name: 'anteprima', enabled: true, priority: 0, definition: def };
   const changes: Array<{ id: string; from: string | null; to: string; nature?: string }> = [];
   let matched = 0;
@@ -158,56 +188,36 @@ async function historyChanges(db: D1Database, def: RuleDefinition, ruleId: strin
     matched++;
     if (r.category_id && r.category_id !== t.category_id) changes.push({ id: t.id, from: t.category_id, to: r.category_id, nature: r.nature });
   }
-  return { matched, changes };
+  const next = results.length === PAGE ? results[results.length - 1]._rowid : null;
+  return { matched, changes, next };
 }
 
 catalogApi.post('/rules/preview', async (c) => {
-  const b = await body<{ definition?: RuleDefinition }>(c);
-  const { matched, changes } = await historyChanges(c.env.DB, validateDefinition(b.definition), 'preview');
-  return c.json({ matched, changed: changes.length, sample: changes.slice(0, 50) });
+  const b = await body<{ definition?: RuleDefinition; after?: number }>(c);
+  const { matched, changes, next } = await historyPage(c.env.DB, validateDefinition(b.definition), 'preview', Number(b.after) || 0);
+  return c.json({ matched, changed: changes.length, sample: changes.slice(0, 20), next });
 });
 
 catalogApi.post('/rules/:id/apply', async (c) => {
+  const b = await body<{ after?: number }>(c).catch(() => ({} as { after?: number }));
   const r = await c.env.DB.prepare('SELECT * FROM rules WHERE id = ?').bind(c.req.param('id')).first<{ id: string; definition: string }>();
   if (!r) notFound();
-  const { changes } = await historyChanges(c.env.DB, JSON.parse(r.definition), r.id);
+  const { changes, next } = await historyPage(c.env.DB, JSON.parse(r.definition), r.id, Number(b.after) || 0);
   const now = nowIso();
   await runBatch(c.env.DB, changes.map((ch) =>
     c.env.DB.prepare('UPDATE transactions SET category_id = ?, nature = COALESCE(?, nature), updated_at = ? WHERE id = ?').bind(ch.to, ch.nature ?? null, now, ch.id)));
-  return c.json({ changed: changes.length });
+  return c.json({ changed: changes.length, next });
 });
 
-// ---- Export ----
+// ---- Impostazioni ----
 
-catalogApi.get('/export.json', async (c) => {
-  const db = c.env.DB;
-  const tables = ['accounts', 'categories', 'labels', 'transactions', 'transaction_labels', 'rules', 'parsers'];
-  const out: Record<string, unknown[]> = {};
-  for (const t of tables) out[t] = (await db.prepare(`SELECT * FROM ${t}`).all()).results;
-  return new Response(JSON.stringify({ exported_at: nowIso(), ...out }, null, 1), {
-    headers: { 'content-type': 'application/json', 'content-disposition': `attachment; filename="ledgy-${nowIso().slice(0, 10)}.json"` },
-  });
-});
+catalogApi.get('/settings', async (c) => c.json({ timezone: await getTimeZone(c.env.DB), mail_configured: mailConfigured(c.env) }));
 
-catalogApi.get('/export.csv', async (c) => {
-  const { results } = await c.env.DB
-    .prepare(`SELECT t.occurred_at, t.type, a.name AS account, t.amount, t.currency, t.amount_eur, t.fx_rate, t.merchant, t.merchant_raw,
-              c.name AS category, p.name AS parent_category, t.nature, t.note, t.card, t.source, t.status,
-              (SELECT GROUP_CONCAT(l.name, '|') FROM transaction_labels tl JOIN labels l ON l.id = tl.label_id WHERE tl.transaction_id = t.id) AS labels
-              FROM transactions t LEFT JOIN accounts a ON a.id = t.account_id LEFT JOIN categories c ON c.id = t.category_id
-              LEFT JOIN categories p ON p.id = c.parent_id WHERE t.deleted_at IS NULL ORDER BY t.occurred_utc`)
-    .all<Record<string, unknown>>();
-  const cols = ['occurred_at', 'type', 'account', 'amount', 'currency', 'amount_eur', 'fx_rate', 'merchant', 'merchant_raw', 'category', 'parent_category', 'nature', 'note', 'card', 'source', 'status', 'labels'];
-  const esc = (v: unknown) => {
-    if (v == null) return '';
-    const s = String(v);
-    return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const lines = [cols.join(';')];
-  for (const r of results) {
-    lines.push(cols.map((k) => (k === 'amount' || k === 'amount_eur' ? (Number(r[k]) / 1000).toFixed(3) : esc(r[k]))).join(';'));
+catalogApi.put('/settings', async (c) => {
+  const b = await body<{ timezone?: string }>(c);
+  if (b.timezone !== undefined) {
+    if (!isValidTimeZone(b.timezone)) bad('Fuso orario non valido');
+    await setSetting(c.env.DB, 'timezone', b.timezone);
   }
-  return new Response(lines.join('\n'), {
-    headers: { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': `attachment; filename="ledgy-${nowIso().slice(0, 10)}.csv"` },
-  });
+  return c.json({ ok: true });
 });

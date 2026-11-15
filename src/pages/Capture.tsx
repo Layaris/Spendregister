@@ -58,15 +58,15 @@ export function Capture() {
     }
   };
 
-  const today = new Date().toISOString().slice(0, 10);
-  const todayCaptures = captures.data?.items.filter((c) => c.received_at.startsWith(today)) ?? [];
+  const dayAgo = new Date(Date.now() - 86400_000).toISOString();
+  const todayCaptures = captures.data?.items.filter((c) => c.received_at >= dayAgo) ?? [];
 
   return (
     <div className="stack" style={{ gap: 14 }}>
       <TopBar backTo="/altro" />
       <div className="stack" style={{ gap: 4 }}>
         <h1 className="page-title">Cattura automatica</h1>
-        <p className="lead">Oggi {todayCaptures.length} notifiche: {todayCaptures.filter((c) => c.status === 'created').length} salvate da sole, {todayCaptures.filter((c) => c.status === 'review').length} da rivedere.</p>
+        <p className="lead">Ultime 24 ore: {todayCaptures.length} notifiche, {todayCaptures.filter((c) => c.status === 'created').length} salvate da sole, {todayCaptures.filter((c) => c.status === 'review').length} da rivedere.</p>
       </div>
       <ErrorBox error={error ?? devices.error} />
 
@@ -148,7 +148,7 @@ function SetupButton({ icon, title, text, onClick, dark }: { icon: string; title
 function IosSteps({ url, hasShortcut }: { url: string; hasShortcut: boolean }) {
   return (
     <ol style={{ margin: 0, paddingLeft: 20, display: 'grid', gap: 8, fontSize: 14 }}>
-      <li>{hasShortcut ? <><a href="/ledgy.shortcut">Installa il comando Ledgy</a>. Quando Comandi lo chiede, incolla l'indirizzo copiato.</> : <>Il comando Ledgy firmato non è ancora caricato sul server. Nel frattempo puoi usare il tuo comando attuale sostituendo l'ultima azione (quella di Wallet) con “Ottieni contenuto URL”: metodo POST, corpo JSON con i campi <code>text</code>, <code>amount</code>, <code>currency</code>, <code>merchant</code>, indirizzo <code>{url.slice(0, 40)}…</code></>}</li>
+      <li>{hasShortcut ? <><a href="/ledgy.shortcut" download="Ledgy.shortcut">Scarica il comando Ledgy</a>, poi aprilo dai download di Safari: si apre Comandi. Quando chiede l'indirizzo, incolla quello copiato.</> : <>Il comando Ledgy firmato non è ancora caricato sul server. Nel frattempo puoi usare il tuo comando attuale sostituendo l'ultima azione (quella di Wallet) con “Ottieni contenuto URL”: metodo POST, corpo JSON con i campi <code>text</code>, <code>amount</code>, <code>currency</code>, <code>merchant</code>, indirizzo <code>{url.slice(0, 40)}…</code></>}</li>
       <li>Apri Comandi → Automazione → + → <b>Notifica</b>. Scegli l'app della banca (Revolut, Wise, Jago…), scegli <b>Esegui subito</b> e come azione <b>Esegui comando: Ledgy</b>. Ripeti per ogni app.</li>
       <li>Per il segnale giornaliero: Automazione → + → <b>Ora del giorno</b> 09:00 → Esegui subito → <b>Esegui comando: Ledgy</b>. Senza notifica il comando manda solo il segnale.</li>
     </ol>

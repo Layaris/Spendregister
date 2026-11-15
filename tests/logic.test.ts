@@ -130,3 +130,43 @@ describe('doppioni', () => {
     expect(isLikelyDuplicate(a, { ...b, occurred_at: '2026-11-15T11:25:00+08:00' })).toBe(false);
   });
 });
+
+import { normalizePostedAt, zonedIso } from '../shared/time';
+
+describe('lettori senza app (iPhone)', () => {
+  const parser = { id: 'p', name: 'Jago', app: 'com.jago.digitalBanking', flags: 'i', direction: 'expense' as const, default_currency: 'IDR', pattern: 'Pembayaran (?<amount>[\\d.]+) ke (?<merchant>.+?) berhasil' };
+  it('riconosce l’app dal titolo', () => {
+    expect(parseNotification({ title: 'Jago', text: 'Pembayaran 25.000 ke KOPI berhasil' }, [parser])?.via).toBe('lettore: Jago');
+  });
+  it('senza app né titolo prova tutti i lettori', () => {
+    expect(parseNotification({ text: 'Pembayaran 25.000 ke KOPI berhasil' }, [parser])?.via).toBe('lettore: Jago');
+  });
+  it('con un’altra app non usa il lettore', () => {
+    expect(parseNotification({ app: 'com.bca', text: 'Pembayaran 25.000 ke KOPI berhasil' }, [parser])?.via).not.toBe('lettore: Jago');
+  });
+});
+
+describe('fuso orario', () => {
+  const now = new Date('2026-11-14T23:30:00Z');
+  it('scrive l’ora nel fuso di Bali', () => {
+    expect(zonedIso(now, 'Asia/Makassar')).toBe('2026-11-15T07:30:00+08:00');
+    expect(zonedIso(now, 'Europe/Rome')).toBe('2026-11-15T00:30:00+01:00');
+  });
+  it('lascia com’è un’ora con fuso esplicito', () => {
+    expect(normalizePostedAt('2026-11-15T14:32:08+08:00', 'Europe/Rome')).toBe('2026-11-15T14:32:08+08:00');
+    expect(normalizePostedAt('2026-11-15T14:32:08+0800', 'UTC')).toBe('2026-11-15T14:32:08+08:00');
+  });
+  it('riscrive UTC ed epoch nel fuso scelto', () => {
+    expect(normalizePostedAt('2026-11-14T23:30:00Z', 'Asia/Makassar')).toBe('2026-11-15T07:30:00+08:00');
+    expect(normalizePostedAt(String(now.getTime()), 'Asia/Makassar')).toBe('2026-11-15T07:30:00+08:00');
+    expect(normalizePostedAt(String(now.getTime() / 1000), 'Asia/Makassar')).toBe('2026-11-15T07:30:00+08:00');
+  });
+  it('considera locale un’ora senza fuso (MacroDroid)', () => {
+    expect(normalizePostedAt('2026-11-15 07:15:00', 'Asia/Makassar')).toBe('2026-11-15T07:15:00+08:00');
+    expect(normalizePostedAt('2026-07-15 07:15', 'Europe/Rome')).toBe('2026-07-15T07:15:00+02:00');
+  });
+  it('senza ora o con testo illeggibile usa adesso', () => {
+    expect(normalizePostedAt(null, 'Asia/Makassar', now)).toBe('2026-11-15T07:30:00+08:00');
+    expect(normalizePostedAt('ieri sera', 'Asia/Makassar', now)).toBe('2026-11-15T07:30:00+08:00');
+  });
+});

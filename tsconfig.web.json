@@ -1,10 +1,19 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "jsx": "react-jsx",
-    "types": ["vite/client"],
+    "types": [
+      "vite/client"
+    ],
     "tsBuildInfoFile": "node_modules/.tmp/web.tsbuildinfo"
   },
-  "include": ["src", "shared", "tests"]
+  "include": [
+    "src",
+    "shared"
+  ]
 }

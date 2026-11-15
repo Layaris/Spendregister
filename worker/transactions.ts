@@ -3,7 +3,8 @@ import { roundMilli, toMilli } from '../shared/money';
 import { cleanMerchantName } from '../shared/notification';
 import { evaluateRules, type Rule, type RuleDefinition, type RuleInput } from '../shared/rules';
 import { getEurRate } from './fx';
-import { bad, body, newId, notFound, nowIso, parseJson, runBatch, type Env } from './lib';
+import { normalizePostedAt } from '../shared/time';
+import { bad, body, getTimeZone, newId, notFound, nowIso, parseJson, runBatch, type Env } from './lib';
 
 export interface TxRow {
   id: string;
@@ -232,8 +233,10 @@ transactionsApi.post('/', async (c) => {
   const b = await body<TxInput>(c);
   if (!b.amount || !(b.amount > 0)) bad('Importo mancante');
   const type = b.type ?? 'expense';
+  if (type === 'transfer') bad('I trasferimenti non si creano da qui');
   const currency = (b.currency ?? 'EUR').toUpperCase();
-  const occurred = b.occurred_at ?? nowIso();
+  if (!/^[A-Z]{3}$/.test(currency)) bad('Valuta non valida');
+  const occurred = normalizePostedAt(b.occurred_at, await getTimeZone(c.env.DB));
   const milli = roundMilli(toMilli(b.amount), currency) * (type === 'income' ? 1 : -1);
   const merchantRaw = b.merchant?.trim() || null;
   const merchant = cleanMerchantName(merchantRaw);
@@ -265,7 +268,8 @@ transactionsApi.put('/:id', async (c) => {
   const b = await body<TxInput>(c);
   const type = b.type ?? row.type;
   const currency = (b.currency ?? row.currency).toUpperCase();
-  const occurred = b.occurred_at ?? row.occurred_at;
+  const occurred = b.occurred_at ? normalizePostedAt(b.occurred_at, await getTimeZone(c.env.DB)) : row.occurred_at;
+  if (!/^[A-Z]{3}$/.test(currency)) bad('Valuta non valida');
   let amount = row.amount;
   if (b.amount != null) amount = roundMilli(toMilli(Math.abs(b.amount)), currency) * (type === 'income' ? 1 : -1);
   else if (b.type && b.type !== row.type) amount = Math.abs(row.amount) * (type === 'income' ? 1 : -1);
@@ -318,6 +322,19 @@ transactionsApi.post('/:id/merge', async (c) => {
   if (!row?.duplicate_of) bad('Questo movimento non è segnato come doppione');
   await c.env.DB.prepare('UPDATE transactions SET deleted_at = ?, updated_at = ? WHERE id = ?').bind(nowIso(), nowIso(), id).run();
   return c.json({ ok: true, kept: row.duplicate_of });
+});
+
+/** Non è un doppione: resta come spesa a sé, da rivedere solo se manca la categoria. */
+transactionsApi.post('/:id/not-duplicate', async (c) => {
+  const id = c.req.param('id');
+  const row = await c.env.DB.prepare('SELECT category_id, review_choices FROM transactions WHERE id = ?').bind(id).first<{ category_id: string | null; review_choices: string | null }>();
+  if (!row) notFound();
+  const ready = !!row.category_id && !row.review_choices;
+  await c.env.DB
+    .prepare('UPDATE transactions SET duplicate_of = NULL, status = ?, review_reason = ?, updated_at = ? WHERE id = ?')
+    .bind(ready ? 'confirmed' : 'review', ready ? null : row.review_choices ? 'Scegli la categoria' : 'Categoria da scegliere', nowIso(), id)
+    .run();
+  return c.json({ ok: true, status: ready ? 'confirmed' : 'review' });
 });
 
 /** Conferma in blocco i movimenti da rivedere che hanno già una categoria. */

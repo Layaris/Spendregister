@@ -51,7 +51,12 @@ export function Add() {
   const press = (k: string) => {
     if (k === 'del') setDigits((d) => d.slice(0, -1));
     else if (k === ',') setDigits((d) => (d.includes(',') || !d ? d : `${d},`));
-    else setDigits((d) => (d.length > 12 ? d : (d === '0' ? '' : d) + k));
+    else setDigits((d) => {
+      if (!d && (k === '0' || k === '000')) return d;
+      const [, dec] = d.split(',');
+      if (dec !== undefined && dec.length + k.length > 3) return d;
+      return d.length > 12 ? d : d + k;
+    });
   };
   const [intPart, decPart] = digits.split(',');
   const display = digits ? `${(intPart || '0').replace(/\B(?=(\d{3})+(?!\d))/g, '.')}${decPart !== undefined ? `,${decPart}` : ''}` : '0';

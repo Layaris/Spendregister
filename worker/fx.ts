@@ -35,10 +35,19 @@ async function fetchFawaz(currency: string, date: string): Promise<FxRate | null
   return null;
 }
 
+let fixed: Record<string, number> | null = null;
+
+/** Solo per i test: tassi fissi letti dalla variabile FX_FIXED ("IDR:0.00005,SGD:0.7"). */
+export function configureFixedRates(spec: string | undefined) {
+  if (!spec) { fixed = null; return; }
+  fixed = Object.fromEntries(spec.split(',').map((p) => p.split(':')).filter((p) => p.length === 2).map(([c, r]) => [c.trim().toUpperCase(), Number(r)]));
+}
+
 /** Euro per una unità di `currency` alla data indicata (YYYY-MM-DD). */
 export async function getEurRate(db: D1Database, currency: string, date: string): Promise<FxRate | null> {
   const cur = currency.toUpperCase();
   if (cur === 'EUR') return { eurPerUnit: 1, date, source: 'base' };
+  if (fixed) return fixed[cur] ? { eurPerUnit: fixed[cur], date, source: 'fisso (test)' } : null;
   const today = new Date().toISOString().slice(0, 10);
   const day = date > today ? today : date;
   const cached = await db

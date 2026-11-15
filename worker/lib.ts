@@ -3,7 +3,29 @@ import type { Context } from 'hono';
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
+  /** Password iniziale; dopo un cambio dall'app vale quella salvata nel database. */
   APP_PASSWORD?: string;
+  /** Recupero password via email (Resend). */
+  RESEND_API_KEY?: string;
+  RECOVERY_EMAIL?: string;
+  MAIL_FROM?: string;
+  /** Solo per i test: non invia email e restituisce il link di recupero. */
+  MAIL_DRY_RUN?: string;
+  /** Solo per i test: tassi fissi, es. "IDR:0.00005,SGD:0.7". */
+  FX_FIXED?: string;
+}
+
+export async function getSetting(db: D1Database, key: string): Promise<string | null> {
+  const row = await db.prepare('SELECT value FROM settings WHERE key = ?').bind(key).first<{ value: string }>();
+  return row?.value ?? null;
+}
+
+export async function setSetting(db: D1Database, key: string, value: string): Promise<void> {
+  await db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind(key, value).run();
+}
+
+export async function getTimeZone(db: D1Database): Promise<string> {
+  return (await getSetting(db, 'timezone')) ?? 'Asia/Makassar';
 }
 
 export type AppContext = Context<{ Bindings: Env }>;

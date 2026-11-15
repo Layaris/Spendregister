@@ -142,8 +142,10 @@ export function parseNotification(
   parsers: ParserDef[],
 ): ParsedPayment | null {
   const full = [input.title, input.text].filter(Boolean).join('\n');
-  for (const p of parsers) {
-    if (!appMatches(p.app, input.app)) continue;
+  // Su iPhone l'app non arriva: la si riconosce dal titolo. Se resta sconosciuta si provano tutti i lettori.
+  const matching = parsers.filter((p) => appMatches(p.app, input.app) || appMatches(p.app, input.title));
+  const candidates = matching.length || input.app ? matching : parsers;
+  for (const p of candidates) {
     const r = parseWithParser(p, full);
     if (r) return r;
   }

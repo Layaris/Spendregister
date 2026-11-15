@@ -11,7 +11,10 @@
     "typecheck": "tsc -b",
     "db:migrate:local": "wrangler d1 migrations apply ledgy --local",
     "db:migrate:remote": "wrangler d1 migrations apply ledgy --remote",
-    "deploy": "npm run build && wrangler deploy"
+    "deploy": "npm run build && wrangler deploy",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:e2e": "node tests/e2e/smoke.mjs"
   },
   "dependencies": {
     "hono": "^4.13.18",
@@ -20,6 +23,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261115.1",
+    "@types/node": "^22.20.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.3.0",

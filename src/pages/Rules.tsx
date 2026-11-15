@@ -90,9 +90,25 @@ export function RuleEditor({ id }: { id: string }) {
     bands: useBands ? bands : undefined,
   });
 
+  // Il server lavora a pagine (limite di CPU di Cloudflare): si richiama finché next non è null.
   const runPreview = async () => {
     setError(null);
-    try { setPreview(await api('/rules/preview', { method: 'POST', json: { definition: clean() } })); } catch (e) { setError((e as Error).message); }
+    setPreview(null);
+    try {
+      let after = 0;
+      let matched = 0;
+      let changed = 0;
+      for (;;) {
+        const r = await api<{ matched: number; changed: number; next: number | null }>('/rules/preview', { method: 'POST', json: { definition: clean(), after } });
+        matched += r.matched;
+        changed += r.changed;
+        if (r.next == null) break;
+        after = r.next;
+      }
+      setPreview({ matched, changed });
+    } catch (e) {
+      setError((e as Error).message);
+    }
   };
 
   const save = async () => {
@@ -101,8 +117,15 @@ export function RuleEditor({ id }: { id: string }) {
       const payload = { name, priority, definition: clean() };
       const ruleId = isNew ? (await api<{ id: string }>('/rules', { method: 'POST', json: payload })).id : (await api(`/rules/${id}`, { method: 'PUT', json: payload }), id);
       if (applyHistory) {
-        const r = await api<{ changed: number }>(`/rules/${ruleId}/apply`, { method: 'POST' });
-        store.toast(`Regola salvata, ${r.changed} movimenti aggiornati`);
+        let after = 0;
+        let changed = 0;
+        for (;;) {
+          const r = await api<{ changed: number; next: number | null }>(`/rules/${ruleId}/apply`, { method: 'POST', json: { after } });
+          changed += r.changed;
+          if (r.next == null) break;
+          after = r.next;
+        }
+        store.toast(`Regola salvata, ${changed} movimenti aggiornati`);
       } else store.toast('Regola salvata');
       go('/regole');
     } catch (e) {

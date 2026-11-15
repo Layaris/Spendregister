@@ -5,5 +5,4 @@ export default defineConfig({
   plugins: [react()],
   build: { outDir: 'dist', emptyOutDir: true },
   server: { proxy: { '/api': 'http://localhost:8787' } },
-  test: { include: ['tests/**/*.test.ts'] },
-} as never);
+});

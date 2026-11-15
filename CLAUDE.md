@@ -10,11 +10,13 @@ Funzioni scelte, decisioni e note tecniche: [docs/funzioni.md](docs/funzioni.md)
 - Lavora con un solo agente. Usa subagenti o più agenti solo quando fanno risparmiare uso del piano; altrimenti procedi da solo, anche se più lentamente.
 - Non generare mai APK o IPA senza un permesso esplicito del proprietario. Le build mobili partono solo da un workflow manuale (`workflow_dispatch`), mai in automatico.
 - In GitHub Actions ogni `actions/upload-artifact` usa `retention-days: 1`.
+- APK e IPA, quando ci saranno, si pubblicano su **DMReleases**, come le altre app del proprietario (chiedere i dettagli prima della prima build).
 - Repository pulito: niente build, file generati, screenshot o file temporanei nel repo.
 
 ## Comandi
 
-- `npm test`: test della logica condivisa (importi, lettura notifiche, regole, doppioni).
+- `npm test`: tutti i test. `npm run test:unit` solo la logica condivisa; `npm run test:integration` avvia il vero Worker (wrangler dev, D1 locale nuovo, tassi fissi, email simulate) sulla porta 8799 e prova l'API.
+- `npm run test:e2e`: prova dell'interfaccia con Playwright su un Worker già avviato (vedi l'intestazione di `tests/e2e/smoke.mjs`).
 - `npm run typecheck`: controllo dei tipi di web app e Worker.
 - `npm run build`: compila la web app in `dist/`.
 - Sviluppo in locale: `npm run db:migrate:local`, un file `.dev.vars` con `APP_PASSWORD=...`, poi `npm run build && npx wrangler dev`.
@@ -31,6 +33,8 @@ Funzioni scelte, decisioni e note tecniche: [docs/funzioni.md](docs/funzioni.md)
 ## Architettura decisa
 
 - Frontend: React + Capacitor, un solo codice per web (PWA), Android e iOS. Parti native piccole in Kotlin (lettore notifiche) e Swift (App Intents, estensione Condividi).
-- Backend: Cloudflare, sul piano gratuito del proprietario. Pages per la web app, Workers per API e webhook, D1 come database, R2 per le foto, Cron Triggers per cambi, riepiloghi e controllo della cattura. Niente Supabase.
+- Backend: Cloudflare, sul piano gratuito del proprietario. Un solo Worker `ledgy` con static assets serve web app e API; D1 come database; R2 per le foto (quando servirà); Cron Trigger per le pulizie notturne. Niente Supabase.
+- Limite da rispettare: 10 ms di CPU per richiesta sul piano gratuito. Tutto ciò che scorre molti dati (export, import, regole sullo storico, import da Wallet) lavora a pagine guidate dal browser.
+- Password: `APP_PASSWORD` iniziale, poi impronta PBKDF2 in `settings`; recupero via email con Resend (`RESEND_API_KEY`, `RECOVERY_EMAIL`).
 - Ordine: prima web app + server, con la cattura via automazioni del telefono (Comandi su iPhone, MacroDroid su Android). Poi le app native.
 - Niente cifratura end-to-end: il server deve leggere il testo delle notifiche per creare le spese.
