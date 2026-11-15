@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { roundMilli, toMilli } from '../shared/money';
 import { evaluateRules, type RuleDefinition } from '../shared/rules';
+import { getEurRate } from './fx';
 import { bad, body, newId, notFound, nowIso, runBatch, type Env } from './lib';
 import { loadRules, ruleInputFromTx, type TxRow } from './transactions';
 
@@ -92,6 +93,14 @@ catalogApi.post('/categories/:id/merge', async (c) => {
     c.env.DB.prepare('UPDATE categories SET archived = 1 WHERE id = ?').bind(id),
   ]);
   return c.json({ ok: true });
+});
+
+/** Tasso per la conversione dal vivo nella schermata Aggiungi. */
+catalogApi.get('/fx', async (c) => {
+  const currency = (c.req.query('currency') ?? 'EUR').toUpperCase();
+  const date = c.req.query('date') ?? new Date().toISOString().slice(0, 10);
+  const rate = await getEurRate(c.env.DB, currency, date);
+  return c.json(rate ? { currency, ...rate } : { currency, eurPerUnit: null });
 });
 
 // ---- Regole ----

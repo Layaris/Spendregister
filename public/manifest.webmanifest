@@ -1,0 +1,11 @@
+{
+  "name": "Ledgy",
+  "short_name": "Ledgy",
+  "description": "Le tue spese, registrate da sole.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f1f4f2",
+  "theme_color": "#0b7a5b",
+  "lang": "it",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

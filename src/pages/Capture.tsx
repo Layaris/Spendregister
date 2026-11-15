@@ -1,0 +1,230 @@
+import { useEffect, useState } from 'react';
+import { api } from '../api';
+import { Icon } from '../icons';
+import { useApi, useStore } from '../store';
+import { ErrorBox, Loading, TopBar } from '../ui';
+import { relativeTime } from '../util';
+
+interface Device { id: string; name: string; platform: string; method: string; token_hint: string; last_seen_at: string | null; last_capture_at: string | null }
+interface Capture { id: string; received_at: string; app: string | null; title: string | null; text: string; status: string; detail: string | null; transaction_id: string | null }
+interface Parser { id: string; name: string; app: string; pattern: string; default_currency: string | null; sample: string | null; enabled: number }
+
+const STATUS: Record<string, string> = { created: 'Salvata', review: 'Da rivedere', duplicate: 'Doppione', ignored: 'Ignorata', unrecognized: 'Non riconosciuta' };
+
+export function Capture() {
+  const store = useStore();
+  const devices = useApi<{ items: Device[] }>('/capture/devices');
+  const captures = useApi<{ items: Capture[] }>('/capture/captures?limit=30');
+  const parsers = useApi<{ items: Parser[] }>('/capture/parsers');
+  const [connect, setConnect] = useState<{ platform: 'ios' | 'android'; url?: string } | null>(null);
+  const [name, setName] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [hasShortcut, setHasShortcut] = useState(false);
+
+  useEffect(() => {
+    fetch('/ledgy.shortcut', { method: 'HEAD' }).then((r) => setHasShortcut(r.ok && !r.headers.get('content-type')?.includes('html'))).catch(() => {});
+  }, []);
+
+  const create = async () => {
+    if (!connect) return;
+    setError(null);
+    try {
+      const r = await api<{ url: string }>('/capture/devices', { method: 'POST', json: { name: name || (connect.platform === 'ios' ? 'iPhone' : 'Android'), platform: connect.platform, method: connect.platform === 'ios' ? 'shortcut' : 'macrodroid' } });
+      setConnect({ ...connect, url: r.url });
+      devices.reload();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const copy = async (text: string) => {
+    try { await navigator.clipboard.writeText(text); store.toast('Indirizzo copiato'); } catch { store.toast('Copia non riuscita: selezionalo a mano'); }
+  };
+
+  const revoke = async (d: Device) => {
+    await api(`/capture/devices/${d.id}`, { method: 'DELETE' });
+    store.toast(`${d.name} scollegato`);
+    devices.reload();
+  };
+
+  const retry = async (c: Capture) => {
+    try {
+      const r = await api<{ status: string }>(`/capture/captures/${c.id}/retry`, { method: 'POST' });
+      store.toast(STATUS[r.status] ?? r.status);
+      captures.reload();
+      await store.refresh();
+    } catch (e) {
+      store.toast((e as Error).message);
+    }
+  };
+
+  const today = new Date().toISOString().slice(0, 10);
+  const todayCaptures = captures.data?.items.filter((c) => c.received_at.startsWith(today)) ?? [];
+
+  return (
+    <div className="stack" style={{ gap: 14 }}>
+      <TopBar backTo="/altro" />
+      <div className="stack" style={{ gap: 4 }}>
+        <h1 className="page-title">Cattura automatica</h1>
+        <p className="lead">Oggi {todayCaptures.length} notifiche: {todayCaptures.filter((c) => c.status === 'created').length} salvate da sole, {todayCaptures.filter((c) => c.status === 'review').length} da rivedere.</p>
+      </div>
+      <ErrorBox error={error ?? devices.error} />
+
+      <section className="card">
+        <h2 className="h2">Collega un telefono</h2>
+        {!connect ? (
+          <div className="stack" style={{ gap: 10 }}>
+            <SetupButton icon="phone" dark title="iPhone: comando e automazione" text="Il comando legge la notifica della banca e la manda a Ledgy, come fa oggi con Wallet." onClick={() => setConnect({ platform: 'ios' })} />
+            <SetupButton icon="download" title="Android: MacroDroid" text="MacroDroid inoltra a Ledgy le notifiche delle app di banca che scegli." onClick={() => setConnect({ platform: 'android' })} />
+          </div>
+        ) : !connect.url ? (
+          <div className="stack" style={{ gap: 10 }}>
+            <label className="field"><span>Nome del telefono</span><input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={connect.platform === 'ios' ? 'Es. iPhone 16 Pro' : 'Es. Galaxy S25'} /></label>
+            <div className="row" style={{ gap: 8 }}>
+              <button className="btn primary grow" onClick={create}>Crea l'indirizzo privato</button>
+              <button className="btn" onClick={() => setConnect(null)}>Annulla</button>
+            </div>
+          </div>
+        ) : (
+          <div className="stack" style={{ gap: 10 }}>
+            <span className="muted" style={{ fontSize: 13 }}>Indirizzo privato di questo telefono. Chi lo conosce può aggiungere spese: non condividerlo.</span>
+            <div className="raw">{connect.url}</div>
+            <button className="btn" onClick={() => copy(connect.url!)}><Icon name="copy" size={18} />Copia l'indirizzo</button>
+            {connect.platform === 'ios' ? <IosSteps url={connect.url} hasShortcut={hasShortcut} /> : <AndroidSteps url={connect.url} />}
+            <button className="btn" onClick={() => { setConnect(null); setName(''); }}>Fatto</button>
+          </div>
+        )}
+      </section>
+
+      <section className="card">
+        <h2 className="h2">Dispositivi</h2>
+        {!devices.data ? <Loading /> : !devices.data.items.length ? <p className="muted" style={{ margin: 0 }}>Nessun telefono collegato.</p> : devices.data.items.map((d) => {
+          const stale = !d.last_seen_at || Date.now() - Date.parse(d.last_seen_at) > 26 * 3600_000;
+          return (
+            <div key={d.id} className="row" style={stale ? { background: 'var(--warn-soft)', borderRadius: 14, padding: 10, margin: '0 -4px' } : undefined}>
+              <span className={`dot ${stale ? 'warn' : ''}`} />
+              <div className="grow stack" style={{ gap: 2, fontSize: 14 }}>
+                <b>{d.name}</b>
+                <span className="muted">{d.method === 'shortcut' ? 'Comandi' : 'MacroDroid'} · segnale {relativeTime(d.last_seen_at)} · ultima spesa {relativeTime(d.last_capture_at)}</span>
+                {stale && <span style={{ color: 'var(--warn)' }}>Nessun segnale da oltre un giorno: controlla il risparmio batteria.</span>}
+              </div>
+              <button className="btn small" onClick={() => revoke(d)}>Scollega</button>
+            </div>
+          );
+        })}
+      </section>
+
+      <section className="card">
+        <h2 className="h2">Ultime notifiche ricevute</h2>
+        {!captures.data ? <Loading /> : !captures.data.items.length ? <p className="muted" style={{ margin: 0 }}>Ancora nessuna notifica.</p> : captures.data.items.slice(0, 12).map((c) => (
+          <div key={c.id} className="stack" style={{ gap: 4, paddingBottom: 10, borderBottom: '1px solid var(--line)' }}>
+            <div className="row between" style={{ fontSize: 13 }}>
+              <span className={`chip ${c.status === 'created' ? 'ok' : c.status === 'unrecognized' || c.status === 'review' ? 'warn' : ''}`}>{STATUS[c.status] ?? c.status}</span>
+              <span className="muted">{c.app ?? 'app sconosciuta'} · {relativeTime(c.received_at)}</span>
+            </div>
+            <div className="raw" style={{ fontSize: 11 }}>{[c.title, c.text].filter(Boolean).join(' · ')}</div>
+            <div className="row" style={{ gap: 8 }}>
+              {c.detail && <span className="muted grow" style={{ fontSize: 12 }}>{c.detail}</span>}
+              {c.transaction_id ? <a className="btn small" href={`#/m/${c.transaction_id}`}>Apri</a> : c.status === 'unrecognized' && <button className="btn small" onClick={() => retry(c)}>Riprova</button>}
+            </div>
+          </div>
+        ))}
+      </section>
+
+      <Parsers list={parsers.data?.items ?? null} reload={parsers.reload} />
+    </div>
+  );
+}
+
+function SetupButton({ icon, title, text, onClick, dark }: { icon: string; title: string; text: string; onClick: () => void; dark?: boolean }) {
+  return (
+    <button onClick={onClick} className="row" style={{ background: 'var(--sunken)', borderRadius: 16, padding: 12, border: 0, textAlign: 'left', cursor: 'pointer', width: '100%' }}>
+      <span className="ic" style={{ background: dark ? 'var(--ink)' : 'var(--accent)', color: dark ? 'var(--bg)' : 'var(--accent-ink)' }}><Icon name={icon} size={20} /></span>
+      <span className="grow stack" style={{ gap: 2 }}><b>{title}</b><span className="muted" style={{ fontSize: 13 }}>{text}</span></span>
+    </button>
+  );
+}
+
+function IosSteps({ url, hasShortcut }: { url: string; hasShortcut: boolean }) {
+  return (
+    <ol style={{ margin: 0, paddingLeft: 20, display: 'grid', gap: 8, fontSize: 14 }}>
+      <li>{hasShortcut ? <><a href="/ledgy.shortcut">Installa il comando Ledgy</a>. Quando Comandi lo chiede, incolla l'indirizzo copiato.</> : <>Il comando Ledgy firmato non è ancora caricato sul server. Nel frattempo puoi usare il tuo comando attuale sostituendo l'ultima azione (quella di Wallet) con “Ottieni contenuto URL”: metodo POST, corpo JSON con i campi <code>text</code>, <code>amount</code>, <code>currency</code>, <code>merchant</code>, indirizzo <code>{url.slice(0, 40)}…</code></>}</li>
+      <li>Apri Comandi → Automazione → + → <b>Notifica</b>. Scegli l'app della banca (Revolut, Wise, Jago…), scegli <b>Esegui subito</b> e come azione <b>Esegui comando: Ledgy</b>. Ripeti per ogni app.</li>
+      <li>Per il segnale giornaliero: Automazione → + → <b>Ora del giorno</b> 09:00 → Esegui subito → <b>Esegui comando: Ledgy</b>. Senza notifica il comando manda solo il segnale.</li>
+    </ol>
+  );
+}
+
+function AndroidSteps({ url }: { url: string }) {
+  return (
+    <ol style={{ margin: 0, paddingLeft: 20, display: 'grid', gap: 8, fontSize: 14 }}>
+      <li>Installa <b>MacroDroid</b> dal Play Store e concedigli l'accesso alle notifiche.</li>
+      <li>Nuova macro “Ledgy spese”. Trigger: <b>Notifica → Notifica ricevuta</b>, seleziona le app di banca, contenuto qualsiasi.</li>
+      <li>Azione: <b>Web → Richiesta HTTP</b>. Metodo POST, URL: l'indirizzo copiato. Corpo come <b>parametri di modulo</b> (form): <code>app</code> = nome pacchetto app, <code>title</code> = titolo notifica, <code>text</code> = testo notifica (inseriscili con il pulsante “…” del testo magico). Attiva “Blocca azioni successive fino al completamento”.</li>
+      <li>Seconda macro “Ledgy segnale”: trigger <b>Giorno/ora</b> ogni giorno alle 09:00, azione Richiesta HTTP POST a <code>{url.slice(0, 30)}…/ping</code>.</li>
+      <li>Batteria: togli MacroDroid dall'ottimizzazione batteria. Xiaomi: Avvio automatico attivo e “Nessuna restrizione”. Samsung: aggiungilo alle “App mai in sospensione”. Bloccalo nelle app recenti.</li>
+    </ol>
+  );
+}
+
+function Parsers({ list, reload }: { list: Parser[] | null; reload: () => void }) {
+  const store = useStore();
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ name: '', app: '', pattern: '', default_currency: 'IDR', sample: '' });
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const test = async () => {
+    setError(null);
+    try {
+      const r = await api<{ parsed: { amount: number; currency: string; merchant: string | null } | null }>('/capture/parsers/test', { method: 'POST', json: { ...form, text: form.sample } });
+      setResult(r.parsed ? `Importo ${r.parsed.amount} ${r.parsed.currency}, merchant “${r.parsed.merchant ?? '—'}”` : 'Il modello non trova nulla in questo testo.');
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  const save = async () => {
+    setError(null);
+    try {
+      await api('/capture/parsers', { method: 'POST', json: form });
+      store.toast('Lettore salvato');
+      setOpen(false);
+      reload();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  const remove = async (p: Parser) => {
+    await api(`/capture/parsers/${p.id}`, { method: 'DELETE' });
+    reload();
+  };
+
+  return (
+    <section className="card">
+      <div className="row between"><h2 className="h2">Lettori per banca</h2>{!open && <button className="btn small" onClick={() => setOpen(true)}>Nuovo</button>}</div>
+      <p className="muted" style={{ margin: 0, fontSize: 13 }}>Senza lettore Ledgy usa una lettura generica, che riconosce la maggior parte delle notifiche. Un lettore serve per le banche con un formato insolito.</p>
+      {list?.map((p) => (
+        <div key={p.id} className="row" style={{ fontSize: 14 }}>
+          <span className="grow"><b>{p.name}</b> <span className="muted">· {p.app}</span></span>
+          <button className="btn small" onClick={() => remove(p)}>Elimina</button>
+        </div>
+      ))}
+      {open && (
+        <div className="stack" style={{ gap: 8 }}>
+          <label className="field"><span>Nome</span><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Es. Jago" /></label>
+          <label className="field"><span>App (nome pacchetto o nome)</span><input className="input" value={form.app} onChange={(e) => setForm({ ...form, app: e.target.value })} placeholder="com.jago.digitalBanking" /></label>
+          <label className="field"><span>Notifica di esempio</span><textarea className="input" value={form.sample} onChange={(e) => setForm({ ...form, sample: e.target.value })} /></label>
+          <label className="field"><span>Modello (regex con i gruppi amount, currency, merchant)</span><input className="input mono" value={form.pattern} onChange={(e) => setForm({ ...form, pattern: e.target.value })} placeholder="Pembayaran (?<amount>[\d.]+) ke (?<merchant>.+?) berhasil" /></label>
+          <label className="field"><span>Valuta se non indicata</span><input className="input" value={form.default_currency} onChange={(e) => setForm({ ...form, default_currency: e.target.value.toUpperCase() })} /></label>
+          {result && <div className="raw">{result}</div>}
+          <ErrorBox error={error} />
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn" onClick={test} disabled={!form.pattern || !form.sample}>Prova</button>
+            <button className="btn primary grow" onClick={save} disabled={!form.name || !form.app || !form.pattern}>Salva lettore</button>
+            <button className="btn" onClick={() => setOpen(false)}>Annulla</button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
