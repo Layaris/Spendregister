@@ -75,6 +75,7 @@ Tabelle attese: accounts, captures, categories, devices, fx_rates, labels, login
 
 ## Dove si trova su Cloudflare
 
+- **Indirizzo pubblicato**: https://ledgy.tyrigi.workers.dev
 - **App e API**: dashboard Cloudflare → Workers & Pages → **ledgy**. È un Worker (non un progetto Pages) che serve sia la web app sia l'API. L'indirizzo pubblico è `https://ledgy.<sottodominio>.workers.dev`, visibile nella pagina del Worker.
 - **Database**: Storage & Databases → D1 → **ledgy**.
 - **Password e chiavi**: Workers & Pages → ledgy → Settings → Variables and Secrets.
