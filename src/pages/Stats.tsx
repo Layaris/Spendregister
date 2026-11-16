@@ -57,7 +57,7 @@ function Overview() {
           <Tile to="flusso" label="Flusso di cassa" value={eur(flow, true)} tone={flow >= 0 ? 'pos' : 'neg'}
             chart={<MiniBars income={s.income} spent={s.spent} />} extra={<Delta now={flow} before={prevFlow} up="good" />} />
           {ongoing && <Tile to="spese" label="Previsione a fine periodo" value={eur(s.forecast)} note={`Spesa finora ${eur(s.spent)} in ${s.days.elapsed} di ${s.days.total} giorni`} />}
-          <Tile to="entrate" label="Entrate" value={eur(s.income)} tone="pos" extra={<Delta now={s.income} before={s.previous.income} up="good" />} note="rispetto al periodo precedente" />
+          <Tile to="entrate" label="Entrate" value={eur(s.income)} tone="pos" extra={<Delta now={s.income} before={s.previous.income} up="good" />} note={s.previous.income ? 'rispetto al periodo precedente' : undefined} />
         </>
       )}
       <PeriodBar />

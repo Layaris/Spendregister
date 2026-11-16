@@ -25,7 +25,7 @@ Funzioni scelte, decisioni e note tecniche: [docs/funzioni.md](docs/funzioni.md)
 
 ## Struttura
 
-- `shared/`: logica pura usata da Worker, web app e test (importi, lettura notifiche, regole, doppioni).
+- `shared/`: logica pura usata da Worker, web app e test (importi, lettura notifiche, regole, doppioni). `keywords.ts`: parole chiave in molte lingue e marche → categoria (vince la parola più lunga).
 - `worker/`: API su Hono e D1. `capture.ts` è il percorso notifica → movimento.
 - `src/`: web app React. Navigazione con l'hash (`#/movimenti`, `#/m/<id>`).
 - `migrations/`: schema D1. Importi interi in millesimi; segno negativo = uscita. `occurred_at` tiene il fuso del telefono, `occurred_utc` serve per ordinare e confrontare.
@@ -38,3 +38,7 @@ Funzioni scelte, decisioni e note tecniche: [docs/funzioni.md](docs/funzioni.md)
 - Account come Multifolio: si usa subito senza account come *ospite* (riga di `users` senza email, creata da `POST /api/guest`); poi si crea un account (email e password, impronta PBKDF2) o si entra in uno esistente scegliendo cosa fare dei dati dell'ospite (`worker/guest.ts`: unisci, usa solo l'account, sostituisci; per la registrazione porta i dati o inizia vuoto), con finestra di conferma. Ogni riga ha `user_id`; categorie, regole e conti iniziali hanno id con suffisso (`cat_food~usr_…`). Recupero con codice di recupero (24 caratteri), niente email né servizi esterni. Il Cron toglie gli ospiti vuoti dopo 7 giorni e quelli senza sessioni.
 - Ordine: prima web app + server, con la cattura via automazioni del telefono (Comandi su iPhone, MacroDroid su Android). Poi le app native.
 - Niente cifratura end-to-end: il server deve leggere il testo delle notifiche per creare le spese.
+- Categoria di un movimento catturato: regole dell'utente → ultima spesa confermata dello stesso negozio (così una correzione vale da subito) → parole chiave → "da rivedere".
+- Categorie predefinite versione 2 (`worker/seed.ts`, `TREE`): gruppi facoltativi (Famiglia, Regali, Animali) creati spenti (`archived = 1`). `upgradeCatalog` porta gli account dalla versione 1 (stile Wallet) alla 2 al primo avvio: le predefinite diventano esattamente quelle nuove, movimenti e regole passano secondo `RETIRED`. Il test con tutte le categorie v1 è in `tests/integration` (`categories-v1.json`).
+- Tema: `data-theme` su `<html>` (`light` = mockup, predefinito anche col telefono scuro; `blue`, `dark`, `system`), letto da `public/theme.js` prima del disegno. Valuta di visualizzazione: `eur()` in `src/util.ts` converte i totali in euro al tasso di oggi.
+- Il backup include tutte le tabelle dell'account, preferiti e impostazioni compresi: una tabella o impostazione nuova va aggiunta a `worker/backup.ts`, `src/backup.ts`, `worker/guest.ts` e alla pulizia in `worker/index.ts`.

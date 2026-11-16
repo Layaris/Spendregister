@@ -43,7 +43,7 @@ export function Categories() {
               <button className="grow row" style={{ background: 'none', border: 0, padding: 0, gap: 10, color: 'inherit', cursor: 'pointer', textAlign: 'left' }}
                 onClick={() => setOpen(open === g.id ? null : g.id)} aria-expanded={open === g.id}>
                 <span className="dot" style={{ background: g.color ?? 'var(--line)', width: 12, height: 12 }} />
-                <span className="grow"><b>{g.name}</b><br /><span className="muted" style={{ fontSize: 13 }}>{kids(g.id).length} sottocategorie · {total} movimenti{on ? '' : ' · spenta'}</span></span>
+                <span className="grow"><b>{g.name}</b><br /><span className="muted" style={{ fontSize: 13 }}>{kids(g.id).length} sottocategorie · {total} {total === 1 ? 'movimento' : 'movimenti'}{on ? '' : ' · spenta'}</span></span>
                 <span className="muted" aria-hidden="true">{open === g.id ? '▴' : '▾'}</span>
               </button>
               <Switch on={on} label={`${on ? 'Spegni' : 'Accendi'} ${g.name}`} onChange={(v) => run(() => api(`/categories/${g.id}/enabled`, { method: 'POST', json: { enabled: v } }), v ? `${g.name} accesa` : `${g.name} spenta`)} />

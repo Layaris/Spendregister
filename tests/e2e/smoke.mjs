@@ -20,7 +20,8 @@ const failures = [];
 const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'ERRORE'} ${what}`); if (!ok) failures.push(what); };
 
 const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 390, height: 844 }, acceptDownloads: true });
+// Telefono in modalità scura: l'app deve partire comunque con il tema chiaro del mockup.
+const page = await browser.newPage({ viewport: { width: 390, height: 844 }, acceptDownloads: true, colorScheme: 'dark' });
 const errors = [];
 page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
 page.on('console', (m) => { if (m.type() === 'error' && !/\b(401|409)\b/.test(m.text())) errors.push(`console: ${m.text()}`); });
@@ -28,6 +29,7 @@ page.on('console', (m) => { if (m.type() === 'error' && !/\b(401|409)\b/.test(m.
 await page.goto(BASE);
 await page.waitForSelector('.tabbar');
 check(await page.isVisible('text=Stai usando Ledgy senza account'), "si usa subito, senza account, con l'invito a crearlo");
+check(await page.evaluate(() => getComputedStyle(document.body).backgroundColor) === 'rgb(241, 244, 242)', 'tema chiaro del mockup anche col telefono in modalità scura');
 
 // Dati di prova inviati come farebbe un telefono.
 const api = (path, init) => page.evaluate(async ([p, i]) => { const r = await fetch(p, i); return r.json(); }, [path, init]);
@@ -41,7 +43,7 @@ await api(inPath, json({ title: 'BCA', text: `Transaksi berhasil Rp 41.${String(
 const me = () => api('/api/me');
 check((await me()).guest === true, "l'ospite ha una sessione sul server");
 const grabRule = (await api('/api/rules')).items.find((r) => r.name === 'Grab').id;
-const routes = ['', 'rivedere', 'movimenti', 'aggiungi', 'statistiche', 'regole', `regole/${grabRule}`, 'cattura', 'altro', 'assistente'];
+const routes = ['', 'rivedere', 'movimenti', 'aggiungi', 'aggiungi/entrata', 'statistiche', 'statistiche/spese', 'statistiche/flusso', 'statistiche/entrate', 'statistiche/saldo', 'regole', `regole/${grabRule}`, 'cattura', 'altro', 'categorie', 'assistente'];
 for (const r of routes) {
   await page.goto(`${BASE}/#/${r}`);
   await page.waitForTimeout(500);
@@ -53,7 +55,7 @@ for (const r of routes) {
 await page.goto(`${BASE}/#/rivedere`);
 await page.waitForSelector(`text=Grab`);
 const reviewBefore = (await api('/api/bootstrap')).review_count;
-await page.click('section.card button:has-text("Ristorante, fast-food")');
+await page.click('section.card button:has-text("Ristoranti")');
 await page.waitForTimeout(700);
 check((await api('/api/bootstrap')).review_count === reviewBefore - 1, 'risolve una spesa da rivedere con un tocco');
 
@@ -68,6 +70,50 @@ await page.fill('input[placeholder^="Es. Warung"]', 'Caffè E2E');
 await page.click('button:has-text("Salva spesa")');
 await page.waitForFunction(() => location.hash.startsWith('#/m/'));
 check(true, 'salva una spesa e apre il dettaglio');
+
+// Dettaglio: la nota si scrive direttamente e si salva lasciando il campo.
+const txId = await page.evaluate(() => location.hash.split('/').pop());
+await page.fill('textarea[placeholder="Aggiungi una nota"]', 'Nota E2E');
+await page.click('text=Natura della spesa');
+await page.waitForTimeout(700);
+check((await api(`/api/transactions/${txId}`)).note === 'Nota E2E', 'la nota si modifica e si salva dal dettaglio');
+
+// Schermata +: sottocategoria nuova con un tap dal pannello, e preferito con la stellina.
+await page.goto(`${BASE}/#/aggiungi`);
+await page.waitForSelector('.keypad');
+for (const k of ['2', '5', '000']) await page.click(`.keypad button:text-is("${k}")`);
+await page.fill('input[placeholder^="Es. Warung"]', 'Gelateria E2E');
+await page.click('.pill:has-text("Altre…")');
+await page.waitForSelector('[aria-label="Scegli la categoria"]');
+await page.click('[aria-label="Scegli la categoria"] .pill.add >> nth=0');
+await page.fill('input[placeholder="Nome della sottocategoria"]', 'Gelato E2E');
+await page.click('[aria-label="Scegli la categoria"] button:has-text("Crea")');
+await page.waitForSelector('.pill[aria-pressed="true"]:has-text("Gelato E2E")');
+check(true, 'crea una sottocategoria dal pannello e la sceglie');
+await page.click('button[aria-label="Salva anche nei preferiti"]');
+await page.click('button:has-text("Salva spesa")');
+await page.waitForFunction(() => location.hash.startsWith('#/m/'));
+check((await api('/api/favorites')).items.some((f) => f.name === 'Gelateria E2E'), 'salva la spesa anche tra i preferiti');
+await page.goto(`${BASE}/#/aggiungi`);
+await page.click('.pill.fav:has-text("Gelateria E2E")');
+check((await page.textContent('.hero-amount')).trim() === '25.000' && await page.inputValue('input[placeholder^="Es. Warung"]') === 'Gelateria E2E', 'un tap su un preferito compila importo e nome');
+
+// Statistiche: periodo dal pannello in basso.
+await page.goto(`${BASE}/#/statistiche`);
+await page.click('.periodbar-label');
+await page.click('.sheet-option:has-text("Quest’anno")');
+check((await page.textContent('.periodbar-label')).includes('Quest’anno'), 'cambia il periodo delle statistiche');
+await page.click('a[href="#/statistiche/flusso"]');
+await page.waitForSelector('text=Sto spendendo meno di quanto guadagno?');
+check(true, 'apre il dettaglio del flusso di cassa');
+
+// Categorie: un gruppo facoltativo si accende e si spegne.
+await page.goto(`${BASE}/#/categorie`);
+await page.click('button[aria-label="Accendi Animali"]');
+await page.waitForSelector('button[aria-label="Spegni Animali"]');
+check((await api('/api/bootstrap')).categories.some((c) => c.name === 'Veterinario'), 'accende un gruppo di categorie');
+await page.click('button[aria-label="Spegni Animali"]');
+await page.waitForSelector('button[aria-label="Accendi Animali"]');
 
 // Regola: anteprima sullo storico.
 await page.goto(`${BASE}/#/regole/${grabRule}`);
