@@ -284,6 +284,7 @@ describe('cattura delle notifiche', () => {
   it('Grab tra 2 e 6 € va in "da rivedere" con la scelta', async () => {
     const r = await capture(deviceUrl, { title: 'Revolut', text: 'Hai pagato Rp55.600 a Grab* A-A359GUFW36UCAV', posted_at: '2026-11-10T14:32:08+08:00' });
     expect(r.json.status).toBe('review');
+    expect(r.json.notify).toBe('Da rivedere: Grab −2,78 €');
     const t = await tx(r.json.transaction_id);
     expect(t.amount).toBe(-55600000);
     expect(t.amount_eur).toBe(-2780);
@@ -300,6 +301,7 @@ describe('cattura delle notifiche', () => {
   it('Grab sotto 2 € diventa Taxi da sola', async () => {
     const r = await capture(deviceUrl, { text: 'Hai pagato Rp25.000 a Grab* A-B1', posted_at: '2026-11-10T16:00:00+08:00' });
     expect(r.json.status).toBe('created');
+    expect(r.json.notify).toBeUndefined();
     const t = await tx(r.json.transaction_id);
     expect(t.category_id).toBe(C('cat_transport_taxi'));
     expect(t.nature).toBe('need');

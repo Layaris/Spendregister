@@ -7,7 +7,9 @@ server Ledgy, che fa controlli, cambio, regole e anti-duplicati.
 
 - Senza notifica in ingresso (lanciato a mano o dall'automazione "Ora del giorno")
   manda solo il segnale giornaliero a <indirizzo>/ping.
-- Se il server mette la spesa "da rivedere", mostra una notifica.
+- Se il server mette la spesa "da rivedere" risponde con il campo `notify` e il comando lo mostra.
+  Il controllo è "ha un valore" e non "è uguale a": il confronto di testo nel formato vecchio
+  l'iOS attuale non lo legge ("Scegli un valore per ogni parametro nell'azione").
 - All'installazione iOS chiede l'indirizzo privato del telefono (domanda di importazione).
 
 Il file va firmato (HubSign o un Mac) prima di poterlo installare su iPhone.
@@ -79,7 +81,7 @@ PROMPT = (
 def build() -> dict:
     u_url, u_text, u_llm = new_uuid(), new_uuid(), new_uuid()
     u_amount, u_cur, u_merch, u_cat = new_uuid(), new_uuid(), new_uuid(), new_uuid()
-    u_resp, u_status, u_summary = new_uuid(), new_uuid(), new_uuid()
+    u_resp, u_notify = new_uuid(), new_uuid()
     g_empty, g_review = new_uuid(), new_uuid()
 
     url = output_ref(u_url, 'Indirizzo Ledgy')
@@ -119,12 +121,11 @@ def build() -> dict:
                    ('category', token([output_ref(u_cat, 'Categoria letta')])),
                    ('posted_at', token([{'Type': 'CurrentDate', 'Aggrandizements': [{'Type': 'WFDateFormatVariableAggrandizement', 'WFDateFormatStyle': 'ISO 8601', 'WFISO8601IncludeTime': True}]}])),
                ])),
-        get_key(u_status, 'status', 'Esito', output_ref(u_resp, 'Risposta Ledgy')),
-        get_key(u_summary, 'summary', 'Riepilogo', output_ref(u_resp, 'Risposta Ledgy')),
-        # 14-16. Se la spesa va rivista, avvisa.
-        action('conditional', GroupingIdentifier=g_review, WFControlFlowMode=0, WFCondition=4, WFConditionalActionString='review',
-               WFInput={'Type': 'Variable', 'Variable': attachment(output_ref(u_status, 'Esito'))}),
-        action('notification', UUID=new_uuid(), WFNotificationActionTitle='Ledgy', WFNotificationActionBody=token(['Da rivedere: ', output_ref(u_summary, 'Riepilogo')])),
+        get_key(u_notify, 'notify', 'Avviso', output_ref(u_resp, 'Risposta Ledgy')),
+        # 13-15. Se la spesa va rivista il server manda "notify": il comando lo mostra.
+        action('conditional', GroupingIdentifier=g_review, WFControlFlowMode=0, WFCondition=100,
+               WFInput={'Type': 'Variable', 'Variable': attachment(output_ref(u_notify, 'Avviso'))}),
+        action('notification', UUID=new_uuid(), WFNotificationActionTitle='Ledgy', WFNotificationActionBody=token([output_ref(u_notify, 'Avviso')])),
         action('conditional', GroupingIdentifier=g_review, WFControlFlowMode=2, UUID=new_uuid()),
     ]
 

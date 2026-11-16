@@ -42,6 +42,8 @@ export interface CaptureResult {
   capture_id: string;
   transaction_id?: string;
   summary?: string;
+  /** Solo per le spese da rivedere: il testo della notifica che il comando iPhone mostra. */
+  notify?: string;
 }
 
 /** Dalla notifica al movimento: lettura, cambio, regole, doppioni. */
@@ -144,11 +146,13 @@ export async function processCapture(db: D1Database, userId: string, deviceId: s
   const detail = [parsed.via, categoryVia ? `categoria da ${categoryVia}` : null].filter(Boolean).join(' · ');
   await save(status === 'review' ? 'review' : 'created', detail, txId);
   if (deviceId) await db.prepare('UPDATE devices SET last_capture_at = ? WHERE id = ?').bind(nowIso(), deviceId).run();
+  const summary = `${finalMerchant ?? 'Spesa'} ${formatMoney(conv?.amount_eur ?? amount, conv ? 'EUR' : parsed.currency)}`;
   return {
     status: status === 'review' ? 'review' : 'created',
     capture_id: captureId,
     transaction_id: txId,
-    summary: `${finalMerchant ?? 'Spesa'} ${formatMoney(conv?.amount_eur ?? amount, conv ? 'EUR' : parsed.currency)}`,
+    summary,
+    ...(status === 'review' ? { notify: `Da rivedere: ${summary}` } : {}),
   };
 }
 
