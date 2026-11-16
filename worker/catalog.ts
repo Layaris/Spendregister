@@ -39,7 +39,7 @@ catalogApi.get('/bootstrap', async (c) => {
     categories: categories.results,
     labels: labels.results,
     review_count: review?.n ?? 0,
-    settings: { timezone: account.timezone, recovery_created_at: account.recovery_created_at },
+    settings: { timezone: account.timezone, recovery_created_at: account.recovery_created_at, display_currency: account.display_currency, theme: account.theme },
     account: { email: account.email },
   });
 });
@@ -94,6 +94,76 @@ catalogApi.put('/categories/:id', async (c) => {
   return c.json({ ok: true });
 });
 
+/** Tutte le categorie, anche quelle spente (pagina Categorie), con quanti movimenti hanno. */
+catalogApi.get('/categories', async (c) => {
+  const { results } = await c.env.DB
+    .prepare(`SELECT c.*, (SELECT COUNT(*) FROM transactions t WHERE t.category_id = c.id AND t.deleted_at IS NULL) AS count
+              FROM categories c WHERE c.user_id = ? ORDER BY c.position, c.name`)
+    .bind(uid(c)).all();
+  return c.json({ items: results });
+});
+
+/** Accende o spegne una categoria; per un gruppo vale anche per tutte le sue sottocategorie. */
+catalogApi.post('/categories/:id/enabled', async (c) => {
+  const b = await body<{ enabled?: boolean }>(c);
+  const id = c.req.param('id');
+  await checkOwned(c.env.DB, 'categories', id, uid(c));
+  const off = b.enabled ? 0 : 1;
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE categories SET archived = ? WHERE id = ? AND user_id = ?').bind(off, id, uid(c)),
+    c.env.DB.prepare('UPDATE categories SET archived = ? WHERE parent_id = ? AND user_id = ?').bind(off, id, uid(c)),
+  ]);
+  return c.json({ ok: true });
+});
+
+/**
+ * Elimina una categoria (e le sue sottocategorie). I movimenti e le regole passano a `into`,
+ * oppure restano senza categoria. Una sottocategoria non può finire dentro sé stessa.
+ */
+catalogApi.delete('/categories/:id', async (c) => {
+  const id = c.req.param('id');
+  const into = c.req.query('into') || null;
+  const db = c.env.DB;
+  const u = uid(c);
+  await checkOwned(db, 'categories', id, u);
+  const children = (await db.prepare('SELECT id FROM categories WHERE parent_id = ? AND user_id = ?').bind(id, u).all<{ id: string }>()).results.map((r) => r.id);
+  const gone = [id, ...children];
+  if (into) {
+    if (gone.includes(into)) bad('Scegli una categoria diversa da quella che elimini');
+    await checkOwned(db, 'categories', into, u);
+  }
+  const marks = gone.map(() => '?').join(', ');
+  const rules = (await db.prepare('SELECT id, definition FROM rules WHERE user_id = ?').bind(u).all<{ id: string; definition: string }>()).results;
+  const stmts: D1PreparedStatement[] = [
+    db.prepare(`UPDATE transactions SET category_id = ?, updated_at = ? WHERE user_id = ? AND category_id IN (${marks})`).bind(into, nowIso(), u, ...gone),
+  ];
+  const goneSet = new Set(gone);
+  const fix = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(fix);
+    if (!v || typeof v !== 'object') return v;
+    const o: Record<string, unknown> = { ...(v as Record<string, unknown>) };
+    if (typeof o.category_id === 'string' && goneSet.has(o.category_id)) {
+      if (into) o.category_id = into;
+      else delete o.category_id;
+    }
+    if (Array.isArray(o.ask)) {
+      const ask = [...new Set((o.ask as string[]).map((x) => (goneSet.has(x) ? into : x)).filter((x): x is string => !!x))];
+      if (ask.length > 1) o.ask = ask;
+      else delete o.ask;
+    }
+    for (const k of ['actions', 'bands']) if (o[k]) o[k] = fix(o[k]);
+    return o;
+  };
+  for (const r of rules) {
+    if (!gone.some((g) => r.definition.includes(`"${g}"`))) continue;
+    stmts.push(db.prepare('UPDATE rules SET definition = ? WHERE id = ?').bind(JSON.stringify(fix(JSON.parse(r.definition))), r.id));
+  }
+  stmts.push(db.prepare(`DELETE FROM categories WHERE user_id = ? AND parent_id = ?`).bind(u, id));
+  stmts.push(db.prepare('DELETE FROM categories WHERE user_id = ? AND id = ?').bind(u, id));
+  await runBatch(db, stmts);
+  return c.json({ ok: true, moved_to: into });
+});
+
 /** Unisce una categoria in un'altra spostando tutti i movimenti. */
 catalogApi.post('/categories/:id/merge', async (c) => {
   const b = await body<{ into?: string }>(c);
@@ -106,6 +176,36 @@ catalogApi.post('/categories/:id/merge', async (c) => {
     c.env.DB.prepare('UPDATE categories SET parent_id = ? WHERE parent_id = ? AND user_id = ?').bind(b.into, id, uid(c)),
     c.env.DB.prepare('UPDATE categories SET archived = 1 WHERE id = ? AND user_id = ?').bind(id, uid(c)),
   ]);
+  return c.json({ ok: true });
+});
+
+// ---- Preferiti: movimenti che si ripetono, da riusare con un tap ----
+
+catalogApi.get('/favorites', async (c) => {
+  const { results } = await c.env.DB.prepare('SELECT * FROM favorites WHERE user_id = ? ORDER BY position, created_at').bind(uid(c)).all();
+  return c.json({ items: results });
+});
+
+catalogApi.post('/favorites', async (c) => {
+  const b = await body<{ name?: string; type?: string; amount?: number | null; currency?: string; merchant?: string | null; category_id?: string | null; account_id?: string | null; note?: string | null }>(c);
+  const currency = (b.currency ?? 'EUR').toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) bad('Valuta non valida');
+  const name = (b.name ?? b.merchant ?? '').trim();
+  if (!name) bad('Dai un nome al preferito');
+  await checkOwned(c.env.DB, 'categories', b.category_id, uid(c));
+  await checkOwned(c.env.DB, 'accounts', b.account_id, uid(c));
+  const id = newId('fav');
+  await c.env.DB
+    .prepare(`INSERT INTO favorites (id, user_id, name, type, amount, currency, merchant, category_id, account_id, note, position, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM favorites WHERE user_id = ?), ?)`)
+    .bind(id, uid(c), name.slice(0, 60), b.type === 'income' ? 'income' : 'expense', b.amount != null && b.amount > 0 ? b.amount : null, currency,
+      b.merchant?.trim() || null, b.category_id ?? null, b.account_id ?? null, b.note?.trim() || null, uid(c), nowIso())
+    .run();
+  return c.json({ id }, 201);
+});
+
+catalogApi.delete('/favorites/:id', async (c) => {
+  await c.env.DB.prepare('DELETE FROM favorites WHERE id = ? AND user_id = ?').bind(c.req.param('id'), uid(c)).run();
   return c.json({ ok: true });
 });
 
@@ -233,14 +333,26 @@ catalogApi.post('/rules/:id/apply', async (c) => {
 
 catalogApi.get('/settings', async (c) => {
   const a = await accountInfo(c.env.DB, uid(c));
-  return c.json({ timezone: a.timezone, recovery_created_at: a.recovery_created_at });
+  return c.json({ timezone: a.timezone, recovery_created_at: a.recovery_created_at, display_currency: a.display_currency, theme: a.theme });
 });
 
+/** Valute in cui si possono vedere totali e saldi (Impostazioni). */
+export const DISPLAY_CURRENCIES = ['EUR', 'USD', 'AED', 'PHP', 'IDR', 'SGD', 'CNY', 'THB'];
+
 catalogApi.put('/settings', async (c) => {
-  const b = await body<{ timezone?: string }>(c);
+  const b = await body<{ timezone?: string; display_currency?: string; theme?: string }>(c);
+  const db = c.env.DB;
   if (b.timezone !== undefined) {
     if (!isValidTimeZone(b.timezone)) bad('Fuso orario non valido');
-    await c.env.DB.prepare('UPDATE users SET timezone = ? WHERE id = ?').bind(b.timezone, uid(c)).run();
+    await db.prepare('UPDATE users SET timezone = ? WHERE id = ?').bind(b.timezone, uid(c)).run();
+  }
+  if (b.display_currency !== undefined) {
+    if (!DISPLAY_CURRENCIES.includes(b.display_currency)) bad('Valuta non disponibile');
+    await db.prepare('UPDATE users SET display_currency = ? WHERE id = ?').bind(b.display_currency, uid(c)).run();
+  }
+  if (b.theme !== undefined) {
+    if (!['light', 'blue', 'dark', 'system'].includes(b.theme)) bad('Tema non valido');
+    await db.prepare('UPDATE users SET theme = ? WHERE id = ?').bind(b.theme, uid(c)).run();
   }
   return c.json({ ok: true });
 });

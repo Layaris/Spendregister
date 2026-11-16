@@ -2,7 +2,7 @@
 // I test sono in ordine e condividono il database. Il database parte con qualche ospite e account
 // creati "a gennaio" (vedi server.ts), per la pulizia notturna.
 import { beforeAll, describe, expect, inject, it } from 'vitest';
-import { OLD } from './server';
+import { OLD, V1_CATEGORIES } from './server';
 
 const BASE = inject('baseUrl');
 const EMAIL = 'anna@example.com';
@@ -760,7 +760,8 @@ describe('categorie versione 2', () => {
     expect(byId.has('cat_life_streaming~usr_v1')).toBe(false);
     expect((byId.get('cat_subs_streaming~usr_v1') as any).name).toBe('Streaming video e musica');
     expect((byId.get('cat_food_restaurant~usr_v1') as any).name).toBe('Ristoranti');
-    expect((byId.get('cat_food_bar~usr_v1') as any).name).toBe('Il mio bar'); // rinominata dall'utente: resta
+    expect((byId.get('cat_food_bar~usr_v1') as any).name).toBe('Bar e caffè'); // aggiornamento 1 → 2: i nomi predefiniti si sovrascrivono
+    expect((byId.get('cat_mia_v1') as any).name).toBe('Concerti'); // quelle create dall'utente restano
     expect((byId.get('cat_mia_v1') as any).parent_id).toBe('cat_fun~usr_v1');
     expect(byId.has('cat_family~usr_v1')).toBe(false); // gruppo facoltativo: spento
     const t = (await c.get('/api/transactions/tx_v1')).json;
@@ -769,6 +770,43 @@ describe('categorie versione 2', () => {
     expect(rule.definition.actions.category_id).toBe('cat_subs_streaming~usr_v1');
     // Una seconda volta non cambia nulla.
     expect((await c.get('/api/bootstrap')).json.categories.length).toBe(b.categories.length);
+  });
+  it('un account con TUTTE le categorie vecchie diventa uguale a uno nuovo, senza perdere una spesa', async () => {
+    const c = new Client('10.40.0.3');
+    c.cookie = `ledgy_session=${OLD.v1FullSession}`;
+    const fresh = new Client('10.40.0.4');
+    await fresh.post('/api/guest');
+    const base = (id: string) => id.split('~')[0];
+    const shape = async (x: Client) => (await x.get('/api/categories')).json.items
+      .map((k: any) => `${base(k.id)}|${k.parent_id ? base(k.parent_id) : ''}|${k.name}|${k.archived}`).sort();
+    expect((await c.get('/api/bootstrap')).status).toBe(200);
+    // Stesse categorie, stessi nomi e stessi gruppi spenti di un account appena creato.
+    const [got, want] = [await shape(c), await shape(fresh)];
+    expect(got).toEqual(want);
+    // Le categorie tolte non ci sono più.
+    const ids = new Set((await c.get('/api/categories')).json.items.map((k: any) => base(k.id)));
+    for (const old of ['cat_life', 'cat_comm', 'cat_shop_online', 'cat_shop_pharmacy', 'cat_invest_savings']) expect(ids.has(old)).toBe(false);
+    // Ogni spesa c'è ancora e punta a una categoria esistente e accesa.
+    const items = (await c.get('/api/transactions?limit=500')).json.items;
+    expect(items.length).toBe(V1_CATEGORIES.length);
+    const on = new Set((await c.get('/api/bootstrap')).json.categories.map((k: any) => k.id));
+    expect(items.filter((t: any) => !on.has(t.category_id))).toEqual([]);
+    // Esempi di spostamento.
+    const byMerchant = new Map(items.map((t: any) => [t.merchant, base(t.category_id)]));
+    const at = (oldId: string) => byMerchant.get(`Spesa ${V1_CATEGORIES.findIndex((k) => k.id === oldId)}`);
+    expect(at('cat_life_streaming')).toBe('cat_subs_streaming');
+    expect(at('cat_comm_phone')).toBe('cat_subs_phone');
+    expect(at('cat_shop_pharmacy')).toBe('cat_health_pharmacy');
+    expect(at('cat_food_restaurant')).toBe('cat_food_restaurant');
+    expect(at('cat_income_salary')).toBe('cat_income_salary');
+    // La regola di allora punta alla categoria nuova, e le statistiche funzionano.
+    const rule = (await c.get('/api/rules')).json.items.find((r: any) => r.name === 'Telefono');
+    expect(base(rule.definition.actions.category_id)).toBe('cat_subs_phone');
+    expect((await c.get('/api/stats?from=2026-11-01&to=2026-12-01')).json.count).toBe(V1_CATEGORIES.length);
+    // La cattura usa le categorie nuove.
+    const phone = await newDevice(c);
+    const r = await c.post(phone, { text: 'Paid 15.99 USD to Netflix' });
+    expect(base((await c.get(`/api/transactions/${r.json.transaction_id}`)).json.category_id)).toBe('cat_subs_streaming');
   });
   it('un account nuovo ha già le categorie nuove, con i gruppi facoltativi spenti', async () => {
     const own: Record<string, string> = {};
@@ -815,6 +853,80 @@ describe('cattura che impara', () => {
     expect((await c.post('/api/transactions/recategorize', { merchant: 'Restaurant', category_id: own.cat_food_restaurant })).json.changed).toBe(1);
     const after = (await c.get('/api/transactions?merchant=restaurant')).json.items;
     expect(after.every((t: any) => t.category_id === own.cat_food_restaurant)).toBe(true);
+  });
+});
+
+describe('gestione categorie, preferiti, impostazioni', () => {
+  const c = new Client('10.42.0.1');
+  const own: Record<string, string> = {};
+  beforeAll(async () => {
+    await c.post('/api/guest');
+    await loadOwn(c, own);
+  });
+  it('elenca anche le categorie spente e si accende un gruppo con tutte le sottocategorie', async () => {
+    const all = (await c.get('/api/categories')).json.items;
+    const family = all.find((x: any) => x.id === `cat_family~${own.cat_food.split('~')[1]}`);
+    expect(family.archived).toBe(1);
+    expect((await c.post(`/api/categories/${family.id}/enabled`, { enabled: true })).status).toBe(200);
+    const boot = (await c.get('/api/bootstrap')).json.categories;
+    expect(boot.filter((x: any) => x.id === family.id || x.parent_id === family.id).length).toBe(4);
+    await c.post(`/api/categories/${family.id}/enabled`, { enabled: false });
+    expect((await c.get('/api/bootstrap')).json.categories.some((x: any) => x.parent_id === family.id)).toBe(false);
+  });
+  it('elimina un gruppo spostando movimenti e regole nella categoria scelta', async () => {
+    const t = (await c.post('/api/transactions', { amount: 9, currency: 'EUR', merchant: 'Spotify', category_id: own.cat_subs_streaming })).json.id;
+    const rule = (await c.post('/api/rules', { name: 'Musica', definition: { conditions: [{ field: 'merchant', op: 'contains', value: 'spotify' }], actions: { category_id: own.cat_subs_streaming }, bands: [{ min: 1, actions: { ask: [own.cat_subs_streaming, own.cat_subs_games, own.cat_fun_events] } }] } })).json.id;
+    expect((await c.del(`/api/categories/${own.cat_subs}?into=${own.cat_subs_streaming}`)).status).toBe(400);
+    expect((await c.del(`/api/categories/${own.cat_subs}?into=${own.cat_fun_events}`)).status).toBe(200);
+    expect((await c.get(`/api/transactions/${t}`)).json.category_id).toBe(own.cat_fun_events);
+    const def = (await c.get('/api/rules')).json.items.find((r: any) => r.id === rule).definition;
+    expect(def.actions.category_id).toBe(own.cat_fun_events);
+    expect(def.bands[0].actions.ask).toBeUndefined(); // restava una sola scelta: niente più "chiedimi"
+    const boot = (await c.get('/api/bootstrap')).json.categories;
+    expect(boot.some((x: any) => x.id === own.cat_subs || x.parent_id === own.cat_subs)).toBe(false);
+  });
+  it('elimina una sottocategoria lasciando i movimenti senza categoria se non se ne sceglie una', async () => {
+    const t = (await c.post('/api/transactions', { amount: 3, currency: 'EUR', merchant: 'Edicola', category_id: own.cat_shop_hobby })).json.id;
+    expect((await c.del(`/api/categories/${own.cat_shop_hobby}`)).status).toBe(200);
+    expect((await c.get(`/api/transactions/${t}`)).json.category_id).toBeNull();
+    expect((await c.del(`/api/categories/${own.cat_shop_hobby}`)).status).toBe(400);
+  });
+  it('salva, elenca e toglie i preferiti', async () => {
+    expect((await c.post('/api/favorites', { type: 'income', amount: 0, currency: 'EUR' })).status).toBe(400);
+    const id = (await c.post('/api/favorites', { name: 'Stipendio', type: 'income', amount: 2500, currency: 'EUR', category_id: own.cat_income_salary, note: 'mensile' })).json.id;
+    await c.post('/api/favorites', { merchant: 'Caffè', amount: 35000, currency: 'IDR', category_id: own.cat_food_bar });
+    const items = (await c.get('/api/favorites')).json.items;
+    expect(items.map((f: any) => f.name)).toEqual(['Stipendio', 'Caffè']);
+    expect(items[0]).toMatchObject({ type: 'income', amount: 2500, note: 'mensile' });
+    await c.del(`/api/favorites/${id}`);
+    expect((await c.get('/api/favorites')).json.items.length).toBe(1);
+  });
+  it('i preferiti di un account non si vedono da un altro', async () => {
+    const other = new Client('10.42.0.3');
+    await other.post('/api/guest');
+    expect((await other.get('/api/favorites')).json.items).toEqual([]);
+  });
+  it('valuta di visualizzazione e tema si salvano e finiscono nel backup', async () => {
+    expect((await c.put('/api/settings', { display_currency: 'XYZ' })).status).toBe(400);
+    expect((await c.put('/api/settings', { theme: 'rosa' })).status).toBe(400);
+    expect((await c.put('/api/settings', { display_currency: 'AED', theme: 'blue' })).status).toBe(200);
+    expect((await c.get('/api/bootstrap')).json.settings).toMatchObject({ display_currency: 'AED', theme: 'blue' });
+    const settings = (await c.get('/api/backup/export?table=settings')).json.rows;
+    expect(settings).toEqual(expect.arrayContaining([{ key: 'display_currency', value: 'AED' }, { key: 'theme', value: 'blue' }]));
+    expect((await c.get('/api/backup/export?table=favorites')).json.rows.length).toBe(1);
+  });
+  it('il backup con i preferiti si reimporta in un altro account', async () => {
+    const b = await exportAll(c);
+    b.tables.favorites = (await c.get('/api/backup/export?table=favorites')).json.rows;
+    const d = new Client('10.42.0.4');
+    await d.post('/api/guest');
+    expect((await importAll(d, b, 'replace')).status).toBe(200);
+    const fav = (await d.get('/api/favorites')).json.items;
+    expect(fav.map((f: any) => f.name)).toEqual(['Caffè']);
+    const dOwn: Record<string, string> = {};
+    await loadOwn(d, dOwn);
+    expect((await d.get('/api/bootstrap')).json.settings.display_currency).toBe('AED');
+    expect((await c.get('/api/favorites')).json.items.length).toBe(1); // l'originale resta dov'è
   });
 });
 

@@ -3,6 +3,7 @@ import { api, ApiError, setUnauthorizedHandler } from './api';
 import { Icon } from './icons';
 import { Add } from './pages/Add';
 import { Capture } from './pages/Capture';
+import { Categories } from './pages/Categories';
 import { Home } from './pages/Home';
 import { Login } from './pages/Login';
 import { ComingSoon, More } from './pages/More';
@@ -72,17 +73,18 @@ function Shell({ onAuthChange }: { onAuthChange: () => void }) {
     case 'movimenti': content = <Movements category={a} />; break;
     case 'rivedere': content = <Review />; break;
     case 'm': content = a ? <TxDetail id={a} /> : <Movements />; break;
-    case 'aggiungi': content = <Add />; break;
-    case 'statistiche': content = <Stats />; break;
+    case 'aggiungi': content = <Add key={a ?? ''} initialKind={a === 'entrata' ? 'income' : 'expense'} />; break;
+    case 'statistiche': content = <Stats view={a} />; break;
     case 'regole': content = a ? <RuleEditor id={a} /> : <RulesList />; break;
     case 'cattura': content = <Capture />; break;
+    case 'categorie': content = <Categories />; break;
     case 'assistente': content = <ComingSoon title="Assistente AI" text="La chat sulle tue spese, la lettura di scontrini e screenshot e l'inserimento a voce arrivano con il prossimo aggiornamento, con Gemini o NanoGPT." />; break;
     case 'altro': content = <More onAuthChange={onAuthChange} />; break;
     case 'account': content = <Login key={a ?? ''} initial={a === 'crea' ? 'register' : 'login'} onDone={onAuthChange} />; break;
     default: content = <Home />;
   }
   const hideTabs = page === 'aggiungi' || page === 'account';
-  const current = (p: string) => (page ?? '') === p || (p === 'movimenti' && (page === 'm' || page === 'rivedere')) || (p === 'altro' && ['regole', 'cattura', 'assistente'].includes(page ?? ''));
+  const current = (p: string) => (page ?? '') === p || (p === 'movimenti' && (page === 'm' || page === 'rivedere')) || (p === 'altro' && ['regole', 'cattura', 'assistente', 'categorie'].includes(page ?? ''));
 
   return (
     <>

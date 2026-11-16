@@ -1,6 +1,6 @@
 // Avvia il vero Worker (wrangler dev) con un database D1 locale nuovo per ogni esecuzione dei test.
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,7 +14,12 @@ export const OLD = {
   abandonedGuestPhone: 'telefono-ospite-senza-sessione',
   registeredPhone: 'telefono-account-registrato',
   v1Session: 'sessione-account-categorie-v1',
+  v1FullSession: 'sessione-account-tutte-le-categorie-v1',
 };
+
+/** Tutte le categorie predefinite della versione 1, come le aveva chi si è registrato prima dell'aggiornamento. */
+export const V1_CATEGORIES: Array<{ id: string; name: string; parent: string | null; kind: string }> =
+  JSON.parse(readFileSync(new URL('./categories-v1.json', import.meta.url), 'utf8'));
 
 let proc: ChildProcess | null = null;
 let dir = '';
@@ -57,6 +62,17 @@ export default async function setup(project: TestProject) {
       + ` VALUES ('tx_v1', 'usr_v1', 'expense', -9000, 'EUR', -9000, '2026-11-01T10:00:00+08:00', '2026-11-01T02:00:00.000Z', 'Netflix', 'cat_life_streaming~usr_v1', '["cat_life_streaming~usr_v1"]', 'manual', 'confirmed', '${jan}', '${jan}');`,
     "INSERT INTO rules (id, user_id, name, enabled, priority, definition, created_at, updated_at) VALUES ('rule_v1', 'usr_v1', 'Streaming', 1, 1,"
       + ` '{"conditions":[{"field":"merchant","op":"contains","value":"netflix"}],"actions":{"category_id":"cat_life_streaming~usr_v1"}}', '${jan}', '${jan}');`,
+  ].join(' ')]);
+  // Account con TUTTE le categorie della versione 1, una spesa in ognuna e la regola "Telefono" di allora.
+  const f = 'usr_v1full';
+  run(['execute', 'ledgy', '--command', [
+    user(f, 'v1full@example.com'), session(OLD.v1FullSession, f),
+    `INSERT INTO categories (id, user_id, name, parent_id, kind, position) VALUES ${V1_CATEGORIES.map((c, i) =>
+      `('${c.id}~${f}', '${f}', '${c.name.replace(/'/g, "''")}', ${c.parent ? `'${c.parent}~${f}'` : 'NULL'}, '${c.kind}', ${i})`).join(', ')};`,
+    `INSERT INTO accounts (id, user_id, name, type, currency, initial_balance, position, created_at) VALUES ('acc_cash~${f}', '${f}', 'Contanti', 'cash', 'EUR', 0, 0, '${jan}');`,
+    `INSERT INTO transactions (id, user_id, type, account_id, amount, currency, amount_eur, occurred_at, occurred_utc, merchant, category_id, source, status, created_at, updated_at) VALUES ${V1_CATEGORIES.map((c, i) =>
+      `('tx_v1f_${i}', '${f}', '${c.kind}', 'acc_cash~${f}', ${c.kind === 'income' ? 1000 : -1000}, 'EUR', ${c.kind === 'income' ? 1000 : -1000}, '2026-11-01T10:00:00+08:00', '2026-11-01T02:00:00.000Z', 'Spesa ${i}', '${c.id}~${f}', 'manual', 'confirmed', '${jan}', '${jan}')`).join(', ')};`,
+    `INSERT INTO rules (id, user_id, name, enabled, priority, definition, created_at, updated_at) VALUES ('rule_telco~${f}', '${f}', 'Telefono', 1, 22, '{"conditions":[{"field":"merchant","op":"regex","value":"telkomsel"}],"actions":{"category_id":"cat_comm_phone~${f}","nature":"need"}}', '${jan}', '${jan}');`,
   ].join(' ')]);
   // File vuoto: evita che wrangler legga il .dev.vars dello sviluppatore.
   writeFileSync(join(dir, 'none.env'), '');

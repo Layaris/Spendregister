@@ -25,9 +25,10 @@ export const TABLES: Record<string, string[]> = {
     'capture_id', 'rule_ids', 'place', 'lat', 'lng', 'external_id', 'created_at', 'updated_at', 'deleted_at'],
   transaction_labels: ['transaction_id', 'label_id'],
   captures: ['id', 'device_id', 'received_at', 'posted_at', 'app', 'title', 'text', 'hint', 'hash', 'status', 'detail', 'transaction_id'],
+  favorites: ['id', 'name', 'type', 'amount', 'currency', 'merchant', 'category_id', 'account_id', 'note', 'position', 'created_at'],
 };
 export const TABLE_ORDER = Object.keys(TABLES);
-const OWNED = ['accounts', 'categories', 'labels', 'rules', 'parsers', 'devices', 'transactions', 'captures'] as const;
+const OWNED = ['accounts', 'categories', 'labels', 'rules', 'parsers', 'devices', 'transactions', 'captures', 'favorites'] as const;
 type Owned = (typeof OWNED)[number];
 
 type Row = Record<string, unknown>;
@@ -42,8 +43,10 @@ backupApi.get('/export', async (c) => {
   if (!cols) bad('Tabella sconosciuta');
   const u = uid(c);
   if (table === 'settings') {
-    const tz = await c.env.DB.prepare('SELECT timezone FROM users WHERE id = ?').bind(u).first<{ timezone: string }>();
-    return c.json({ rows: [{ key: 'timezone', value: tz?.timezone ?? 'Asia/Makassar' }], next: null });
+    const s = await c.env.DB.prepare('SELECT timezone, display_currency, theme FROM users WHERE id = ?').bind(u).first<{ timezone: string; display_currency: string; theme: string }>();
+    return c.json({ rows: [
+      { key: 'timezone', value: s?.timezone ?? 'Asia/Makassar' }, { key: 'display_currency', value: s?.display_currency ?? 'EUR' }, { key: 'theme', value: s?.theme ?? 'light' },
+    ], next: null });
   }
   const after = Number(c.req.query('after')) || 0;
   const limit = Math.min(Number(c.req.query('limit')) || 500, 1000);
@@ -67,7 +70,7 @@ backupApi.post('/import/begin', async (c) => {
     const u = uid(c);
     await db.batch([
       db.prepare('DELETE FROM transaction_labels WHERE transaction_id IN (SELECT id FROM transactions WHERE user_id = ?)').bind(u),
-      ...['captures', 'transactions', 'rules', 'parsers', 'devices', 'labels', 'categories', 'accounts'].map((t) => db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(u)),
+      ...['favorites', 'captures', 'transactions', 'rules', 'parsers', 'devices', 'labels', 'categories', 'accounts'].map((t) => db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(u)),
     ]);
   }
   return c.json({ ok: true });
@@ -159,8 +162,13 @@ backupApi.post('/import/chunk', async (c) => {
 
   if (table === 'settings') {
     if (!merge) {
-      const tz = rows.find((r) => r.key === 'timezone')?.value;
+      const get = (k: string) => rows.find((r) => r.key === k)?.value;
+      const tz = get('timezone');
       if (typeof tz === 'string' && isValidTimeZone(tz)) await db.prepare('UPDATE users SET timezone = ? WHERE id = ?').bind(tz, u).run();
+      const cur = get('display_currency');
+      if (typeof cur === 'string' && /^[A-Z]{3}$/.test(cur)) await db.prepare('UPDATE users SET display_currency = ? WHERE id = ?').bind(cur, u).run();
+      const theme = get('theme');
+      if (typeof theme === 'string' && ['light', 'blue', 'dark', 'system'].includes(theme)) await db.prepare('UPDATE users SET theme = ? WHERE id = ?').bind(theme, u).run();
     }
     return c.json({ inserted: merge ? 0 : rows.length, skipped: merge ? rows.length : 0 });
   }
@@ -221,6 +229,11 @@ backupApi.post('/import/chunk', async (c) => {
       updated_at: r.updated_at ?? nowIso(),
       created_at: r.created_at ?? nowIso(),
     }));
+  } else if (table === 'favorites') {
+    const id = await translator(db, 'favorites', rows.map((r) => r.id), u);
+    const cat = await catTr(rows.map((r) => r.category_id));
+    const acc = await accTr(rows.map((r) => r.account_id));
+    out = rows.map((r) => ({ ...r, id: id(r.id), category_id: cat(r.category_id), account_id: acc(r.account_id), created_at: r.created_at ?? nowIso() }));
   } else if (table === 'captures') {
     const id = await translator(db, 'captures', rows.map((r) => r.id), u);
     const txId = await translator(db, 'transactions', rows.map((r) => r.transaction_id), u);
@@ -247,7 +260,7 @@ backupApi.post('/import/chunk', async (c) => {
   }
 
   // Le righe che puntano a categorie o conti mancanti perdono il riferimento invece di far fallire il blocco.
-  if (table === 'transactions') {
+  if (table === 'transactions' || table === 'favorites') {
     const cats = new Set((await db.prepare('SELECT id FROM categories WHERE user_id = ?').bind(u).all<{ id: string }>()).results.map((x) => x.id));
     const accs = new Set((await db.prepare('SELECT id FROM accounts WHERE user_id = ?').bind(u).all<{ id: string }>()).results.map((x) => x.id));
     out = out.map((r) => ({ ...r, category_id: r.category_id && cats.has(String(r.category_id)) ? r.category_id : null, account_id: r.account_id && accs.has(String(r.account_id)) ? r.account_id : null }));

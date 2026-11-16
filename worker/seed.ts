@@ -90,14 +90,6 @@ export const RETIRED: Record<string, string> = {
   cat_comm: 'cat_subs', cat_comm_internet: 'cat_home_internet', cat_comm_phone: 'cat_subs_phone', cat_comm_software: 'cat_subs_cloud',
   cat_invest_savings: 'cat_invest', cat_invest_financial: 'cat_invest',
 };
-/** Nomi della versione 1 delle categorie rimaste: si aggiornano solo se l'utente non li ha cambiati. */
-const OLD_NAMES: Record<string, string> = {
-  cat_food_restaurant: 'Ristorante, fast-food', cat_food_bar: 'Bar, caffè', cat_food_groceries: 'Spesa alimentare', cat_shop_electronics: 'Elettronica, accessori',
-  cat_shop_home: 'Casa e giardino', cat_home: 'Abitazione', cat_home_energy: 'Energia, utenze', cat_home_maintenance: 'Manutenzione, riparazioni',
-  cat_transport_taxi: 'Taxi', cat_transport_public: 'Trasporto pubblico', cat_vehicle_fuel: 'Carburante', cat_vehicle_maintenance: 'Manutenzione veicolo',
-  cat_vehicle_parking: 'Parcheggio', cat_fin: 'Spese finanziarie', cat_fin_fees: 'Commissioni', cat_fin_loans: 'Prestiti, interessi', cat_invest: 'Investimenti',
-  cat_income_salary: 'Stipendio, fatture', cat_income_interest: 'Interessi, dividendi',
-};
 
 const PRESETS: Array<{ id: string; name: string; priority: number; definition: RuleDefinition }> = [
   { id: 'rule_grab', name: 'Grab', priority: 10, definition: {
@@ -175,8 +167,9 @@ export async function seedUser(db: D1Database, userId: string): Promise<void> {
 }
 
 /**
- * Porta un account con le categorie della versione 1 alla versione 2: aggiunge le nuove, sposta movimenti,
- * regole e sottocategorie personali da quelle ritirate e le cancella. Le categorie create dall'utente restano.
+ * Porta un account con le categorie della versione 1 alla versione 2: le predefinite diventano esattamente quelle
+ * nuove (quelle tolte spariscono), movimenti, regole e sottocategorie personali passano alle nuove.
+ * Le categorie create dall'utente restano.
  */
 export async function upgradeCatalog(db: D1Database, userId: string): Promise<void> {
   const row = await db.prepare('SELECT catalog_version AS v FROM users WHERE id = ?').bind(userId).first<{ v: number }>();
@@ -190,9 +183,10 @@ export async function upgradeCatalog(db: D1Database, userId: string): Promise<vo
     const off = p.optional ? 1 : 0;
     for (const [id, name, nature, parent] of [[p.id, p.name, p.nature, null] as const, ...p.children.map(([i, n, nat]) => [i, n, nat, p.id] as const)]) {
       if (existing.has(sid(id))) {
-        const rename = OLD_NAMES[id] && existing.get(sid(id)) === OLD_NAMES[id];
-        stmts.push(db.prepare('UPDATE categories SET name = ?, parent_id = ?, color = ?, icon = ?, position = ? WHERE id = ?')
-          .bind(rename ? name : existing.get(sid(id)), parent ? sid(parent) : null, p.color, p.icon, pos++, sid(id)));
+        // Aggiornamento 1 → 2 autorizzato dal proprietario: le categorie predefinite prendono nome, gruppo,
+        // colore e stato (acceso o spento) della versione nuova. Quelle create dall'utente non si toccano.
+        stmts.push(db.prepare('UPDATE categories SET name = ?, parent_id = ?, kind = ?, nature = ?, color = ?, icon = ?, position = ?, archived = ? WHERE id = ?')
+          .bind(name, parent ? sid(parent) : null, p.kind, nature, p.color, p.icon, pos++, off, sid(id)));
       } else {
         stmts.push(db.prepare('INSERT INTO categories (id, user_id, name, parent_id, kind, nature, color, icon, position, archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
           .bind(sid(id), userId, name, parent ? sid(parent) : null, p.kind, nature, p.color, p.icon, pos++, off));

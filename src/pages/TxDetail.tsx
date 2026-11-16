@@ -3,33 +3,50 @@ import { api, type TxDetail as Detail } from '../api';
 import { back } from '../router';
 import { useApi, useStore } from '../store';
 import { CategoryIcon, CategorySelect, ErrorBox, Loading, TopBar } from '../ui';
+import { parseAmount } from '../../shared/money';
 import { eur, formatMoney, formatWhen, NATURE_LABEL } from '../util';
 
 export function TxDetail({ id }: { id: string }) {
   const store = useStore();
   const { data: t, error, reload } = useApi<Detail>(`/transactions/${id}`);
-  const [edit, setEdit] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [form, setForm] = useState({ merchant: '', note: '', category_id: null as string | null, account_id: '' as string, labels: '' });
+  const [form, setForm] = useState({ merchant: '', note: '', amount: '', labels: '', when: '' });
+  const [suggest, setSuggest] = useState<{ merchant: string; others: number; category: string } | null>(null);
 
   useEffect(() => {
-    if (t) setForm({ merchant: t.merchant ?? '', note: t.note ?? '', category_id: t.category_id, account_id: t.account_id ?? '', labels: t.labels.join(', ') });
+    if (t) setForm({
+      merchant: t.merchant ?? '', note: t.note ?? '', labels: t.labels.join(', '), when: t.occurred_at.slice(0, 16),
+      amount: String(Math.abs(t.amount) / 1000).replace('.', ','),
+    });
   }, [t]);
 
   if (!t) return <div className="stack"><TopBar /><ErrorBox error={error} />{!error && <Loading />}</div>;
 
-  const save = async (patch: Record<string, unknown>) => {
+  const save = async (patch: Record<string, unknown>, msg = 'Salvato') => {
     setErr(null);
     try {
-      await api(`/transactions/${t.id}`, { method: 'PUT', json: patch });
+      const r = await api<{ others?: number; merchant?: string }>(`/transactions/${t.id}`, { method: 'PUT', json: patch });
       if (t.status === 'review' && patch.category_id) await api(`/transactions/${t.id}/confirm`, { method: 'POST', json: { category_id: patch.category_id } });
+      if (patch.category_id && r.others && r.merchant) setSuggest({ merchant: r.merchant, others: r.others, category: patch.category_id as string });
       reload();
       await store.refresh();
-      store.toast('Salvato');
+      store.toast(msg);
     } catch (e) {
       setErr((e as Error).message);
     }
+  };
+  const applyAll = async () => {
+    if (!suggest) return;
+    const r = await api<{ changed: number }>('/transactions/recategorize', { method: 'POST', json: { merchant: suggest.merchant, category_id: suggest.category } });
+    setSuggest(null);
+    await store.refresh();
+    store.toast(`${r.changed} ${r.changed === 1 ? 'spesa spostata' : 'spese spostate'} in ${store.catName(suggest.category)}`);
+  };
+  /** Campo di testo che si salva quando lo lasci, solo se è cambiato. */
+  const onBlur = (key: 'merchant' | 'note', current: string | null) => () => {
+    const v = form[key].trim();
+    if (v !== (current ?? '')) save({ [key]: v || null }, key === 'note' ? 'Nota salvata' : 'Salvato');
   };
 
   const remove = async () => {
@@ -39,18 +56,17 @@ export function TxDetail({ id }: { id: string }) {
     back('/movimenti');
   };
 
-  const account = store.accounts.find((a) => a.id === t.account_id);
   const hasNature = t.type === 'expense';
+  const income = t.amount > 0;
 
   return (
     <div className={`stack ${store.discreet ? 'discreet' : ''}`} style={{ gap: 14 }}>
-      <TopBar backTo="/movimenti" right={<button className="btn" style={{ background: 'var(--card)' }} onClick={() => setEdit(!edit)}>{edit ? 'Chiudi' : 'Modifica'}</button>} />
+      <TopBar backTo="/movimenti" />
 
       <section className="card" style={{ alignItems: 'center', textAlign: 'center', gap: 8, padding: '20px 16px' }}>
         <CategoryIcon id={t.category_id} size={56} />
         <span style={{ fontWeight: 600, fontSize: 18 }}>{t.merchant ?? 'Movimento'}</span>
-        <span className="muted" style={{ fontSize: 14 }}>{store.catName(t.category_id)}</span>
-        <span className="hero-amount num money" style={{ fontSize: 40, color: t.amount_eur > 0 ? 'var(--accent)' : undefined }}>{eur(t.amount_eur, t.amount_eur > 0)}</span>
+        <span className="hero-amount num money" style={{ fontSize: 40, color: income ? 'var(--pos)' : undefined }}>{eur(t.amount_eur, income)}</span>
         {t.currency !== 'EUR' && t.fx_rate && (
           <span className="muted num" style={{ fontSize: 14 }}>
             {formatMoney(Math.abs(t.amount), t.currency)} · 1 € = {new Intl.NumberFormat('it-IT', { maximumFractionDigits: 2 }).format(1 / t.fx_rate)} {t.currency}, tasso del {t.fx_date ? formatWhen(t.fx_date, false) : 'giorno'}
@@ -61,47 +77,69 @@ export function TxDetail({ id }: { id: string }) {
 
       <ErrorBox error={err} />
 
-      {edit ? (
-        <section className="card">
-          <label className="field"><span>Nome</span><input className="input" value={form.merchant} onChange={(e) => setForm({ ...form, merchant: e.target.value })} /></label>
-          <label className="field"><span>Categoria</span><CategorySelect value={form.category_id} onChange={(v) => setForm({ ...form, category_id: v })} kind="all" /></label>
-          <label className="field"><span>Conto</span>
-            <select className="input" value={form.account_id} onChange={(e) => setForm({ ...form, account_id: e.target.value })}>
+      {suggest && (
+        <section className="card" style={{ boxShadow: 'inset 0 0 0 1.5px var(--accent-soft)' }}>
+          <span>Metto <b>{store.catName(suggest.category)}</b> anche alle altre {suggest.others} {suggest.others === 1 ? 'spesa' : 'spese'} di <b>{suggest.merchant}</b>?</span>
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn primary grow" onClick={applyAll}>Sì, a tutte</button>
+            <button className="btn grow" onClick={() => setSuggest(null)}>No, solo questa</button>
+          </div>
+        </section>
+      )}
+
+      <section className="card">
+        <label className="field"><span>Categoria</span>
+          <CategorySelect value={t.category_id} onChange={(v) => save({ category_id: v }, 'Categoria salvata')} kind={income ? 'income' : 'expense'} />
+        </label>
+        {t.status === 'review' && t.review_choices.length > 0 && (
+          <div className="row wrap" style={{ gap: 8 }}>
+            {t.review_choices.map((c) => <button key={c} className="pill small" onClick={() => save({ category_id: c }, 'Categoria salvata')}>{store.catName(c)}</button>)}
+          </div>
+        )}
+        {hasNature && (
+          <div className="field">
+            <span>Natura della spesa</span>
+            <div className="seg" role="group" aria-label="Natura della spesa">
+              {(['must', 'need', 'want'] as const).map((n) => (
+                <button key={n} aria-pressed={t.nature === n} onClick={() => save({ nature: n })}>{NATURE_LABEL[n]}</button>
+              ))}
+            </div>
+          </div>
+        )}
+        <label className="field"><span>Nota</span>
+          <textarea className="input" rows={2} placeholder="Aggiungi una nota" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} onBlur={onBlur('note', t.note)} />
+        </label>
+        <label className="field"><span>Nome</span>
+          <input className="input" value={form.merchant} placeholder="Dove o cosa" onChange={(e) => setForm({ ...form, merchant: e.target.value })} onBlur={onBlur('merchant', t.merchant)} />
+        </label>
+        <div className="row" style={{ gap: 8, alignItems: 'flex-end' }}>
+          <label className="field grow"><span>Importo ({t.currency})</span>
+            <input className="input num" inputMode="decimal" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })}
+              onBlur={() => {
+                const v = parseAmount(form.amount, t.currency)?.value;
+                if (v && Math.round(v * 1000) !== Math.abs(t.amount)) save({ amount: v }, 'Importo salvato');
+              }} />
+          </label>
+          <label className="field grow"><span>Conto</span>
+            <select className="input" value={t.account_id ?? ''} onChange={(e) => save({ account_id: e.target.value || null }, 'Conto salvato')}>
               <option value="">Nessuno</option>
               {store.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
           </label>
-          <label className="field"><span>Etichette, separate da virgola</span><input className="input" value={form.labels} onChange={(e) => setForm({ ...form, labels: e.target.value })} /></label>
-          <label className="field"><span>Nota</span><textarea className="input" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} /></label>
-          <button className="btn primary block" onClick={async () => {
-            await save({ merchant: form.merchant || null, note: form.note || null, category_id: form.category_id, account_id: form.account_id || null, labels: form.labels.split(',').map((s) => s.trim()).filter(Boolean) });
-            setEdit(false);
-          }}>Salva</button>
-        </section>
-      ) : (
-        <section className="card">
-          {hasNature && (
-            <div className="field">
-              <span>Natura della spesa</span>
-              <div className="seg" role="group" aria-label="Natura della spesa">
-                {(['must', 'need', 'want'] as const).map((n) => (
-                  <button key={n} aria-pressed={t.nature === n} onClick={() => save({ nature: n })}>{NATURE_LABEL[n]}</button>
-                ))}
-              </div>
-            </div>
-          )}
-          <div className="kv"><span>Conto</span><span>{account?.name ?? '—'}</span></div>
-          {t.card && <div className="kv"><span>Carta o app</span><span>{t.card}</span></div>}
-          {t.labels.length > 0 && (
-            <div className="kv"><span>Etichette</span><span className="row wrap" style={{ gap: 6, justifyContent: 'flex-end' }}>{t.labels.map((l) => <span key={l} className="chip">{l}</span>)}</span></div>
-          )}
-          <div className="kv"><span>Data</span><span className="num">{formatWhen(t.occurred_at)}</span></div>
-          {t.note && <div className="kv"><span>Nota</span><span>{t.note}</span></div>}
-          {t.status === 'review' && t.category_id && (
-            <button className="btn primary" onClick={async () => { await api(`/transactions/${t.id}/confirm`, { method: 'POST', json: {} }); reload(); await store.refresh(); }}>Conferma</button>
-          )}
-        </section>
-      )}
+        </div>
+        <label className="field"><span>Data e ora</span>
+          <input className="input" type="datetime-local" value={form.when} onChange={(e) => setForm({ ...form, when: e.target.value })}
+            onBlur={() => { if (form.when && form.when !== t.occurred_at.slice(0, 16)) save({ occurred_at: `${form.when}:00${t.occurred_at.slice(19)}` }, 'Data salvata'); }} />
+        </label>
+        <label className="field"><span>Etichette, separate da virgola</span>
+          <input className="input" value={form.labels} placeholder="Es. Viaggio Bangkok" onChange={(e) => setForm({ ...form, labels: e.target.value })}
+            onBlur={() => { if (form.labels !== t.labels.join(', ')) save({ labels: form.labels.split(',').map((x) => x.trim()).filter(Boolean) }); }} />
+        </label>
+        {t.card && <div className="kv"><span>Carta o app</span><span>{t.card}</span></div>}
+        {t.status === 'review' && t.category_id && (
+          <button className="btn primary" onClick={async () => { await api(`/transactions/${t.id}/confirm`, { method: 'POST', json: {} }); reload(); await store.refresh(); }}>Conferma</button>
+        )}
+      </section>
 
       {(t.capture || t.rules.length > 0) && (
         <section className="card">

@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { api, type Bootstrap, type Category } from './api';
+import { api, type Bootstrap, type Category, type Theme } from './api';
+import { setDisplayCurrency } from './util';
 
 interface Store extends Bootstrap {
   loaded: boolean;
@@ -15,7 +16,7 @@ interface Store extends Bootstrap {
 const Ctx = createContext<Store | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [data, setData] = useState<Bootstrap>({ accounts: [], categories: [], labels: [], review_count: 0, settings: { timezone: 'Asia/Makassar', recovery_created_at: null }, account: { email: null } });
+  const [data, setData] = useState<Bootstrap>({ accounts: [], categories: [], labels: [], review_count: 0, settings: { timezone: 'Asia/Makassar', recovery_created_at: null, display_currency: 'EUR', theme: 'light' }, account: { email: null } });
   const [loaded, setLoaded] = useState(false);
   const [discreet, setDiscreetState] = useState(() => {
     try { return localStorage.getItem('ledgy-discreet') === '1'; } catch { return false; }
@@ -23,7 +24,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [message, setMessage] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    setData(await api<Bootstrap>('/bootstrap'));
+    const b = await api<Bootstrap>('/bootstrap');
+    applyTheme(b.settings.theme);
+    const cur = b.settings.display_currency || 'EUR';
+    if (cur === 'EUR') setDisplayCurrency('EUR', 1);
+    else {
+      const r = await api<{ eurPerUnit: number | null }>(`/fx?currency=${cur}`).catch(() => ({ eurPerUnit: null }));
+      // Senza tasso si resta in euro piuttosto che mostrare numeri sbagliati.
+      if (r.eurPerUnit) setDisplayCurrency(cur, 1 / r.eurPerUnit);
+      else setDisplayCurrency('EUR', 1);
+    }
+    setData(b);
     setLoaded(true);
   }, []);
 
@@ -57,6 +68,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       {message && <div className="toast" role="status">{message}</div>}
     </Ctx.Provider>
   );
+}
+
+/** Applica il tema e lo ricorda per il prossimo avvio (public/theme.js lo legge prima del primo disegno). */
+export function applyTheme(theme: Theme) {
+  document.documentElement.dataset.theme = theme;
+  try { localStorage.setItem('ledgy-theme', theme); } catch { /* ignora */ }
 }
 
 export function useStore(): Store {

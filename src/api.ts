@@ -30,7 +30,8 @@ export async function api<T = unknown>(path: string, init: RequestInit & { json?
 export interface Account { id: string; name: string; type: string; currency: string; initial_balance: number; balance: number; color: string | null }
 export interface Category { id: string; name: string; parent_id: string | null; kind: 'expense' | 'income'; nature: string | null; color: string | null; icon: string | null }
 export interface Label { id: string; name: string }
-export interface Settings { timezone: string; recovery_created_at: string | null }
+export type Theme = 'light' | 'blue' | 'dark' | 'system';
+export interface Settings { timezone: string; recovery_created_at: string | null; display_currency: string; theme: Theme }
 export interface Bootstrap { accounts: Account[]; categories: Category[]; labels: Label[]; review_count: number; settings: Settings; account: { email: string | null } }
 
 export interface Tx {
@@ -70,11 +71,13 @@ export interface Stats {
   spent: number;
   income: number;
   count: number;
-  previous: { spent: number; income: number };
+  previous: { from: string; to: string; spent: number; income: number };
   forecast: number;
   days: { total: number; elapsed: number };
   by_category: Array<{ category_id: string | null; total: number; count: number }>;
+  by_subcategory: Array<{ category_id: string | null; parent_id: string | null; total: number; count: number }>;
+  income_by_category: Array<{ category_id: string | null; total: number; count: number }>;
   by_nature: Array<{ nature: string | null; total: number }>;
   by_merchant: Array<{ merchant: string; total: number; count: number }>;
-  daily: Array<{ day: string; spent: number; income: number }>;
+  daily: Array<{ day: string; spent: number; income: number; must: number; need: number; want: number }>;
 }

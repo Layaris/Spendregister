@@ -1,0 +1,320 @@
+[
+{
+"id": "cat_food",
+"name": "Cibo e bevande",
+"parent": null,
+"kind": "expense"
+},
+{
+"id": "cat_food_restaurant",
+"name": "Ristorante, fast-food",
+"parent": "cat_food",
+"kind": "expense"
+},
+{
+"id": "cat_food_bar",
+"name": "Bar, caffè",
+"parent": "cat_food",
+"kind": "expense"
+},
+{
+"id": "cat_food_groceries",
+"name": "Spesa alimentare",
+"parent": "cat_food",
+"kind": "expense"
+},
+{
+"id": "cat_shop",
+"name": "Acquisti",
+"parent": null,
+"kind": "expense"
+},
+{
+"id": "cat_shop_clothes",
+"name": "Abbigliamento e scarpe",
+"parent": "cat_shop",
+"kind": "expense"
+},
+{
+"id": "cat_shop_electronics",
+"name": "Elettronica, accessori",
+"parent": "cat_shop",
+"kind": "expense"
+},
+{
+"id": "cat_shop_home",
+"name": "Casa e giardino",
+"parent": "cat_shop",
+"kind": "expense"
+},
+{
+"id": "cat_shop_pharmacy",
+"name": "Farmacia",
+"parent": "cat_shop",
+"kind": "expense"
+},
+{
+"id": "cat_shop_beauty",
+"name": "Salute e bellezza",
+"parent": "cat_shop",
+"kind": "expense"
+},
+{
+"id": "cat_shop_gifts",
+"name": "Regali",
+"parent": "cat_shop",
+"kind": "expense"
+},
+{
+"id": "cat_shop_online",
+"name": "Acquisti online",
+"parent": "cat_shop",
+"kind": "expense"
+},
+{
+"id": "cat_home",
+"name": "Abitazione",
+"parent": null,
+"kind": "expense"
+},
+{
+"id": "cat_home_rent",
+"name": "Affitto",
+"parent": "cat_home",
+"kind": "expense"
+},
+{
+"id": "cat_home_energy",
+"name": "Energia, utenze",
+"parent": "cat_home",
+"kind": "expense"
+},
+{
+"id": "cat_home_maintenance",
+"name": "Manutenzione, riparazioni",
+"parent": "cat_home",
+"kind": "expense"
+},
+{
+"id": "cat_home_services",
+"name": "Servizi",
+"parent": "cat_home",
+"kind": "expense"
+},
+{
+"id": "cat_transport",
+"name": "Trasporti",
+"parent": null,
+"kind": "expense"
+},
+{
+"id": "cat_transport_taxi",
+"name": "Taxi",
+"parent": "cat_transport",
+"kind": "expense"
+},
+{
+"id": "cat_transport_public",
+"name": "Trasporto pubblico",
+"parent": "cat_transport",
+"kind": "expense"
+},
+{
+"id": "cat_transport_long",
+"name": "Viaggi lunghi, voli",
+"parent": "cat_transport",
+"kind": "expense"
+},
+{
+"id": "cat_vehicle",
+"name": "Veicoli",
+"parent": null,
+"kind": "expense"
+},
+{
+"id": "cat_vehicle_fuel",
+"name": "Carburante",
+"parent": "cat_vehicle",
+"kind": "expense"
+},
+{
+"id": "cat_vehicle_rent",
+"name": "Noleggio",
+"parent": "cat_vehicle",
+"kind": "expense"
+},
+{
+"id": "cat_vehicle_maintenance",
+"name": "Manutenzione veicolo",
+"parent": "cat_vehicle",
+"kind": "expense"
+},
+{
+"id": "cat_vehicle_parking",
+"name": "Parcheggio",
+"parent": "cat_vehicle",
+"kind": "expense"
+},
+{
+"id": "cat_life",
+"name": "Vita e intrattenimento",
+"parent": null,
+"kind": "expense"
+},
+{
+"id": "cat_life_health",
+"name": "Assistenza sanitaria, medico",
+"parent": "cat_life",
+"kind": "expense"
+},
+{
+"id": "cat_life_wellness",
+"name": "Benessere, bellezza",
+"parent": "cat_life",
+"kind": "expense"
+},
+{
+"id": "cat_life_fitness",
+"name": "Sport, fitness",
+"parent": "cat_life",
+"kind": "expense"
+},
+{
+"id": "cat_life_events",
+"name": "Cultura, eventi",
+"parent": "cat_life",
+"kind": "expense"
+},
+{
+"id": "cat_life_holiday",
+"name": "Vacanze, hotel",
+"parent": "cat_life",
+"kind": "expense"
+},
+{
+"id": "cat_life_streaming",
+"name": "TV, streaming",
+"parent": "cat_life",
+"kind": "expense"
+},
+{
+"id": "cat_life_education",
+"name": "Formazione",
+"parent": "cat_life",
+"kind": "expense"
+},
+{
+"id": "cat_comm",
+"name": "Comunicazione, PC",
+"parent": null,
+"kind": "expense"
+},
+{
+"id": "cat_comm_internet",
+"name": "Internet",
+"parent": "cat_comm",
+"kind": "expense"
+},
+{
+"id": "cat_comm_phone",
+"name": "Telefono, cellulare",
+"parent": "cat_comm",
+"kind": "expense"
+},
+{
+"id": "cat_comm_software",
+"name": "Software, app, giochi",
+"parent": "cat_comm",
+"kind": "expense"
+},
+{
+"id": "cat_fin",
+"name": "Spese finanziarie",
+"parent": null,
+"kind": "expense"
+},
+{
+"id": "cat_fin_fees",
+"name": "Commissioni",
+"parent": "cat_fin",
+"kind": "expense"
+},
+{
+"id": "cat_fin_taxes",
+"name": "Tasse",
+"parent": "cat_fin",
+"kind": "expense"
+},
+{
+"id": "cat_fin_insurance",
+"name": "Assicurazioni",
+"parent": "cat_fin",
+"kind": "expense"
+},
+{
+"id": "cat_fin_loans",
+"name": "Prestiti, interessi",
+"parent": "cat_fin",
+"kind": "expense"
+},
+{
+"id": "cat_invest",
+"name": "Investimenti",
+"parent": null,
+"kind": "expense"
+},
+{
+"id": "cat_invest_savings",
+"name": "Risparmi",
+"parent": "cat_invest",
+"kind": "expense"
+},
+{
+"id": "cat_invest_financial",
+"name": "Investimenti finanziari",
+"parent": "cat_invest",
+"kind": "expense"
+},
+{
+"id": "cat_income",
+"name": "Entrate",
+"parent": null,
+"kind": "income"
+},
+{
+"id": "cat_income_salary",
+"name": "Stipendio, fatture",
+"parent": "cat_income",
+"kind": "income"
+},
+{
+"id": "cat_income_refund",
+"name": "Rimborsi",
+"parent": "cat_income",
+"kind": "income"
+},
+{
+"id": "cat_income_gifts",
+"name": "Regali ricevuti",
+"parent": "cat_income",
+"kind": "income"
+},
+{
+"id": "cat_income_interest",
+"name": "Interessi, dividendi",
+"parent": "cat_income",
+"kind": "income"
+},
+{
+"id": "cat_income_sales",
+"name": "Vendite",
+"parent": "cat_income",
+"kind": "income"
+},
+{
+"id": "cat_other",
+"name": "Altro",
+"parent": null,
+"kind": "expense"
+}
+]

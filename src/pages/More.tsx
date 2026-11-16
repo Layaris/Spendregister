@@ -1,11 +1,18 @@
 import { useRef, useState, type FormEvent } from 'react';
+import { parseAmount } from '../../shared/money';
 import { TIMEZONES } from '../../shared/time';
 import { api } from '../api';
 import { backupToCsv, downloadFile, exportBackup, importBackup, parseBackup, summarize, type Backup } from '../backup';
 import { Icon } from '../icons';
-import { useStore } from '../store';
+import { applyTheme, useStore } from '../store';
+import type { Theme } from '../api';
 import { ErrorBox } from '../ui';
 import { CURRENCIES, formatMoney } from '../util';
+
+const DISPLAY_CURRENCIES: Array<[string, string]> = [
+  ['EUR', 'Euro'], ['USD', 'Dollaro USA'], ['AED', 'Dirham emiratino'], ['PHP', 'Peso filippino'], ['IDR', 'Rupia indonesiana'],
+  ['SGD', 'Dollaro di Singapore'], ['CNY', 'Yuan cinese'], ['THB', 'Baht thailandese'],
+];
 
 const LINKS: Array<[string, string, string, string]> = [
   ['#/rivedere', 'inbox', 'Da rivedere', 'Movimenti catturati che aspettano una scelta'],
@@ -88,6 +95,24 @@ function Accounts() {
   const [adding, setAdding] = useState(false);
   const [acc, setAcc] = useState({ name: '', currency: 'EUR', initial_balance: '' });
   const [error, setError] = useState<string | null>(null);
+  const [fixing, setFixing] = useState<string | null>(null);
+  const [target, setTarget] = useState('');
+  /** Saldo vero → movimento di correzione per la differenza, nella valuta del conto. */
+  const correct = async (accountId: string, currency: string, balance: number) => {
+    const v = parseAmount(target, currency);
+    if (!v) { setError('Importo non valido'); return; }
+    const diff = Math.round(v.value * 1000) - balance;
+    if (!diff) { setFixing(null); return; }
+    setError(null);
+    try {
+      await api('/transactions', { method: 'POST', json: { type: diff > 0 ? 'income' : 'expense', amount: Math.abs(diff) / 1000, currency, account_id: accountId, merchant: 'Correzione saldo' } });
+      await store.refresh();
+      setFixing(null);
+      store.toast('Saldo corretto');
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
   const add = async () => {
     setError(null);
     try {
@@ -103,8 +128,23 @@ function Accounts() {
     <section className="card">
       <div className="row between"><h2 className="h2">Conti</h2>{!adding && <button className="btn small" onClick={() => setAdding(true)}>Nuovo conto</button>}</div>
       {store.accounts.map((a) => (
-        <div key={a.id} className="kv"><span>{a.name} <span className="muted">· {a.currency}</span></span><span className="num money">{formatMoney(a.balance, a.currency)}</span></div>
+        <div key={a.id} className="stack" style={{ gap: 6 }}>
+          <div className="kv">
+            <button className="row" style={{ background: 'none', border: 0, padding: 0, gap: 6, color: 'inherit', cursor: 'pointer' }} onClick={() => { setFixing(fixing === a.id ? null : a.id); setTarget(''); }}>
+              {a.name} <span className="muted">· {a.currency}</span>
+            </button>
+            <span className="num money">{formatMoney(a.balance, a.currency)}</span>
+          </div>
+          {fixing === a.id && (
+            <div className="row" style={{ gap: 6 }}>
+              <input className="input grow num" inputMode="decimal" autoFocus placeholder={`Saldo vero in ${a.currency}`} value={target} onChange={(e) => setTarget(e.target.value)} />
+              <button className="btn primary" disabled={!target.trim()} onClick={() => correct(a.id, a.currency, a.balance)}>Correggi saldo</button>
+            </div>
+          )}
+        </div>
       ))}
+      {!adding && <ErrorBox error={error} />}
+      {store.accounts.length > 0 && !fixing && <span className="muted" style={{ fontSize: 13 }}>Tocca un conto per correggerne il saldo: Ledgy aggiunge la differenza come entrata o spesa.</span>}
       {adding && (
         <div className="stack" style={{ gap: 8 }}>
           <label className="field"><span>Nome</span><input className="input" value={acc.name} onChange={(e) => setAcc({ ...acc, name: e.target.value })} placeholder="Es. Revolut" /></label>
@@ -234,9 +274,31 @@ function SettingsSection() {
   };
 
   const zones = TIMEZONES.some(([z]) => z === tz) ? TIMEZONES : [[tz, tz] as [string, string], ...TIMEZONES];
+  const saveSetting = async (patch: Record<string, string>, msg: string) => {
+    await api('/settings', { method: 'PUT', json: patch });
+    await store.refresh();
+    store.toast(msg);
+  };
   return (
     <section className="card">
       <h2 className="h2">Impostazioni</h2>
+      <div className="field">
+        <span>Tema</span>
+        <div className="seg" role="group" aria-label="Tema">
+          {([['light', 'Chiaro'], ['blue', 'Azzurro'], ['dark', 'Scuro'], ['system', 'Auto']] as Array<[Theme, string]>).map(([t, label]) => (
+            <button key={t} aria-pressed={store.settings.theme === t} onClick={() => { applyTheme(t); saveSetting({ theme: t }, 'Tema salvato'); }}>{label}</button>
+          ))}
+        </div>
+      </div>
+      <label className="field"><span>Valuta in cui vedere totali e saldi</span>
+        <select className="input" value={store.settings.display_currency} onChange={(e) => saveSetting({ display_currency: e.target.value }, `Ora vedi tutto in ${e.target.value}`)}>
+          {DISPLAY_CURRENCIES.map(([c, label]) => <option key={c} value={c}>{c} · {label}</option>)}
+        </select>
+      </label>
+      <a className="row" href="#/categorie" style={{ textDecoration: 'none', color: 'inherit', minHeight: 44 }}>
+        <span className="grow"><b>Categorie</b><br /><span className="muted" style={{ fontSize: 14 }}>Crea, rinomina, sposta, elimina; accendi o spegni i gruppi</span></span>
+        <Icon name="next" size={18} />
+      </a>
       <label className="field"><span>Fuso orario delle spese catturate</span>
         <select className="input" value={tz} onChange={(e) => saveTz(e.target.value)}>
           {zones.map(([z, label]) => <option key={z} value={z}>{label}</option>)}

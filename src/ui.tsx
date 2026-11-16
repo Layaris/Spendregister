@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react';
-import type { Tx } from './api';
+import { useState, type ReactNode } from 'react';
+import { api, type Tx } from './api';
 import { Icon } from './icons';
 import { back } from './router';
 import { useStore } from './store';
@@ -38,7 +38,7 @@ export function TxRow({ t }: { t: Tx }) {
         ) : null}
       </div>
       <div className="amt">
-        <span className="num money" style={{ fontWeight: 600, color: t.amount_eur > 0 ? 'var(--accent)' : undefined }}>{eur(t.amount_eur, t.amount_eur > 0)}</span>
+        <span className="num money" style={{ fontWeight: 600, color: t.amount_eur > 0 ? 'var(--pos)' : undefined }}>{eur(t.amount_eur, t.amount_eur > 0)}</span>
         {foreign && <span className="muted num money" style={{ fontSize: 12 }}>{formatMoney(Math.abs(t.amount), t.currency)}</span>}
       </div>
     </a>
@@ -55,19 +55,86 @@ export function TopBar({ title, right, backTo = '/' }: { title?: string; right?:
   );
 }
 
+/** Scelta della categoria: un pannello dal basso con ricerca, gruppi, sottocategorie e "+ nuova" con un tap. */
 export function CategorySelect({ value, onChange, kind = 'expense', id }: { value: string | null; onChange: (v: string | null) => void; kind?: 'expense' | 'income' | 'all'; id?: string }) {
-  const { categories } = useStore();
-  const parents = categories.filter((c) => !c.parent_id && (kind === 'all' || c.kind === kind));
+  const store = useStore();
+  const [open, setOpen] = useState(false);
+  const c = store.cat(value);
+  const parent = c?.parent_id ? store.cat(c.parent_id) : null;
   return (
-    <select id={id} className="input" value={value ?? ''} onChange={(e) => onChange(e.target.value || null)}>
-      <option value="">Senza categoria</option>
-      {parents.map((p) => (
-        <optgroup key={p.id} label={p.name}>
-          <option value={p.id}>{p.name}</option>
-          {categories.filter((c) => c.parent_id === p.id).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </optgroup>
-      ))}
-    </select>
+    <>
+      <button type="button" id={id} className="input catbtn" onClick={() => setOpen(true)} aria-haspopup="dialog">
+        <span className="dot" style={{ background: c?.color ?? parent?.color ?? 'var(--line)' }} />
+        <span className="grow" style={{ textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {c ? (parent ? <><span className="muted">{parent.name} › </span>{c.name}</> : c.name) : <span className="muted">Senza categoria</span>}
+        </span>
+        <span aria-hidden="true" className="muted">▾</span>
+      </button>
+      {open && <CategorySheet value={value} kind={kind} onPick={(v) => { onChange(v); setOpen(false); }} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+export function CategorySheet({ value, kind, onPick, onClose }: { value: string | null; kind: 'expense' | 'income' | 'all'; onPick: (v: string | null) => void; onClose: () => void }) {
+  const store = useStore();
+  const [q, setQ] = useState('');
+  const [adding, setAdding] = useState<string | null>(null); // id del gruppo, oppure 'root' per un gruppo nuovo
+  const [name, setName] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const norm = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+  const match = (s: string) => !q || norm(s).includes(norm(q));
+  const groups = store.categories.filter((c) => !c.parent_id && (kind === 'all' || c.kind === kind));
+  const create = async () => {
+    if (!name.trim()) return;
+    setError(null);
+    try {
+      const parent = adding === 'root' ? null : adding;
+      const groupKind = parent ? store.cat(parent)?.kind : kind === 'income' ? 'income' : 'expense';
+      const r = await api<{ id: string }>('/categories', { method: 'POST', json: { name: name.trim(), parent_id: parent, kind: groupKind } });
+      await store.refresh();
+      store.toast(`Categoria “${name.trim()}” creata`);
+      onPick(r.id);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  const addForm = (
+    <div className="row" style={{ gap: 6 }}>
+      <input className="input grow" autoFocus placeholder={adding === 'root' ? 'Nome della nuova categoria' : 'Nome della sottocategoria'} value={name}
+        onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') create(); }} />
+      <button className="btn primary" disabled={!name.trim()} onClick={create}>Crea</button>
+    </div>
+  );
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal card sheet" role="dialog" aria-modal="true" aria-label="Scegli la categoria" onClick={(e) => e.stopPropagation()}>
+        <div className="row between"><h2 className="h2">Categoria</h2><button className="btn ghost" onClick={onClose}>Chiudi</button></div>
+        <input className="input" type="search" placeholder="Cerca" value={q} onChange={(e) => setQ(e.target.value)} />
+        <ErrorBox error={error} />
+        <div className="stack" style={{ gap: 14, overflowY: 'auto', paddingBottom: 4 }}>
+          <button className="pill" aria-pressed={value == null} style={{ alignSelf: 'flex-start' }} onClick={() => onPick(null)}>Senza categoria</button>
+          {groups.map((g) => {
+            const kids = store.categories.filter((c) => c.parent_id === g.id);
+            const shown = kids.filter((c) => match(c.name) || match(g.name));
+            if (q && !shown.length && !match(g.name)) return null;
+            return (
+              <div key={g.id} className="stack" style={{ gap: 8 }}>
+                <button className="row catgroup" aria-pressed={value === g.id} onClick={() => onPick(g.id)}>
+                  <span className="dot" style={{ background: g.color ?? 'var(--line)', width: 10, height: 10 }} />{g.name}
+                </button>
+                <div className="row wrap" style={{ gap: 6 }}>
+                  {shown.map((c) => <button key={c.id} className="pill small" aria-pressed={value === c.id} onClick={() => onPick(c.id)}>{c.name}</button>)}
+                  {adding !== g.id && <button className="pill small add" onClick={() => { setAdding(g.id); setName(q); }}>+ Sottocategoria</button>}
+                </div>
+                {adding === g.id && addForm}
+              </div>
+            );
+          })}
+          {adding === 'root' ? addForm : <button className="btn" onClick={() => { setAdding('root'); setName(q); }}>+ Nuova categoria</button>}
+          <a href="#/categorie" className="muted" style={{ fontSize: 14, alignSelf: 'center' }} onClick={onClose}>Gestisci le categorie</a>
+        </div>
+      </div>
+    </div>
   );
 }
 
