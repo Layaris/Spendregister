@@ -6,7 +6,7 @@ import { cleanMerchantName, parseNotification, parseWithParser, type AiHint, typ
 import { evaluateRules } from '../shared/rules';
 import { normalizePostedAt } from '../shared/time';
 import { bad, body, getTimeZone, HttpError, newId, notFound, nowIso, randomToken, uid, type AppEnv } from './lib';
-import { categoryFromHistory, convertToEur, defaultAccountId, insertTransaction, loadRules } from './transactions';
+import { categoryFromHistory, categoryFromWords, convertToEur, defaultAccountId, insertTransaction, loadRules } from './transactions';
 
 interface CapturePayload {
   text?: string;
@@ -108,6 +108,10 @@ export async function processCapture(db: D1Database, userId: string, deviceId: s
   if (!category && !rules.ask) {
     category = await categoryFromHistory(db, userId, finalMerchant);
     if (category) categoryVia = 'storico';
+  }
+  if (!category && !rules.ask) {
+    category = await categoryFromWords(db, userId, parsed.direction, finalMerchant, hint?.category, text);
+    if (category) categoryVia = 'parole chiave';
   }
 
   // Doppioni: stessa spesa arrivata da un altro telefono pochi secondi prima.

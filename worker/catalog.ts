@@ -4,6 +4,7 @@ import { evaluateRules, type RuleActions, type RuleDefinition } from '../shared/
 import { isValidTimeZone } from '../shared/time';
 import { accountInfo } from './auth';
 import { getEurRate } from './fx';
+import { upgradeCatalog } from './seed';
 import { bad, body, newId, notFound, nowIso, runBatch, uid, type AppEnv } from './lib';
 import { checkOwned, loadRules, ruleInputFromTx, type TxRow } from './transactions';
 
@@ -13,6 +14,7 @@ export const catalogApi = new Hono<AppEnv>();
 catalogApi.get('/bootstrap', async (c) => {
   const db = c.env.DB;
   const u = uid(c);
+  await upgradeCatalog(db, u); // una volta sola, per gli account con le categorie della versione 1
   const [accounts, categories, labels, review, balances, account] = await Promise.all([
     db.prepare('SELECT * FROM accounts WHERE user_id = ? AND archived = 0 ORDER BY position, name').bind(u).all(),
     db.prepare('SELECT * FROM categories WHERE user_id = ? AND archived = 0 ORDER BY position, name').bind(u).all(),

@@ -469,7 +469,7 @@ describe('regole', () => {
     expect((await me.post('/api/rules', { name: 'x', definition: { conditions: [{ field: 'merchant', op: 'regex', value: '(' }], actions: {} } })).status).toBe(400);
   });
   it('crea una regola, la prova sullo storico e la applica', async () => {
-    const definition = { conditions: [{ field: 'merchant', op: 'contains', value: 'kopi' }], actions: { category_id: C('cat_food_bar'), labels: ['Caffè'] } };
+    const definition = { conditions: [{ field: 'merchant', op: 'contains', value: 'kopi' }], actions: { category_id: C('cat_fun_going_out'), labels: ['Caffè'] } };
     const preview = (await me.post('/api/rules/preview', { definition })).json;
     expect(preview.matched).toBe(1);
     expect(preview.changed).toBe(1);
@@ -478,13 +478,13 @@ describe('regole', () => {
     const applied = (await me.post(`/api/rules/${r.json.id}/apply`, { after: 0 })).json;
     expect(applied.changed).toBe(1);
     const kopi = (await me.get('/api/transactions?q=kopi')).json.items[0];
-    expect(kopi.category_id).toBe(C('cat_food_bar'));
+    expect(kopi.category_id).toBe(C('cat_fun_going_out'));
     ids.rule = r.json.id;
   });
   it('la regola nuova vale per le notifiche successive', async () => {
     const r = await capture(deviceUrl, { text: 'Hai pagato Rp28.000 a KOPI KENANGAN', posted_at: '2026-11-14T08:00:00+08:00' });
     const t = await tx(r.json.transaction_id);
-    expect(t.category_id).toBe(C('cat_food_bar'));
+    expect(t.category_id).toBe(C('cat_fun_going_out'));
     expect(t.labels).toEqual(['Caffè']);
   });
   it('disattiva ed elimina una regola', async () => {
@@ -579,7 +579,7 @@ describe('backup', () => {
   it('"aggiungi" riconosce le categorie per nome e collega i movimenti nuovi', async () => {
     const other = JSON.parse(JSON.stringify(backup));
     other.tables = {
-      categories: [{ id: 'cat_altro_bar', name: 'Bar, caffè', parent_id: 'cat_altro_food', kind: 'expense' }, { id: 'cat_altro_food', name: 'Cibo e bevande', parent_id: null, kind: 'expense' }],
+      categories: [{ id: 'cat_altro_bar', name: 'Bar e caffè', parent_id: 'cat_altro_food', kind: 'expense' }, { id: 'cat_altro_food', name: 'Cibo e bevande', parent_id: null, kind: 'expense' }],
       accounts: [{ id: 'acc_altro', name: 'Contanti', currency: 'EUR', type: 'cash', initial_balance: 0, created_at: '2026-01-01T00:00:00Z' }],
       labels: [{ id: 'lab_altro', name: 'Bali' }],
       transactions: [{ id: 'tx_da_altro_backup', type: 'expense', account_id: 'acc_altro', amount: -4000, currency: 'EUR', amount_eur: -4000, occurred_at: '2026-11-09T10:00:00+08:00', merchant: 'Revolver Espresso', category_id: 'cat_altro_bar', source: 'import', status: 'confirmed' }],
@@ -592,7 +592,7 @@ describe('backup', () => {
     expect(t.account_id).toBe(C('acc_cash'));
     expect(t.labels).toEqual(['Bali']);
     const cats = (await me.get('/api/bootstrap')).json.categories;
-    expect(cats.filter((c: any) => c.name === 'Bar, caffè').length).toBe(1);
+    expect(cats.filter((c: any) => c.name === 'Bar e caffè').length).toBe(1);
   });
   it('"sostituisci" rimette esattamente i dati del backup', async () => {
     const r = await importAll(me, backup, 'replace');
@@ -747,6 +747,74 @@ describe('account separati', () => {
     const net = new Client('10.11.0.1');
     for (let i = 0; i < 5; i++) expect((await net.post('/api/register', { email: `utente${i}@example.com`, password: 'password-lunga-1' })).status).toBe(201);
     expect((await net.post('/api/register', { email: 'utente9@example.com', password: 'password-lunga-1' })).status).toBe(429);
+  });
+});
+
+describe('categorie versione 2', () => {
+  it('un account con le categorie vecchie si aggiorna da solo senza perdere nulla', async () => {
+    const c = new Client('10.40.0.1');
+    c.cookie = `ledgy_session=${OLD.v1Session}`;
+    const b = (await c.get('/api/bootstrap')).json;
+    const byId = new Map(b.categories.map((x: any) => [x.id, x]));
+    expect(byId.has('cat_life~usr_v1')).toBe(false);
+    expect(byId.has('cat_life_streaming~usr_v1')).toBe(false);
+    expect((byId.get('cat_subs_streaming~usr_v1') as any).name).toBe('Streaming video e musica');
+    expect((byId.get('cat_food_restaurant~usr_v1') as any).name).toBe('Ristoranti');
+    expect((byId.get('cat_food_bar~usr_v1') as any).name).toBe('Il mio bar'); // rinominata dall'utente: resta
+    expect((byId.get('cat_mia_v1') as any).parent_id).toBe('cat_fun~usr_v1');
+    expect(byId.has('cat_family~usr_v1')).toBe(false); // gruppo facoltativo: spento
+    const t = (await c.get('/api/transactions/tx_v1')).json;
+    expect(t.category_id).toBe('cat_subs_streaming~usr_v1');
+    const rule = (await c.get('/api/rules')).json.items.find((r: any) => r.id === 'rule_v1');
+    expect(rule.definition.actions.category_id).toBe('cat_subs_streaming~usr_v1');
+    // Una seconda volta non cambia nulla.
+    expect((await c.get('/api/bootstrap')).json.categories.length).toBe(b.categories.length);
+  });
+  it('un account nuovo ha già le categorie nuove, con i gruppi facoltativi spenti', async () => {
+    const own: Record<string, string> = {};
+    const g = await newGuest('10.40.0.2');
+    await loadOwn(g, own);
+    expect(own.cat_subs_dating && own.cat_work_ai && own.cat_income_crypto && own.cat_health_surgery).toBeTruthy();
+    expect(own.cat_family).toBeUndefined();
+    expect(own.cat_life).toBeUndefined();
+  });
+});
+
+describe('cattura che impara', () => {
+  const c = new Client('10.41.0.1');
+  const own: Record<string, string> = {};
+  let phone = '';
+  beforeAll(async () => {
+    await c.post('/api/guest');
+    await loadOwn(c, own);
+    phone = await newDevice(c);
+  });
+  it('"50 AED restaurant" ha negozio e categoria, senza passare da "da rivedere"', async () => {
+    const r = await c.post(phone, { title: 'ntfy.sh/23-usd-reload', text: 'ntfy.sh/23-usd-reload\n\n50 AED restaurant', amount: '50', currency: 'AED', merchant: '' });
+    const t = (await c.get(`/api/transactions/${r.json.transaction_id}`)).json;
+    expect(r.json.status).toBe('created');
+    expect(t).toMatchObject({ merchant: 'restaurant', category_id: own.cat_food_restaurant, status: 'confirmed' });
+  });
+  it('le parole chiave funzionano in altre lingue e con le marche', async () => {
+    for (const [text, cat] of [['Paid 15.99 USD to Netflix', 'cat_subs_streaming'], ['Pagaste 12 EUR en Restaurante Casa Pepe', 'cat_food_restaurant'], ['Payment 20 USD Claude.ai subscription', 'cat_work_ai']]) {
+      const r = await c.post(phone, { text });
+      expect((await c.get(`/api/transactions/${r.json.transaction_id}`)).json.category_id).toBe(own[cat]);
+    }
+  });
+  it('dopo una correzione la spesa successiva dello stesso negozio va nella categoria corretta', async () => {
+    const first = (await c.get('/api/transactions?merchant=restaurant')).json.items[0];
+    const put = await c.put(`/api/transactions/${first.id}`, { category_id: own.cat_food_fastfood });
+    expect(put.json).toMatchObject({ ok: true, others: 0, merchant: 'restaurant' });
+    const r = await c.post(phone, { text: '30 AED restaurant' });
+    expect((await c.get(`/api/transactions/${r.json.transaction_id}`)).json.category_id).toBe(own.cat_food_fastfood);
+  });
+  it('si può applicare la correzione a tutte le spese dello stesso negozio', async () => {
+    const items = (await c.get('/api/transactions?merchant=restaurant')).json.items;
+    const put = await c.put(`/api/transactions/${items[0].id}`, { category_id: own.cat_food_restaurant });
+    expect(put.json.others).toBe(1);
+    expect((await c.post('/api/transactions/recategorize', { merchant: 'Restaurant', category_id: own.cat_food_restaurant })).json.changed).toBe(1);
+    const after = (await c.get('/api/transactions?merchant=restaurant')).json.items;
+    expect(after.every((t: any) => t.category_id === own.cat_food_restaurant)).toBe(true);
   });
 });
 

@@ -1,3 +1,4 @@
+import { categoryFromKeywords } from '../shared/keywords';
 import { describe, expect, it } from 'vitest';
 import { amountAppearsInText, formatMoney, parseAmount, roundMilli, toMilli } from '../shared/money';
 import { cleanMerchantName, parseFromHint, parseGeneric, parseNotification, parseWithParser } from '../shared/notification';
@@ -168,5 +169,44 @@ describe('fuso orario', () => {
   it('senza ora o con testo illeggibile usa adesso', () => {
     expect(normalizePostedAt(null, 'Asia/Makassar', now)).toBe('2026-11-15T07:30:00+08:00');
     expect(normalizePostedAt('ieri sera', 'Asia/Makassar', now)).toBe('2026-11-15T07:30:00+08:00');
+  });
+});
+
+describe('nome del negozio dalla riga dell’importo', () => {
+  it('"50 AED restaurant" (notifica di prova del proprietario) dà il negozio', () => {
+    const p = parseNotification({ title: 'ntfy.sh/23-usd-reload', text: 'ntfy.sh/23-usd-reload\n\n50 AED restaurant' }, []);
+    expect(p).toMatchObject({ amount: 50, currency: 'AED', merchant: 'restaurant' });
+  });
+  it('la lettura del telefono senza negozio prende quello del testo', () => {
+    const p = parseNotification({ text: 'ntfy.sh/x\n50 AED restaurant', hint: { amount: '50', currency: 'AED', merchant: '' } }, []);
+    expect(p?.merchant).toBe('restaurant');
+  });
+  it('non inventa negozi da frasi lunghe o vuote', () => {
+    expect(parseNotification({ text: 'Paid 70,000.00 IDR' }, [])?.merchant).toBeNull();
+    expect(parseNotification({ text: 'Charged 12 USD today something happened with your account balance now' }, [])?.merchant).toBeNull();
+  });
+});
+
+describe('categoria dalle parole chiave, in più lingue', () => {
+  const cases: Array<[string, string]> = [
+    ['restaurant', 'cat_food_restaurant'], ['Ristorante Da Mario', 'cat_food_restaurant'], ['Warung Made', 'cat_food_restaurant'],
+    ['Restaurante El Sol', 'cat_food_restaurant'], ['ร้านอาหาร', 'cat_food_restaurant'], ['Starbucks', 'cat_food_bar'], ['Kopi Kenangan', 'cat_food_bar'],
+    ['Café de Flore', 'cat_food_bar'], ['Uber Eats', 'cat_food_delivery'], ['Grab Food', 'cat_food_delivery'], ['Uber', 'cat_transport_taxi'],
+    ['Carrefour', 'cat_food_groceries'], ['Indomaret', 'cat_food_groceries'], ['Netflix', 'cat_subs_streaming'], ['YouTube Premium', 'cat_subs_streaming'],
+    ['Tinder', 'cat_subs_dating'], ['Bumble', 'cat_subs_dating'], ['Amazon Prime', 'cat_subs_shopping'], ['Amazon', 'cat_shop_other'],
+    ['Claude.ai', 'cat_work_ai'], ['OpenAI ChatGPT', 'cat_work_ai'], ['Steam', 'cat_subs_games'], ['Ryanair', 'cat_transport_flights'],
+    ['Farmacia Centrale', 'cat_health_pharmacy'], ['Apotek K-24', 'cat_health_pharmacy'], ['Pertamina', 'cat_vehicle_fuel'], ['Booking.com', 'cat_travel_hotel'],
+    ['Barbershop', 'cat_care_hair'], ['Anytime Fitness', 'cat_care_fitness'], ['Telkomsel', 'cat_subs_phone'], ['Cloudflare', 'cat_work_hosting'],
+  ];
+  for (const [text, id] of cases) it(`${text} → ${id}`, () => expect(categoryFromKeywords('expense', text)).toBe(id));
+  it('non scatta su parole comuni o sulle carte Visa', () => {
+    expect(categoryFromKeywords('expense', 'Visa ****1234 total 50 fine')).toBeNull();
+    expect(categoryFromKeywords('expense', 'Air')).toBeNull();
+    expect(categoryFromKeywords('expense', 'Air minum')).toBe('cat_home_water');
+  });
+  it('le entrate usano solo le categorie di entrata', () => {
+    expect(categoryFromKeywords('income', 'Salary November')).toBe('cat_income_salary');
+    expect(categoryFromKeywords('income', 'Staking reward')).toBe('cat_income_crypto');
+    expect(categoryFromKeywords('income', 'Netflix')).toBeNull();
   });
 });

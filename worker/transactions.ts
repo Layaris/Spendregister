@@ -5,6 +5,8 @@ import { evaluateRules, type Rule, type RuleDefinition, type RuleInput } from '.
 import { getEurRate } from './fx';
 import { normalizePostedAt } from '../shared/time';
 import { bad, body, getTimeZone, newId, notFound, nowIso, parseJson, runBatch, uid, type AppEnv } from './lib';
+import { seedId } from './seed';
+import { categoryFromKeywords } from '../shared/keywords';
 
 export interface TxRow {
   id: string;
@@ -90,18 +92,27 @@ export async function defaultAccountId(db: D1Database, userId: string): Promise<
 }
 
 /** Categoria più usata in passato per lo stesso merchant (solo movimenti confermati). */
+/**
+ * Categoria dall'ultima spesa confermata dello stesso negozio: se l'utente ha corretto la categoria,
+ * dalla spesa successiva vale la correzione (è la più recente).
+ */
 export async function categoryFromHistory(db: D1Database, userId: string, merchant: string | null): Promise<string | null> {
   if (!merchant) return null;
   const row = await db
-    .prepare(`SELECT category_id, COUNT(*) AS n FROM transactions
-              WHERE user_id = ? AND merchant = ? AND status = 'confirmed' AND category_id IS NOT NULL AND deleted_at IS NULL
-              GROUP BY category_id ORDER BY n DESC LIMIT 2`)
+    .prepare(`SELECT t.category_id FROM transactions t JOIN categories c ON c.id = t.category_id AND c.archived = 0
+              WHERE t.user_id = ? AND t.merchant = ? COLLATE NOCASE AND t.status = 'confirmed' AND t.deleted_at IS NULL
+              ORDER BY t.updated_at DESC LIMIT 1`)
     .bind(userId, merchant)
-    .all<{ category_id: string; n: number }>();
-  const [first, second] = row.results;
-  if (!first) return null;
-  if (second && second.n * 2 > first.n) return null;
-  return first.category_id;
+    .first<{ category_id: string }>();
+  return row?.category_id ?? null;
+}
+
+/** Categoria dalle parole chiave (in molte lingue), tra quelle attive dell'account. */
+export async function categoryFromWords(db: D1Database, userId: string, kind: 'expense' | 'income', ...texts: Array<string | null | undefined>): Promise<string | null> {
+  const base = categoryFromKeywords(kind, ...texts);
+  if (!base) return null;
+  const row = await db.prepare('SELECT id FROM categories WHERE id = ? AND user_id = ? AND archived = 0').bind(seedId(base, userId), userId).first<{ id: string }>();
+  return row?.id ?? null;
 }
 
 /** Una categoria o un conto indicato dal browser deve essere dell'account. */
@@ -258,7 +269,8 @@ transactionsApi.post('/', async (c) => {
     const rules = await loadRules(c.env.DB, userId);
     const conv = await convertToEur(c.env.DB, milli, currency, occurred);
     const r = evaluateRules(rules, { merchant, merchant_raw: merchantRaw, text: null, app: null, currency, account_id: b.account_id ?? null, amount_eur: (conv?.amount_eur ?? 0) / 1000, occurred_at: occurred, source: 'manual' });
-    category = r.category_id ?? (await categoryFromHistory(c.env.DB, userId, merchant));
+    category = r.category_id ?? (await categoryFromHistory(c.env.DB, userId, merchant))
+      ?? (r.ask ? null : await categoryFromWords(c.env.DB, userId, type === 'income' ? 'income' : 'expense', merchant, merchantRaw));
     nature = nature ?? r.nature ?? null;
     labels = [...labels, ...r.labels];
     ruleIds.push(...r.matched);
@@ -305,7 +317,33 @@ transactionsApi.put('/:id', async (c) => {
     const ids = await ensureLabels(c.env.DB, userId, b.labels);
     await runBatch(c.env.DB, ids.map((l) => c.env.DB.prepare('INSERT OR IGNORE INTO transaction_labels (transaction_id, label_id) VALUES (?, ?)').bind(id, l)));
   }
-  return c.json({ ok: true });
+  // Categoria cambiata: quante altre spese dello stesso negozio hanno una categoria diversa (l'app propone di cambiarle).
+  let others = 0;
+  if (category && category !== row.category_id && merchant) {
+    const r = await c.env.DB
+      .prepare('SELECT COUNT(*) AS n FROM transactions WHERE user_id = ? AND merchant = ? COLLATE NOCASE AND id <> ? AND deleted_at IS NULL AND (category_id IS NULL OR category_id <> ?)')
+      .bind(userId, merchant, id, category).first<{ n: number }>();
+    others = r?.n ?? 0;
+  }
+  return c.json({ ok: true, others, merchant });
+});
+
+/** Mette la stessa categoria a tutte le spese di un negozio (dopo una correzione). */
+transactionsApi.post('/recategorize', async (c) => {
+  const b = await body<{ merchant?: string; category_id?: string }>(c);
+  if (!b.merchant?.trim() || !b.category_id) bad('Negozio e categoria sono obbligatori');
+  const userId = uid(c);
+  await checkOwned(c.env.DB, 'categories', b.category_id, userId);
+  const nature = await defaultNature(c.env.DB, b.category_id);
+  const r = await c.env.DB
+    .prepare(`UPDATE transactions SET category_id = ?, nature = COALESCE(?, nature), updated_at = ?,
+                status = CASE WHEN status = 'review' AND duplicate_of IS NULL THEN 'confirmed' ELSE status END,
+                review_reason = CASE WHEN status = 'review' AND duplicate_of IS NULL THEN NULL ELSE review_reason END,
+                review_choices = CASE WHEN status = 'review' AND duplicate_of IS NULL THEN NULL ELSE review_choices END
+              WHERE user_id = ? AND merchant = ? COLLATE NOCASE AND deleted_at IS NULL AND (category_id IS NULL OR category_id <> ?)`)
+    .bind(b.category_id, nature, nowIso(), userId, b.merchant.trim(), b.category_id)
+    .run();
+  return c.json({ changed: r.meta.changes ?? 0 });
 });
 
 transactionsApi.delete('/:id', async (c) => {

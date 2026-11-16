@@ -42,6 +42,28 @@ const SKIP_WORDS = /\b(otp|codice di verifica|verification code|kode verifikasi|
 const MERCHANT_RE =
   /(?:\b(?:a|at|to|presso|da|di|ke|pada|from|merchant:?)\s+)([A-Za-z0-9*][^\n,;]*?)(?=\s+(?:con|with|using|via|on|il|per|dengan|sebesar|tanggal|pada|alle|at\s+\d)\b|[.,;\n]|$)/i;
 
+// Parole di servizio da togliere quando il nome del negozio si ricava da ciò che resta sulla riga dell'importo.
+const FILLER = new Set(('you paid spent payment purchase card debit credit transaction successful success completed approved charged ' +
+  'hai pagato speso pagamento acquisto carta addebito transazione completato riuscito eseguito ' +
+  'anda membayar pembayaran transaksi berhasil sukses kartu bayar ' +
+  'has pagado pago compra tarjeta vous avez payé paiement achat carte sie haben bezahlt zahlung kauf karte ' +
+  'a at to for per di da ke ke: with con on via il la lo le the of de en sur bei an mit oleh untuk ok in at: from your tua il tuo ' +
+  'amount importo jumlah total totale sebesar rp').split(/\s+/));
+
+/** Ciò che resta sulla riga dell'importo, se sembra un nome: "50 AED restaurant" → "restaurant". */
+function merchantFromLine(text: string, start: number, end: number): string | null {
+  const lineStart = text.lastIndexOf('\n', start - 1) + 1;
+  const nl = text.indexOf('\n', end);
+  const line = `${text.slice(lineStart, start)} ${text.slice(end, nl < 0 ? text.length : nl)}`;
+  const words = line
+    .replace(/\b\S+\.\S+\/\S*/g, ' ') // indirizzi tipo ntfy.sh/argomento
+    .replace(/[\d.,:;!?()[\]{}"'“”‘’*#|/\\]+/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w && !FILLER.has(w.toLowerCase()) && /\p{L}/u.test(w));
+  if (!words.length || words.length > 4) return null;
+  return cleanMerchant(words.join(' '));
+}
+
 function cleanMerchant(m: string | null | undefined): string | null {
   if (!m) return null;
   const s = m.replace(/\s+/g, ' ').trim().replace(/[.!]+$/, '');
@@ -51,31 +73,31 @@ function cleanMerchant(m: string | null | undefined): string | null {
 /** Lettura generica: trova la prima coppia valuta + importo e un possibile esercente. */
 export function parseGeneric(text: string, defaultCurrency?: string | null): ParsedPayment | null {
   if (SKIP_WORDS.test(text)) return null;
-  const candidates: Array<{ index: number; cur: string; num: string }> = [];
+  const candidates: Array<{ index: number; end: number; cur: string; num: string }> = [];
   for (const m of text.matchAll(PREFIX_RE)) {
     const cur = currencyFromToken(m[1]);
-    if (cur) candidates.push({ index: m.index ?? 0, cur, num: m[2] });
+    if (cur) candidates.push({ index: m.index ?? 0, end: (m.index ?? 0) + m[0].length, cur, num: m[2] });
   }
   for (const m of text.matchAll(SUFFIX_RE)) {
     const cur = currencyFromToken(m[2]);
-    if (cur) candidates.push({ index: m.index ?? 0, cur, num: m[1] });
+    if (cur) candidates.push({ index: m.index ?? 0, end: (m.index ?? 0) + m[0].length, cur, num: m[1] });
   }
   candidates.sort((a, b) => a.index - b.index);
-  let best: { cur: string; parsed: { value: number; ambiguous: boolean } } | null = null;
+  let best: { cur: string; parsed: { value: number; ambiguous: boolean }; index: number; end: number } | null = null;
   for (const c of candidates) {
     const parsed = parseAmount(c.num.trim(), c.cur);
     if (parsed && parsed.value > 0) {
-      best = { cur: c.cur, parsed };
+      best = { cur: c.cur, parsed, index: c.index, end: c.end };
       break;
     }
   }
   if (!best && defaultCurrency) {
     const m = text.match(new RegExp(NUMBER));
     const parsed = m ? parseAmount(m[0], defaultCurrency) : null;
-    if (parsed && parsed.value > 0) best = { cur: defaultCurrency, parsed };
+    if (parsed && parsed.value > 0) best = { cur: defaultCurrency, parsed, index: m!.index ?? 0, end: (m!.index ?? 0) + m![0].length };
   }
   if (!best) return null;
-  const merchant = cleanMerchant(text.match(MERCHANT_RE)?.[1]);
+  const merchant = cleanMerchant(text.match(MERCHANT_RE)?.[1]) ?? merchantFromLine(text, best.index, best.end);
   return {
     amount: best.parsed.value,
     currency: best.cur,
@@ -150,9 +172,10 @@ export function parseNotification(
     if (r) return r;
   }
   const generic = parseGeneric(full);
-  if (generic && generic.merchant) return generic;
+  if (generic && generic.merchant && generic.confidence !== 'low') return generic;
   const fromHint = input.hint ? parseFromHint(full, input.hint) : null;
-  if (fromHint) return fromHint;
+  // La lettura del telefono senza negozio prende quello trovato nel testo.
+  if (fromHint) return { ...fromHint, merchant: fromHint.merchant ?? generic?.merchant ?? null };
   return generic;
 }
 
