@@ -7,6 +7,7 @@ import { normalizePostedAt } from '../shared/time';
 import { bad, body, getTimeZone, newId, notFound, nowIso, parseJson, runBatch, uid, type AppEnv } from './lib';
 import { seedId } from './seed';
 import { categoryFromKeywords } from '../shared/keywords';
+import { sourceKey } from '../shared/apps';
 
 export interface TxRow {
   id: string;
@@ -245,6 +246,8 @@ interface TxInput {
   nature?: string | null;
   labels?: string[];
   place?: string | null;
+  /** Carta o banca (solo modifica). */
+  card?: string | null;
 }
 
 transactionsApi.post('/', async (c) => {
@@ -317,6 +320,28 @@ transactionsApi.put('/:id', async (c) => {
     const ids = await ensureLabels(c.env.DB, userId, b.labels);
     await runBatch(c.env.DB, ids.map((l) => c.env.DB.prepare('INSERT OR IGNORE INTO transaction_labels (transaction_id, label_id) VALUES (?, ?)').bind(id, l)));
   }
+  // Carta o conto di un movimento catturato: Ledgy li ricorda per le notifiche successive della stessa fonte
+  // e li mette anche ai movimenti già arrivati da lì.
+  let source: { card: string | null; applied: number } | null = null;
+  if (row.capture_id && (b.card !== undefined || (b.account_id !== undefined && b.account_id !== row.account_id))) {
+    const cap = await c.env.DB.prepare('SELECT app, title FROM captures WHERE id = ? AND user_id = ?').bind(row.capture_id, userId).first<{ app: string | null; title: string | null }>();
+    const key = cap ? sourceKey(cap.app, cap.title) : null;
+    if (key) {
+      const old = await c.env.DB.prepare('SELECT card, account_id FROM capture_sources WHERE user_id = ? AND key = ?').bind(userId, key).first<{ card: string | null; account_id: string | null }>();
+      const card = b.card !== undefined ? (b.card?.trim().slice(0, 60) || null) : old?.card ?? row.card;
+      const account = b.account_id !== undefined ? b.account_id : old?.account_id ?? null;
+      const same = `capture_id IN (SELECT id FROM captures WHERE user_id = ? AND lower(COALESCE(NULLIF(app, ''), title)) = ?)`;
+      const res = await c.env.DB.batch([
+        c.env.DB.prepare(`INSERT INTO capture_sources (user_id, key, card, account_id, updated_at) VALUES (?, ?, ?, ?, ?)
+                          ON CONFLICT (user_id, key) DO UPDATE SET card = excluded.card, account_id = excluded.account_id, updated_at = excluded.updated_at`)
+          .bind(userId, key, card, account, nowIso()),
+        c.env.DB.prepare(`UPDATE transactions SET card = ? WHERE user_id = ? AND ${same}`).bind(card, userId, userId, key),
+      ]);
+      source = { card, applied: res[1].meta.changes ?? 0 };
+    }
+  } else if (b.card !== undefined) {
+    await c.env.DB.prepare('UPDATE transactions SET card = ? WHERE id = ? AND user_id = ?').bind(b.card?.trim().slice(0, 60) || null, id, userId).run();
+  }
   // Categoria cambiata: quante altre spese dello stesso negozio hanno una categoria diversa (l'app propone di cambiarle).
   let others = 0;
   if (category && category !== row.category_id && merchant) {
@@ -325,7 +350,7 @@ transactionsApi.put('/:id', async (c) => {
       .bind(userId, merchant, id, category).first<{ n: number }>();
     others = r?.n ?? 0;
   }
-  return c.json({ ok: true, others, merchant });
+  return c.json({ ok: true, others, merchant, source });
 });
 
 /** Mette la stessa categoria a tutte le spese di un negozio (dopo una correzione). */

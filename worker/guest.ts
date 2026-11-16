@@ -18,7 +18,7 @@ export async function localData(db: D1Database, userId: string): Promise<LocalDa
 
 export const hasData = (d: LocalData) => d.transactions + d.devices > 0;
 
-const DATA_TABLES = ['favorites', 'captures', 'transactions', 'rules', 'parsers', 'devices', 'labels', 'categories', 'accounts'];
+const DATA_TABLES = ['capture_sources', 'favorites', 'captures', 'transactions', 'rules', 'parsers', 'devices', 'labels', 'categories', 'accounts'];
 
 /** Cancella tutti i dati di un account; con `andUser` anche sessioni e account. */
 export function deleteUserStatements(db: D1Database, id: string, andUser = true): D1PreparedStatement[] {
@@ -133,6 +133,9 @@ export async function adoptGuest(db: D1Database, g: string, a: string, mode: Log
   for (const [from, to] of catMap) stmts.push(db.prepare('UPDATE favorites SET category_id = ? WHERE user_id = ? AND category_id = ?').bind(to, g, from));
   for (const [from, to] of accMap) stmts.push(db.prepare('UPDATE favorites SET account_id = ? WHERE user_id = ? AND account_id = ?').bind(to, g, from));
   stmts.push(move('favorites'));
+  // Carte riconosciute: se l'account ne ha già una per la stessa fonte vince quella dell'account.
+  for (const [from, to] of accMap) stmts.push(db.prepare('UPDATE capture_sources SET account_id = ? WHERE user_id = ? AND account_id = ?').bind(to, g, from));
+  stmts.push(db.prepare('UPDATE OR IGNORE capture_sources SET user_id = ? WHERE user_id = ?').bind(a, g));
   stmts.push(...deleteUserStatements(db, g));
   await runBatch(db, stmts);
 }

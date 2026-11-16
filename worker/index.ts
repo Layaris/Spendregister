@@ -105,7 +105,7 @@ export default {
       (u.created_at < ?1 AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.id))
       OR (u.created_at < ?2 AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.user_id = u.id)
           AND NOT EXISTS (SELECT 1 FROM devices d WHERE d.user_id = u.id AND d.revoked_at IS NULL)))`;
-    const tables = ['favorites', 'captures', 'transactions', 'rules', 'parsers', 'devices', 'labels', 'categories', 'accounts', 'sessions'];
+    const tables = ['capture_sources', 'favorites', 'captures', 'transactions', 'rules', 'parsers', 'devices', 'labels', 'categories', 'accounts', 'sessions'];
     await env.DB.batch([
       env.DB.prepare(`DELETE FROM transaction_labels WHERE transaction_id IN (SELECT id FROM transactions WHERE user_id IN (${doomed}))`).bind(day, week),
       ...tables.map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE user_id IN (${doomed})`).bind(day, week)),

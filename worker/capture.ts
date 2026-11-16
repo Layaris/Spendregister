@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { appLabel, guessAppFromTitle } from '../shared/apps';
+import { appLabel, guessAppFromTitle, sourceKey } from '../shared/apps';
 import { isLikelyDuplicate, sha256Hex } from '../shared/dedupe';
 import { formatMoney, roundMilli, toMilli } from '../shared/money';
 import { cleanMerchantName, parseNotification, parseWithParser, type AiHint, type ParserDef } from '../shared/notification';
@@ -91,7 +91,12 @@ export async function processCapture(db: D1Database, userId: string, deviceId: s
   const conv = await convertToEur(db, amount, parsed.currency, occurred);
   const merchantRaw = parsed.merchant;
   const merchant = cleanMerchantName(merchantRaw);
-  const card = appLabel(p.app);
+  // Carta e conto imparati per questa fonte (titolo o app), altrimenti il nome dell'app se si conosce.
+  const key = sourceKey(p.app, p.title);
+  const source = key
+    ? await db.prepare('SELECT card, account_id FROM capture_sources WHERE user_id = ? AND key = ?').bind(userId, key).first<{ card: string | null; account_id: string | null }>()
+    : null;
+  const card = source?.card ?? appLabel(p.app);
 
   const rules = evaluateRules(await loadRules(db, userId), {
     merchant, merchant_raw: merchantRaw, text, app: p.app ?? null, currency: parsed.currency, account_id: null,
@@ -135,7 +140,7 @@ export async function processCapture(db: D1Database, userId: string, deviceId: s
 
   const txId = await insertTransaction(db, userId, {
     type: parsed.direction === 'income' ? 'income' : 'expense',
-    account_id: rules.account_id ?? (await defaultAccountId(db, userId)),
+    account_id: rules.account_id ?? source?.account_id ?? (await defaultAccountId(db, userId)),
     amount, currency: parsed.currency, occurred_at: occurred,
     merchant_raw: merchantRaw, merchant: finalMerchant, category_id: category,
     nature: rules.nature ?? null, card, source: 'capture', status,

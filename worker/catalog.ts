@@ -29,11 +29,17 @@ catalogApi.get('/bootstrap', async (c) => {
     accountInfo(db, u),
   ]);
   const bal = new Map(balances.results.map((b) => [b.id, b]));
+  // Movimenti in un'altra valuta: il loro controvalore in euro, riportato nella valuta del conto al cambio di oggi.
+  const today = new Date().toISOString().slice(0, 10);
+  const rates = new Map<string, number | null>();
+  for (const cur of new Set(balances.results.filter((b) => b.currency !== 'EUR' && b.other_eur).map((b) => b.currency))) {
+    rates.set(cur, (await getEurRate(db, cur, today))?.eurPerUnit ?? null);
+  }
   return c.json({
     accounts: accounts.results.map((a) => {
       const b = bal.get(a.id as string);
-      // Movimenti in un'altra valuta: per i conti in euro si usa il controvalore in euro.
-      const extra = b && b.currency === 'EUR' ? b.other_eur : 0;
+      const rate = b && b.currency !== 'EUR' ? rates.get(b.currency) : 1;
+      const extra = b?.other_eur && rate ? Math.round(b.other_eur / rate) : 0;
       return { ...a, balance: (b?.initial_balance ?? 0) + (b?.same_cur ?? 0) + extra };
     }),
     categories: categories.results,
@@ -58,15 +64,31 @@ catalogApi.post('/accounts', async (c) => {
 });
 
 catalogApi.put('/accounts/:id', async (c) => {
-  const b = await body<{ name?: string; type?: string; initial_balance?: number; color?: string; archived?: boolean }>(c);
+  const b = await body<{ name?: string; type?: string; initial_balance?: number; color?: string; archived?: boolean; currency?: string }>(c);
   const a = await c.env.DB.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').bind(c.req.param('id'), uid(c)).first<Record<string, unknown>>();
   if (!a) notFound();
+  if (b.name !== undefined && !b.name.trim()) bad('Nome del conto mancante');
+  // Valuta cambiata senza chiudere il conto: il saldo iniziale si converte al cambio di oggi.
+  // I movimenti restano nella loro valuta originale.
+  let currency = a.currency as string;
+  let initial = b.initial_balance != null ? toMilli(b.initial_balance) : (a.initial_balance as number);
+  if (b.currency && b.currency.toUpperCase() !== currency) {
+    const next = b.currency.toUpperCase();
+    if (!/^[A-Z]{3}$/.test(next)) bad('Valuta non valida');
+    if (initial && b.initial_balance == null) {
+      const today = new Date().toISOString().slice(0, 10);
+      const [from, to] = await Promise.all([getEurRate(c.env.DB, currency, today), getEurRate(c.env.DB, next, today)]);
+      if (!from || !to) bad('Cambio non disponibile per questa valuta: riprova più tardi');
+      initial = roundMilli(Math.round((initial * from.eurPerUnit) / to.eurPerUnit), next);
+    }
+    currency = next;
+  }
   await c.env.DB
-    .prepare('UPDATE accounts SET name = ?, type = ?, initial_balance = ?, color = ?, archived = ? WHERE id = ? AND user_id = ?')
-    .bind(b.name ?? a.name, b.type ?? a.type, b.initial_balance != null ? toMilli(b.initial_balance) : a.initial_balance, b.color ?? a.color,
+    .prepare('UPDATE accounts SET name = ?, type = ?, currency = ?, initial_balance = ?, color = ?, archived = ? WHERE id = ? AND user_id = ?')
+    .bind(b.name?.trim().slice(0, 80) ?? a.name, b.type ?? a.type, currency, initial, b.color ?? a.color,
       b.archived == null ? a.archived : b.archived ? 1 : 0, c.req.param('id'), uid(c))
     .run();
-  return c.json({ ok: true });
+  return c.json({ ok: true, currency, initial_balance: initial });
 });
 
 catalogApi.post('/categories', async (c) => {

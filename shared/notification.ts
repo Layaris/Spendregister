@@ -37,7 +37,18 @@ const PREFIX_RE = new RegExp(`(?:^|[^A-Za-z])(${CURRENCY_ALT})\\s?(${NUMBER})`, 
 const SUFFIX_RE = new RegExp(`(${NUMBER})\\s?(${CURRENCY_ALT})(?![A-Za-z])`, 'g');
 
 const INCOME_WORDS =
-  /\b(ricevut[oi]|accredit|rimbors|refund|received|incoming|masuk|diterima|dana masuk|cashback|top.?up received|stipendio|salary)/i;
+  /\b(ricevut[oi]|accredit|rimbors|refund|received|incoming|masuk|diterima|dana masuk|top.?up received|stipendio|salary)/i;
+// "Cashback" da solo è un'entrata; dentro una notifica di pagamento è solo un dettaglio ("Card payment | Cashback: +$0.04").
+const CASHBACK = /\bcashback\b/i;
+const PAYMENT_WORDS =
+  /\b(card payment|payment|paid|purchase|spent|charged|debit(?:ed)?|pagamento|pagato|acquisto|addebit|speso|pembayaran|bayar|transaksi|compra|pago|paiement|zahlung)\b/i;
+
+/** Entrata o spesa dal testo della notifica. */
+export function directionOf(text: string): Direction {
+  if (INCOME_WORDS.test(text)) return 'income';
+  if (CASHBACK.test(text) && !PAYMENT_WORDS.test(text)) return 'income';
+  return 'expense';
+}
 const SKIP_WORDS = /\b(otp|codice di verifica|verification code|kode verifikasi|password|declined|rifiutat|ditolak|gagal|failed)\b/i;
 const MERCHANT_RE =
   /(?:\b(?:a|at|to|presso|da|di|ke|pada|from|merchant:?)\s+)([A-Za-z0-9*][^\n,;]*?)(?=\s+(?:con|with|using|via|on|il|per|dengan|sebesar|tanggal|pada|alle|at\s+\d)\b|[.,;\n]|$)/i;
@@ -48,7 +59,7 @@ const FILLER = new Set(('you paid spent payment purchase card debit credit trans
   'anda membayar pembayaran transaksi berhasil sukses kartu bayar ' +
   'has pagado pago compra tarjeta vous avez payé paiement achat carte sie haben bezahlt zahlung kauf karte ' +
   'a at to for per di da ke ke: with con on via il la lo le the of de en sur bei an mit oleh untuk ok in at: from your tua il tuo ' +
-  'amount importo jumlah total totale sebesar rp').split(/\s+/));
+  'amount importo jumlah total totale sebesar rp cashback').split(/\s+/));
 
 /** Ciò che resta sulla riga dell'importo, se sembra un nome: "50 AED restaurant" → "restaurant". */
 function merchantFromLine(text: string, start: number, end: number): string | null {
@@ -102,7 +113,7 @@ export function parseGeneric(text: string, defaultCurrency?: string | null): Par
     amount: best.parsed.value,
     currency: best.cur,
     merchant,
-    direction: INCOME_WORDS.test(text) ? 'income' : 'expense',
+    direction: directionOf(text),
     confidence: merchant ? 'medium' : 'low',
     ambiguous: best.parsed.ambiguous,
     via: 'generica',
@@ -145,7 +156,7 @@ export function parseFromHint(text: string, hint: AiHint): ParsedPayment | null 
     amount: parsed.value,
     currency,
     merchant: cleanMerchant(hint.merchant),
-    direction: INCOME_WORDS.test(text) ? 'income' : 'expense',
+    direction: directionOf(text),
     confidence: 'medium',
     ambiguous: parsed.ambiguous,
     via: 'lettura sul telefono',

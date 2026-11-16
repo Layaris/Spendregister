@@ -210,3 +210,15 @@ describe('categoria dalle parole chiave, in più lingue', () => {
     expect(categoryFromKeywords('income', 'Netflix')).toBeNull();
   });
 });
+
+describe('entrate e spese', () => {
+  it('"Card payment | Cashback" è una spesa (notifica reale del proprietario)', () => {
+    const p = parseNotification({ title: 'Card payment', text: '16,200.00 IDR | Grab* A-A3BLGUWWWGKVAV | Card payment | Cashback: +$0.04' }, []);
+    expect(p).toMatchObject({ amount: 16200, currency: 'IDR', direction: 'expense' });
+    expect(p?.merchant).toContain('Grab');
+  });
+  it('un cashback da solo è un’entrata, un rimborso anche dentro un pagamento', () => {
+    expect(parseNotification({ text: 'Cashback 2.50 USD credited' }, [])?.direction).toBe('income');
+    expect(parseNotification({ text: 'Refund of card payment 12 EUR from Zara' }, [])?.direction).toBe('income');
+  });
+});

@@ -26,3 +26,9 @@ export function appLabel(app: string | null | undefined): string | null {
   for (const [pkg, name] of Object.entries(KNOWN_APPS)) if (pkg.toLowerCase() === lower || name.toLowerCase() === lower) return name;
   return app.includes('.') ? app.split('.').pop() ?? app : app;
 }
+
+/** Chiave della fonte di una notifica (per ricordare carta e conto): l'app su Android, il titolo su iPhone. */
+export function sourceKey(app: string | null | undefined, title: string | null | undefined): string | null {
+  const k = (app || title || '').trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 120);
+  return k || null;
+}

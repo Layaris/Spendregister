@@ -930,6 +930,53 @@ describe('gestione categorie, preferiti, impostazioni', () => {
   });
 });
 
+describe('carta o banca e conti in altre valute', () => {
+  const c = new Client('10.43.0.1');
+  const own: Record<string, string> = {};
+  let phone = '';
+  let wise = '';
+  beforeAll(async () => {
+    await c.post('/api/guest');
+    await loadOwn(c, own);
+    phone = await newDevice(c);
+    wise = (await c.post('/api/accounts', { name: 'Carta cripto', currency: 'USD' })).json.id;
+  });
+  it('"Card payment | Cashback" è una spesa, non un’entrata (notifica reale)', async () => {
+    const r = await c.post(phone, { title: 'Card payment', text: '16,200.00 IDR | Grab* A-A3BLGUWWWGKVAV | Card payment | Cashback: +$0.04' });
+    const t = (await c.get(`/api/transactions/${r.json.transaction_id}`)).json;
+    expect(t).toMatchObject({ type: 'expense', amount: -16200000, currency: 'IDR', merchant: 'Grab', category_id: own.cat_transport_taxi });
+  });
+  it('scrivendo la carta una volta, Ledgy la ricorda per le notifiche con lo stesso titolo (e il conto)', async () => {
+    const first = (await c.get('/api/transactions?merchant=Grab')).json.items[0];
+    const put = await c.put(`/api/transactions/${first.id}`, { card: 'Carta cripto', account_id: wise });
+    expect(put.json.source).toMatchObject({ card: 'Carta cripto', applied: 1 });
+    const r = await c.post(phone, { title: 'Card payment', text: '45,000.00 IDR | KOPI KENANGAN | Card payment | Cashback: +$0.10' });
+    const t = (await c.get(`/api/transactions/${r.json.transaction_id}`)).json;
+    expect(t).toMatchObject({ card: 'Carta cripto', account_id: wise, type: 'expense' });
+    // Un'altra fonte non prende la carta.
+    const other = await c.post(phone, { title: 'Revolut', text: 'Hai pagato Rp20.000 a Warung' });
+    expect((await c.get(`/api/transactions/${other.json.transaction_id}`)).json.card).toBe('Revolut');
+  });
+  it('il saldo di un conto in dollari conta anche le spese in rupie', async () => {
+    const acc = (await c.get('/api/bootstrap')).json.accounts.find((a: any) => a.id === wise);
+    // Grab 16.200 + Kopi 45.000 = 61.200 IDR = 3,06 € = 3,40 USD (tassi fissi dei test: IDR 0.00005, USD 0.9)
+    expect(acc.balance).toBe(-3400);
+  });
+  it('cambia la valuta di un conto senza chiuderlo, convertendo il saldo iniziale', async () => {
+    await c.put(`/api/accounts/${own.acc_cash}`, { initial_balance: 90 });
+    const r = await c.put(`/api/accounts/${own.acc_cash}`, { currency: 'USD' });
+    expect(r.json).toMatchObject({ currency: 'USD', initial_balance: 100000 });
+    const acc = (await c.get('/api/bootstrap')).json.accounts.find((a: any) => a.id === own.acc_cash);
+    expect(acc.currency).toBe('USD');
+    expect((await c.put(`/api/accounts/${own.acc_cash}`, { currency: 'EURO' })).status).toBe(400);
+    expect((await c.put(`/api/accounts/${own.acc_cash}`, { name: '  ' })).status).toBe(400);
+  });
+  it('le carte riconosciute finiscono nel backup', async () => {
+    const rows = (await c.get('/api/backup/export?table=capture_sources')).json.rows;
+    expect(rows).toEqual([expect.objectContaining({ key: 'card payment', card: 'Carta cripto', account_id: wise })]);
+  });
+});
+
 describe('pulizia notturna', () => {
   const withSession = (token: string) => { const c = new Client('10.30.0.1'); c.cookie = `ledgy_session=${token}`; return c; };
   const ping = (token: string) => new Client('10.30.0.2').post(`/api/in/${token}/ping`, {});
