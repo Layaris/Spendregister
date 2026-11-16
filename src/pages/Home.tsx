@@ -55,6 +55,13 @@ export function Home() {
         )}
       </div>
 
+      {!store.account.email && (
+        <a href="#/account/crea" className="card" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, padding: '12px 14px', textDecoration: 'none', color: 'inherit' }}>
+          <span className="grow" style={{ fontSize: 14 }}>Stai usando Ledgy senza account. <b>Crea un account</b> per non perdere i dati.</span>
+          <Icon name="next" size={18} />
+        </a>
+      )}
+
       <a href="#/cattura" className="card" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, padding: '12px 14px', textDecoration: 'none', color: 'inherit' }}>
         <span className={`dot ${stale.length ? 'warn' : ''}`} />
         <span className="grow" style={{ fontSize: 14 }}>

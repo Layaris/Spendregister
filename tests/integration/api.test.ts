@@ -1,8 +1,8 @@
 // Test d'integrazione: il vero Worker con D1 locale e tassi fissi (IDR 0.00005, SGD 0.7).
-// I test sono in ordine e condividono il database. Il database parte con i dati della versione a
-// utente singolo (account "owner" non collegato, vedi server.ts).
+// I test sono in ordine e condividono il database. Il database parte con qualche ospite e account
+// creati "a gennaio" (vedi server.ts), per la pulizia notturna.
 import { beforeAll, describe, expect, inject, it } from 'vitest';
-import { LEGACY_PASSWORD, LEGACY_TOKEN } from './server';
+import { OLD } from './server';
 
 const BASE = inject('baseUrl');
 const EMAIL = 'anna@example.com';
@@ -63,38 +63,162 @@ async function tx(id: string) {
   return (await me.get(`/api/transactions/${id}`)).json;
 }
 
-describe('dati della versione con una sola password', () => {
-  const owner = new Client('10.6.6.1');
-  it('la schermata di accesso propone di collegarli', async () => {
-    expect((await owner.get('/api/auth/status')).json).toEqual({ legacy_available: true });
+async function newGuest(ip: string) {
+  const c = new Client(ip);
+  expect((await c.post('/api/guest')).status).toBe(201);
+  return c;
+}
+async function newDevice(c: Client) {
+  return (await c.post('/api/capture/devices', { name: 'Telefono', platform: 'ios', method: 'shortcut' })).json.url.replace(BASE, '') as string;
+}
+const count = async (c: Client, q = '') => (await c.get(`/api/transactions?limit=500${q}`)).json.items.length as number;
+
+describe('uso senza account', () => {
+  let guest: Client;
+  let guestPhone = '';
+  it('senza sessione si usa subito l’app come ospite', async () => {
+    const c = new Client('10.20.0.1');
+    expect((await c.get('/api/bootstrap')).status).toBe(401);
+    expect((await c.post('/api/guest')).status).toBe(201);
+    expect((await c.get('/api/me')).json).toEqual({ email: null, guest: true });
+    const b = (await c.get('/api/bootstrap')).json;
+    expect(b.account.email).toBeNull();
+    expect(b.categories.length).toBeGreaterThan(50);
+    expect(b.accounts.map((a: any) => a.name)).toEqual(['Contanti']);
+    // Con la sessione già aperta non crea un altro ospite.
+    expect((await c.post('/api/guest')).status).toBe(200);
+    guest = c;
   });
-  it('il vecchio iPhone continua a registrare le spese', async () => {
-    const r = await owner.post(`/api/in/${LEGACY_TOKEN}`, { text: 'Hai pagato Rp20.000 a Warung Lama', posted_at: '2026-11-03T12:00:00+08:00' });
-    expect(r.json.transaction_id).toBeTruthy();
+  it('l’ospite registra spese e collega un telefono', async () => {
+    expect((await guest.post('/api/transactions', { amount: 2, currency: 'EUR', merchant: 'Caffè da ospite' })).status).toBe(201);
+    guestPhone = await newDevice(guest);
+    expect((await guest.post(guestPhone, { text: 'Hai pagato Rp20.000 a Warung Ospite', posted_at: '2026-11-03T12:00:00+08:00' })).json.transaction_id).toBeTruthy();
+    expect(await count(guest)).toBe(2);
   });
-  it('rifiuta la vecchia password sbagliata', async () => {
-    expect((await owner.post('/api/claim', { email: 'io@example.com', password: 'nuova-password-owner-1', old_password: 'non-era-questa' })).status).toBe(401);
-    expect((await owner.get('/api/me')).status).toBe(401);
+  it('l’ospite non ha password da cambiare né codice di recupero', async () => {
+    expect((await guest.put('/api/password', { current: '', next: 'nuova-password-123' })).status).toBe(400);
+    expect((await guest.post('/api/recovery-code', { password: '' })).status).toBe(400);
   });
-  it('con la vecchia password i dati diventano di un account con email', async () => {
-    expect((await owner.post('/api/claim', { email: 'io@example.com', password: 'nuova-password-owner-1', old_password: LEGACY_PASSWORD })).status).toBe(200);
-    const b = (await owner.get('/api/bootstrap')).json;
-    expect(b.account.email).toBe('io@example.com');
-    expect(b.accounts.map((a: any) => a.id)).toEqual(['acc_cash']);
-    expect(b.categories.some((c: any) => c.id === 'cat_food_bar')).toBe(true);
-    const merchants = (await owner.get('/api/transactions')).json.items.map((t: any) => t.merchant).sort();
-    expect(merchants).toEqual(['Caffè vecchio', 'Warung Lama']);
-    expect((await owner.get('/api/rules')).json.items.map((r: any) => r.name)).toContain('Grab');
+  it('creando un account con dati chiede cosa farne', async () => {
+    const r = await guest.post('/api/register', { email: 'ospite@example.com', password: 'password-ospite-1' });
+    expect(r.status).toBe(409);
+    expect(r.json).toMatchObject({ choice: 'register', local: { transactions: 2, devices: 1 } });
+    expect((await guest.get('/api/me')).json.guest).toBe(true);
   });
-  it('non si possono collegare una seconda volta', async () => {
-    expect((await owner.get('/api/auth/status')).json).toEqual({ legacy_available: false });
-    expect((await new Client('10.6.6.2').post('/api/claim', { email: 'ladro@example.com', password: 'nuova-password-ladro-1', old_password: LEGACY_PASSWORD })).status).toBe(400);
+  it('"porta i dati" li tiene nel nuovo account, telefono compreso', async () => {
+    expect((await guest.post('/api/register', { email: 'ospite@example.com', password: 'password-ospite-1', choice: 'keep' })).status).toBe(201);
+    expect((await guest.get('/api/me')).json).toEqual({ email: 'ospite@example.com', guest: false });
+    expect(await count(guest)).toBe(2);
+    await guest.post(guestPhone, { text: 'Hai pagato Rp25.000 a Dopo la registrazione', posted_at: '2026-11-04T12:00:00+08:00' });
+    const other = new Client('10.20.0.2');
+    expect((await other.post('/api/login', { email: 'ospite@example.com', password: 'password-ospite-1' })).status).toBe(200);
+    expect(await count(other)).toBe(3);
   });
-  it('poi si entra con email e password e il vecchio iPhone scrive nello stesso account', async () => {
-    const again = new Client('10.6.6.3');
-    expect((await again.post('/api/login', { email: 'io@example.com', password: 'nuova-password-owner-1' })).status).toBe(200);
-    await again.post(`/api/in/${LEGACY_TOKEN}`, { text: 'Hai pagato Rp30.000 a Bakso Pak Joko', posted_at: '2026-11-04T12:00:00+08:00' });
-    expect((await again.get('/api/transactions?q=Bakso')).json.items.length).toBe(1);
+  it('"inizia vuoto" crea un account nuovo e cancella i dati dell’ospite', async () => {
+    const g = await newGuest('10.20.1.1');
+    await g.post('/api/transactions', { amount: 2, currency: 'EUR', merchant: 'Da buttare' });
+    const phone = await newDevice(g);
+    expect((await g.post('/api/register', { email: 'vuoto@example.com', password: 'password-vuoto-1', choice: 'fresh' })).status).toBe(201);
+    expect((await g.get('/api/me')).json.email).toBe('vuoto@example.com');
+    expect(await count(g)).toBe(0);
+    expect((await g.get('/api/bootstrap')).json.categories.length).toBeGreaterThan(50);
+    expect((await g.post(`${phone}/ping`, {})).status).toBe(401);
+  });
+  it('un ospite senza dati crea l’account senza domande', async () => {
+    const g = await newGuest('10.20.1.2');
+    expect((await g.post('/api/register', { email: 'senza-dati@example.com', password: 'password-senza-1' })).status).toBe(201);
+  });
+});
+
+describe('entrare in un account con i dati di questo dispositivo', () => {
+  const maria = new Client('10.21.0.1');
+  const mOwn: Record<string, string> = {};
+  let mariaPhone = '';
+  let mariaTx = '';
+  beforeAll(async () => {
+    await maria.post('/api/register', { email: 'maria@example.com', password: 'password-maria-1' });
+    await loadOwn(maria, mOwn);
+    mariaTx = (await maria.post('/api/transactions', { amount: 4, currency: 'EUR', merchant: 'Bar di Maria', category_id: mOwn.cat_food_bar, labels: ['Bali'] })).json.id;
+    await maria.post('/api/categories', { name: 'Palestra', kind: 'expense' });
+    mariaPhone = await newDevice(maria);
+  });
+  const login = (c: Client, choice?: string) => c.post('/api/login', { email: 'maria@example.com', password: 'password-maria-1', choice });
+
+  it('un ospite senza dati entra subito', async () => {
+    const g = await newGuest('10.21.1.1');
+    expect((await login(g)).status).toBe(200);
+    expect(await count(g)).toBe(1);
+  });
+  it('un ospite con dati deve scegliere, e senza scelta non entra', async () => {
+    const g = await newGuest('10.21.1.2');
+    await g.post('/api/transactions', { amount: 1, currency: 'EUR', merchant: 'x' });
+    const r = await login(g);
+    expect(r.status).toBe(409);
+    expect(r.json).toMatchObject({ choice: 'login', local: { transactions: 1, devices: 0 } });
+    expect((await g.get('/api/me')).json.guest).toBe(true);
+    expect((await login(g, 'boh')).status).toBe(409);
+  });
+  it('"aggiungi" unisce i dati: categorie, etichette e regole uguali non si doppiano', async () => {
+    const g = await newGuest('10.21.1.3');
+    const gOwn: Record<string, string> = {};
+    await loadOwn(g, gOwn);
+    const yoga = (await g.post('/api/categories', { name: 'Yoga', kind: 'expense', parent_id: gOwn.cat_food })).json.id;
+    await g.post('/api/categories', { name: 'Palestra', kind: 'expense' });
+    const t1 = (await g.post('/api/transactions', { amount: 3, currency: 'EUR', merchant: 'Bar ospite', category_id: gOwn.cat_food_bar, labels: ['Bali', 'Nuova'] })).json.id;
+    const t2 = (await g.post('/api/transactions', { amount: 9, currency: 'EUR', merchant: 'Lezione', category_id: yoga })).json.id;
+    const ask = await (async () => { const p = await newDevice(g); return { p, r: await g.post(p, { text: 'Hai pagato Rp55.600 a Grab* A-X', posted_at: '2026-11-05T12:00:00+08:00' }) }; })();
+    expect(ask.r.json.status).toBe('review');
+    expect((await login(g, 'merge')).status).toBe(200);
+    expect((await g.get('/api/me')).json.email).toBe('maria@example.com');
+    expect(await count(g)).toBe(4);
+    expect((await g.get(`/api/transactions/${t1}`)).json).toMatchObject({ category_id: mOwn.cat_food_bar, account_id: mOwn.acc_cash });
+    expect((await g.get(`/api/transactions/${t1}`)).json.labels.sort()).toEqual(['Bali', 'Nuova']);
+    expect((await g.get(`/api/transactions/${t2}`)).json.category_id).toBe(yoga);
+    const grab = (await g.get(`/api/transactions/${ask.r.json.transaction_id}`)).json;
+    expect(grab.review_choices).toEqual([mOwn.cat_food_restaurant, mOwn.cat_transport_taxi]);
+    expect(grab.rules.map((r: any) => r.name)).toEqual(['Grab']);
+    const b = (await g.get('/api/bootstrap')).json;
+    expect(b.categories.filter((c: any) => c.name === 'Palestra').length).toBe(1);
+    expect(b.categories.find((c: any) => c.id === yoga).parent_id).toBe(mOwn.cat_food);
+    expect(b.categories.every((c: any) => !c.id.includes(gOwn.cat_food.split('~')[1]) || c.id === yoga)).toBe(true);
+    expect(b.accounts.map((a: any) => a.name)).toEqual(['Contanti']);
+    expect(b.labels.map((l: any) => l.name).sort()).toEqual(['Bali', 'Nuova']);
+    expect((await g.get('/api/rules')).json.items.filter((r: any) => r.name === 'Grab').length).toBe(1);
+    // Il telefono collegato dall'ospite ora scrive nell'account; anche quello di Maria funziona ancora.
+    const r = await g.post(ask.p, { text: 'Hai pagato Rp30.000 a Dopo l’unione', posted_at: '2026-11-06T12:00:00+08:00' });
+    expect((await maria.get(`/api/transactions/${r.json.transaction_id}`)).status).toBe(200);
+    expect((await maria.post(`${mariaPhone}/ping`, {})).status).toBe(200);
+    expect((await maria.get(`/api/transactions/${mariaTx}`)).status).toBe(200);
+  });
+  it('"usa solo i dati dell’account" cancella quelli dell’ospite', async () => {
+    const before = await count(maria);
+    const g = await newGuest('10.21.1.4');
+    const phone = await newDevice(g);
+    await g.post('/api/transactions', { amount: 1, currency: 'EUR', merchant: 'Da dimenticare' });
+    expect((await login(g, 'account')).status).toBe(200);
+    expect(await count(g)).toBe(before);
+    expect(await count(g, '&q=dimenticare')).toBe(0);
+    expect((await g.post(`${phone}/ping`, {})).status).toBe(401);
+  });
+  it('il recupero password con dati chiede la stessa scelta', async () => {
+    const code = (await maria.post('/api/recovery-code', { password: 'password-maria-1' })).json.code;
+    const g = await newGuest('10.21.1.5');
+    await g.post('/api/transactions', { amount: 1, currency: 'EUR', merchant: 'y' });
+    const body = { email: 'maria@example.com', code, password: 'password-maria-1' };
+    expect((await g.post('/api/password/recover', body)).json.choice).toBe('login');
+    expect((await g.post('/api/password/recover', { ...body, choice: 'account' })).status).toBe(200);
+    expect((await g.get('/api/me')).json.email).toBe('maria@example.com');
+    await maria.post('/api/login', { email: 'maria@example.com', password: 'password-maria-1' });
+  });
+  it('"sostituisci" cancella i dati dell’account e mette quelli dell’ospite', async () => {
+    const g = await newGuest('10.21.1.6');
+    await g.post('/api/transactions', { amount: 7, currency: 'EUR', merchant: 'Solo questa' });
+    expect((await login(g, 'replace')).status).toBe(200);
+    const items = (await g.get('/api/transactions?limit=500')).json.items;
+    expect(items.map((t: any) => t.merchant)).toEqual(['Solo questa']);
+    expect((await g.post(`${mariaPhone}/ping`, {})).status).toBe(401);
+    expect((await g.get('/api/bootstrap')).json.categories.length).toBeGreaterThan(50);
+    expect((await g.get('/api/rules')).json.items.map((r: any) => r.name)).toContain('Grab');
   });
 });
 
@@ -570,7 +694,7 @@ describe('account separati', () => {
     expect((await bob.get('/api/transactions')).json.items).toEqual([]);
     expect((await bob.get('/api/capture/devices')).json.items).toEqual([]);
     expect((await bob.get('/api/stats?from=2026-11-01&to=2026-12-01')).json.spent).toBe(0);
-    expect((await bob.get('/api/transactions/tx_vecchio')).status).toBe(404);
+    expect((await bob.get('/api/transactions/tx_ospite_vecchio')).status).toBe(404);
   });
   it('non può leggere, cambiare o cancellare i movimenti di un altro', async () => {
     const id = ids.grabAsk;
@@ -621,5 +745,27 @@ describe('account separati', () => {
     const net = new Client('10.11.0.1');
     for (let i = 0; i < 5; i++) expect((await net.post('/api/register', { email: `utente${i}@example.com`, password: 'password-lunga-1' })).status).toBe(201);
     expect((await net.post('/api/register', { email: 'utente9@example.com', password: 'password-lunga-1' })).status).toBe(429);
+  });
+});
+
+describe('pulizia notturna', () => {
+  const withSession = (token: string) => { const c = new Client('10.30.0.1'); c.cookie = `ledgy_session=${token}`; return c; };
+  const ping = (token: string) => new Client('10.30.0.2').post(`/api/in/${token}/ping`, {});
+  it('toglie gli ospiti vuoti da una settimana e quelli che nessuno può più aprire, non gli altri', async () => {
+    const empty = withSession(OLD.emptyGuestSession);
+    const full = withSession(OLD.fullGuestSession);
+    expect((await empty.get('/api/me')).status).toBe(200);
+    expect((await full.get('/api/me')).status).toBe(200);
+    expect((await ping(OLD.abandonedGuestPhone)).status).toBe(200);
+    expect((await ping(OLD.registeredPhone)).status).toBe(200);
+    const fresh = await newGuest('10.30.0.3');
+    expect((await fetch(`${BASE}/__scheduled?cron=0+1+*+*+*`)).status).toBe(200);
+    expect((await empty.get('/api/me')).status).toBe(401);
+    expect((await full.get('/api/me')).status).toBe(200);
+    expect(await count(full)).toBe(1);
+    expect((await ping(OLD.abandonedGuestPhone)).status).toBe(401);
+    expect((await ping(OLD.registeredPhone)).status).toBe(200);
+    expect((await fresh.get('/api/me')).status).toBe(200);
+    expect((await new Client('10.30.0.4').post('/api/login', { email: EMAIL, password: 'recuperata-con-il-codice-789' })).status).toBe(200);
   });
 });

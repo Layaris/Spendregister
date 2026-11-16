@@ -1,17 +1,21 @@
-// Account come in Multifolio: email e password, codice di recupero, niente email inviate.
+// Account come in Multifolio: si usa subito l'app come ospite, poi si crea un account (email e password)
+// o si entra in uno esistente. Codice di recupero, niente email inviate.
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { MiddlewareHandler } from 'hono';
 import { sha256Hex } from '../shared/dedupe';
 import { HttpError, newId, nowIso, randomToken, type AppContext, type AppEnv } from './lib';
+import { adoptGuest, deleteUserStatements, hasData, localData, type LocalData, type LoginChoice, type RegisterChoice } from './guest';
+import { runBatch } from './lib';
 import { seedUser } from './seed';
 
 const COOKIE = 'ledgy_session';
-const DAYS = 90;
+const DAYS = 365; // le sessioni si rinnovano usandole: per un ospite la sessione è l'unico accesso ai dati
 const ITERATIONS = 10_000; // basso apposta: il piano gratuito concede 10 ms di CPU per richiesta
 const WINDOW_MIN = 15;
 const MAX_PER_IP = 10;
 const MAX_PER_EMAIL = 10;
 const MAX_SIGNUPS_PER_IP_HOUR = 5;
+const MAX_GUESTS_PER_IP_HOUR = 20;
 export const MIN_PASSWORD = 10;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -106,12 +110,31 @@ async function currentSessionId(c: AppContext): Promise<string | null> {
   return token ? sha256Hex(token) : null;
 }
 
+async function sessionUser(c: AppContext): Promise<{ user_id: string; expires_at: string; email: string | null } | null> {
+  const id = await currentSessionId(c);
+  if (!id) return null;
+  const row = await c.env.DB.prepare('SELECT s.user_id, s.expires_at, u.email FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ?')
+    .bind(id).first<{ user_id: string; expires_at: string; email: string | null }>();
+  return row && row.expires_at >= nowIso() ? row : null;
+}
+
+/** L'ospite di questo browser, se c'è (sessione valida su un account senza email). */
+async function currentGuest(c: AppContext): Promise<string | null> {
+  const s = await sessionUser(c);
+  return s && !s.email ? s.user_id : null;
+}
+
 export const requireSession: MiddlewareHandler<AppEnv> = async (c, next) => {
   const id = await currentSessionId(c);
   if (!id) return c.json({ error: 'Accesso richiesto' }, 401);
   const row = await c.env.DB.prepare('SELECT user_id, expires_at FROM sessions WHERE id = ?').bind(id).first<{ user_id: string; expires_at: string }>();
   if (!row || row.expires_at < nowIso()) return c.json({ error: 'Sessione scaduta' }, 401);
   c.set('userId', row.user_id);
+  // Rinnovo al massimo una volta a settimana: chi usa l'app non resta mai fuori.
+  if (row.expires_at < new Date(Date.now() + (DAYS - 7) * 86400_000).toISOString()) {
+    await c.env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE id = ?').bind(new Date(Date.now() + DAYS * 86400_000).toISOString(), id).run();
+    setCookie(c, COOKIE, getCookie(c, COOKIE)!, { httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: DAYS * 86400 });
+  }
   await next();
 };
 
@@ -119,9 +142,39 @@ async function userById(db: D1Database, id: string) {
   return db.prepare('SELECT * FROM users WHERE id = ?').bind(id).first<UserRow>();
 }
 
+/** Serve una scelta sui dati di questo dispositivo prima di continuare (risposta 409 con `choice`). */
+export class ChoiceNeeded extends HttpError {
+  constructor(public choice: 'login' | 'register', public local: LocalData) {
+    super(409, 'Su questo dispositivo ci sono dati: scegli cosa farne');
+  }
+}
+
+// ---- Ospite ----
+
+/** Crea l'ospite per chi apre l'app senza sessione. Se la sessione c'è già non fa nulla. */
+export async function startGuest(c: AppContext): Promise<boolean> {
+  if (await sessionUser(c)) return false;
+  const db = c.env.DB;
+  const key = `guest:${ipKey(c)}`;
+  if ((await recentAttempts(db, key, 60)) >= MAX_GUESTS_PER_IP_HOUR) throw new HttpError(429, 'Troppe richieste da questa rete. Riprova tra un’ora.');
+  const id = newId('usr');
+  await db.batch([
+    db.prepare('INSERT INTO users (id, email, created_at) VALUES (?, NULL, ?)').bind(id, nowIso()),
+    db.prepare('INSERT INTO login_attempts (key, at) VALUES (?, ?)').bind(key, nowIso()),
+  ]);
+  await seedUser(db, id);
+  await startSession(c, id);
+  return true;
+}
+
+export async function me(c: AppContext) {
+  const u = await userById(c.env.DB, c.get('userId'));
+  return { email: u?.email ?? null, guest: !u?.email };
+}
+
 // ---- Registrazione, accesso, uscita ----
 
-export async function register(c: AppContext, emailIn: unknown, password: string): Promise<void> {
+export async function register(c: AppContext, emailIn: unknown, password: string, choice?: RegisterChoice): Promise<void> {
   const db = c.env.DB;
   const email = cleanEmail(emailIn);
   if (!email) throw new HttpError(400, 'Email non valida');
@@ -129,18 +182,43 @@ export async function register(c: AppContext, emailIn: unknown, password: string
   if ((await recentAttempts(db, `signup:${ipKey(c)}`, 60)) >= MAX_SIGNUPS_PER_IP_HOUR) {
     throw new HttpError(429, 'Troppi account creati da questa rete. Riprova tra un’ora.');
   }
+  if (await db.prepare('SELECT 1 FROM users WHERE email = ?').bind(email).first()) throw new HttpError(409, 'Esiste già un account con questa email');
+  const guest = await currentGuest(c);
+  const local = guest ? await localData(db, guest) : null;
+  if (guest && local && hasData(local) && !choice) throw new ChoiceNeeded('register', local);
+  const hash = await hashPassword(password);
+  const signup = db.prepare('INSERT INTO login_attempts (key, at) VALUES (?, ?)').bind(`signup:${ipKey(c)}`, nowIso());
+
+  if (guest && choice !== 'fresh') {
+    // L'account nuovo è l'ospite stesso: i dati e i telefoni collegati restano dove sono.
+    const res = await db.prepare('UPDATE OR IGNORE users SET email = ?, password_hash = ? WHERE id = ? AND email IS NULL').bind(email, hash, guest).run();
+    if (!res.meta.changes) throw new HttpError(409, 'Esiste già un account con questa email');
+    await signup.run();
+    return;
+  }
   const id = newId('usr');
-  const res = await db
-    .prepare('INSERT OR IGNORE INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)')
-    .bind(id, email, await hashPassword(password), nowIso())
-    .run();
+  const res = await db.prepare('INSERT OR IGNORE INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)').bind(id, email, hash, nowIso()).run();
   if (!res.meta.changes) throw new HttpError(409, 'Esiste già un account con questa email');
-  await db.prepare('INSERT INTO login_attempts (key, at) VALUES (?, ?)').bind(`signup:${ipKey(c)}`, nowIso()).run();
+  await signup.run();
+  if (guest) await runBatch(db, deleteUserStatements(db, guest));
   await seedUser(db, id);
   await startSession(c, id);
 }
 
-export async function login(c: AppContext, emailIn: unknown, password: string): Promise<void> {
+/** Prima di entrare in un account: se l'ospite ha dati serve una scelta, poi si applica. */
+async function settleGuest(c: AppContext, accountId: string, choice: LoginChoice | undefined, apply: boolean): Promise<void> {
+  const guest = await currentGuest(c);
+  if (!guest || guest === accountId) return;
+  const local = await localData(c.env.DB, guest);
+  if (!hasData(local)) {
+    if (apply) await runBatch(c.env.DB, deleteUserStatements(c.env.DB, guest));
+    return;
+  }
+  if (!choice) throw new ChoiceNeeded('login', local);
+  if (apply) await adoptGuest(c.env.DB, guest, accountId, choice);
+}
+
+export async function login(c: AppContext, emailIn: unknown, password: string, choice?: LoginChoice): Promise<void> {
   const db = c.env.DB;
   const email = cleanEmail(emailIn);
   await guard(c, email);
@@ -150,6 +228,7 @@ export async function login(c: AppContext, emailIn: unknown, password: string): 
     throw new HttpError(401, 'Email o password errate');
   }
   await db.prepare('DELETE FROM login_attempts WHERE key IN (?, ?)').bind(ipKey(c), `email:${email}`).run();
+  await settleGuest(c, user.id, choice, true);
   await startSession(c, user.id);
 }
 
@@ -157,41 +236,6 @@ export async function logout(c: AppContext): Promise<void> {
   const id = await currentSessionId(c);
   if (id) await c.env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(id).run();
   deleteCookie(c, COOKIE, { path: '/' });
-}
-
-// ---- Dati della versione a utente singolo ----
-
-/** C'è un insieme di dati vecchi non ancora collegato a un account? */
-export async function legacyAvailable(db: D1Database): Promise<boolean> {
-  const owner = await db.prepare("SELECT email FROM users WHERE id = 'owner'").first<{ email: string | null }>();
-  if (!owner || owner.email) return false;
-  const used = await db.prepare(
-    "SELECT (SELECT COUNT(*) FROM transactions WHERE user_id = 'owner') + (SELECT COUNT(*) FROM devices WHERE user_id = 'owner' AND revoked_at IS NULL) AS n",
-  ).first<{ n: number }>();
-  return (used?.n ?? 0) > 0;
-}
-
-/** Collega i dati vecchi a un account nuovo, verificando la vecchia password. */
-export async function claimLegacy(c: AppContext, emailIn: unknown, password: string, oldPassword: string): Promise<void> {
-  const db = c.env.DB;
-  const email = cleanEmail(emailIn);
-  if (!email) throw new HttpError(400, 'Email non valida');
-  checkNewPassword(password);
-  await guard(c, null);
-  const owner = await userById(db, 'owner');
-  if (!owner || owner.email) throw new HttpError(400, 'Non ci sono dati da collegare');
-  const ok = owner.password_hash
-    ? await verifyHash(owner.password_hash, oldPassword)
-    : !!c.env.APP_PASSWORD && timingSafeEqual(await sha256Hex(oldPassword), await sha256Hex(c.env.APP_PASSWORD));
-  if (!ok) {
-    await recordFailure(c, null);
-    throw new HttpError(401, 'La vecchia password non è corretta');
-  }
-  if (await db.prepare('SELECT 1 FROM users WHERE email = ?').bind(email).first()) throw new HttpError(409, 'Esiste già un account con questa email');
-  await db.prepare("UPDATE users SET email = ?, password_hash = ? WHERE id = 'owner'").bind(email, await hashPassword(password)).run();
-  await db.prepare("DELETE FROM sessions WHERE user_id = 'owner'").run();
-  await seedUser(db, 'owner'); // non fa nulla se categorie e conti ci sono già
-  await startSession(c, 'owner');
 }
 
 // ---- Password e codice di recupero (come in Multifolio) ----
@@ -228,7 +272,7 @@ export async function createRecoveryCode(c: AppContext, password: string): Promi
 }
 
 /** Password dimenticata: email + codice di recupero + nuova password. Chiude le altre sessioni ed entra. */
-export async function recoverWithCode(c: AppContext, emailIn: unknown, code: string, password: string): Promise<void> {
+export async function recoverWithCode(c: AppContext, emailIn: unknown, code: string, password: string, choice?: LoginChoice): Promise<void> {
   const db = c.env.DB;
   const email = cleanEmail(emailIn);
   await guard(c, email);
@@ -239,6 +283,8 @@ export async function recoverWithCode(c: AppContext, emailIn: unknown, code: str
     throw new HttpError(401, 'Email o codice di recupero errati');
   }
   checkNewPassword(password);
+  await settleGuest(c, user.id, choice, false); // chiede la scelta prima di cambiare la password
+  await settleGuest(c, user.id, choice, true);
   await db.batch([
     db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(await hashPassword(password), user.id),
     db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id),
@@ -258,11 +304,6 @@ export async function deleteAccount(c: AppContext, password: string): Promise<vo
   const id = c.get('userId');
   const user = await userById(db, id);
   if (!user || !(await verifyHash(user.password_hash, password))) throw new HttpError(400, 'La password non è corretta');
-  await db.batch([
-    db.prepare('DELETE FROM transaction_labels WHERE transaction_id IN (SELECT id FROM transactions WHERE user_id = ?)').bind(id),
-    ...['captures', 'transactions', 'rules', 'parsers', 'devices', 'labels', 'categories', 'accounts', 'sessions'].map((t) =>
-      db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(id)),
-    db.prepare('DELETE FROM users WHERE id = ?').bind(id),
-  ]);
+  await runBatch(db, deleteUserStatements(db, id));
   deleteCookie(c, COOKIE, { path: '/' });
 }

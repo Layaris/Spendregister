@@ -74,9 +74,9 @@ const PRESETS: Array<{ id: string; name: string; priority: number; definition: R
   } },
 ];
 
-/** Id delle voci iniziali: uguali alla versione a utente singolo per l'account "owner", con il suffisso dell'account per gli altri. */
+/** Id delle voci iniziali: con il suffisso dell'account (cat_food~usr_…), unici in tutto il database. */
 export function seedId(base: string, userId: string): string {
-  return userId === 'owner' ? base : `${base}~${userId}`;
+  return `${base}~${userId}`;
 }
 
 function remap(def: RuleDefinition, userId: string): RuleDefinition {

@@ -4,7 +4,6 @@ export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
   /** Vecchia password della versione a utente singolo: serve solo a collegare i dati esistenti a un account. */
-  APP_PASSWORD?: string;
   /** Solo per i test: tassi fissi, es. "IDR:0.00005,SGD:0.7". */
   FX_FIXED?: string;
 }

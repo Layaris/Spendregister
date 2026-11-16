@@ -14,16 +14,26 @@ const LINKS: Array<[string, string, string, string]> = [
   ['#/assistente', 'sparkle', 'Assistente AI', 'Domande sulle spese, scontrini, screenshot'],
 ];
 
-export function More({ onLogout }: { onLogout: () => void }) {
+export function More({ onAuthChange }: { onAuthChange: () => void }) {
   const store = useStore();
+  const guest = !store.account.email;
   const logout = async () => {
     await api('/logout', { method: 'POST' });
-    onLogout();
+    onAuthChange();
   };
   return (
     <div className="stack" style={{ gap: 14 }}>
       <h1 className="page-title">Altro</h1>
-      {store.account.email && <p className="lead">Account: <b>{store.account.email}</b></p>}
+      {guest ? (
+        <section className="card">
+          <h2 className="h2">Stai usando Ledgy senza account</h2>
+          <p className="muted" style={{ margin: 0, fontSize: 14 }}>I dati restano legati a questo browser. Crea un account per non perderli e ritrovarli su ogni dispositivo, oppure entra in quello che hai già.</p>
+          <div className="row" style={{ gap: 8 }}>
+            <a className="btn primary grow" href="#/account/crea">Crea account</a>
+            <a className="btn grow" href="#/account">Entra</a>
+          </div>
+        </section>
+      ) : <p className="lead">Account: <b>{store.account.email}</b></p>}
       <section className="card">
         {LINKS.map(([href, icon, title, text]) => (
           <a key={href} href={href} className="row" style={{ textDecoration: 'none', color: 'inherit' }}>
@@ -37,8 +47,8 @@ export function More({ onLogout }: { onLogout: () => void }) {
       <Accounts />
       <BackupSection />
       <SettingsSection />
-      <button className="btn" onClick={logout}>Esci</button>
-      <DeleteAccount onDone={onLogout} />
+      {!guest && <button className="btn" onClick={logout}>Esci</button>}
+      {!guest && <DeleteAccount onDone={onAuthChange} />}
     </div>
   );
 }
@@ -232,15 +242,15 @@ function SettingsSection() {
           {zones.map(([z, label]) => <option key={z} value={z}>{label}</option>)}
         </select>
       </label>
-      <form className="stack" style={{ gap: 8 }} onSubmit={changePw}>
+      {store.account.email && <form className="stack" style={{ gap: 8 }} onSubmit={changePw}>
         <span className="label">Cambia password</span>
         <input className="input" type="password" autoComplete="current-password" placeholder="Password attuale" aria-label="Password attuale" value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} />
         <input className="input" type="password" autoComplete="new-password" placeholder="Nuova password (almeno 10 caratteri)" aria-label="Nuova password" value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} />
         <input className="input" type="password" autoComplete="new-password" placeholder="Ripeti la nuova password" aria-label="Ripeti la nuova password" value={pw.repeat} onChange={(e) => setPw({ ...pw, repeat: e.target.value })} />
         <ErrorBox error={error} />
         <button className="btn" disabled={busy || !pw.current || !pw.next}>Cambia password</button>
-      </form>
-      <RecoveryCode />
+      </form>}
+      {store.account.email && <RecoveryCode />}
     </section>
   );
 }

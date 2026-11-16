@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import {
-  changePassword, claimLegacy, createRecoveryCode, deleteAccount, legacyAvailable, login, logout, recoverWithCode, register, requireSession,
+  ChoiceNeeded, changePassword, createRecoveryCode, deleteAccount, login, logout, me, recoverWithCode, register, requireSession, startGuest,
 } from './auth';
+import type { LoginChoice, RegisterChoice } from './guest';
 import { backupApi } from './backup';
 import { captureAdminApi, inboundApi } from './capture';
 import { catalogApi } from './catalog';
@@ -18,6 +19,7 @@ app.use('*', async (c, next) => {
 });
 
 app.onError((err, c) => {
+  if (err instanceof ChoiceNeeded) return c.json({ error: err.message, choice: err.choice, local: err.local }, 409);
   if (err instanceof HttpError) return c.json({ error: err.message }, err.status as 400);
   console.error(err);
   return c.json({ error: 'Errore interno del server' }, 500);
@@ -26,34 +28,32 @@ app.onError((err, c) => {
 app.get('/api/health', (c) => c.json({ ok: true }));
 
 // ---- Account (pubblico) ----
-interface AuthBody { email?: string; password?: string; old_password?: string; code?: string }
+// `choice`: cosa fare dei dati usati senza account su questo dispositivo (vedi worker/guest.ts).
+interface AuthBody { email?: string; password?: string; code?: string; choice?: string }
+const loginChoice = (v: unknown): LoginChoice | undefined => (v === 'account' || v === 'merge' || v === 'replace' ? v : undefined);
+const registerChoice = (v: unknown): RegisterChoice | undefined => (v === 'keep' || v === 'fresh' ? v : undefined);
 
-/** Per la schermata di accesso: ci sono dati della vecchia versione da collegare a un account? */
-app.get('/api/auth/status', async (c) => c.json({ legacy_available: await legacyAvailable(c.env.DB) }));
+/** Chi apre l'app senza sessione la usa subito, come ospite. */
+app.post('/api/guest', async (c) => c.json({ ok: true }, (await startGuest(c)) ? 201 : 200));
 
 app.post('/api/register', async (c) => {
   const b = await body<AuthBody>(c);
-  await register(c, b.email, b.password ?? '');
+  await register(c, b.email, b.password ?? '', registerChoice(b.choice));
   return c.json({ ok: true }, 201);
 });
 app.post('/api/login', async (c) => {
   const b = await body<AuthBody>(c);
-  await login(c, b.email, b.password ?? '');
+  await login(c, b.email, b.password ?? '', loginChoice(b.choice));
   return c.json({ ok: true });
 });
 app.post('/api/logout', async (c) => {
   await logout(c);
   return c.json({ ok: true });
 });
-app.post('/api/claim', async (c) => {
-  const b = await body<AuthBody>(c);
-  await claimLegacy(c, b.email, b.password ?? '', b.old_password ?? '');
-  return c.json({ ok: true });
-});
 // Password dimenticata: email + codice di recupero + nuova password (entra subito).
 app.post('/api/password/recover', async (c) => {
   const b = await body<AuthBody>(c);
-  await recoverWithCode(c, b.email, b.code ?? '', b.password ?? '');
+  await recoverWithCode(c, b.email, b.code ?? '', b.password ?? '', loginChoice(b.choice));
   return c.json({ ok: true });
 });
 
@@ -63,7 +63,7 @@ app.route('/api/in', inboundApi);
 // ---- Tutto il resto: solo con un account e solo sui suoi dati ----
 const priv = new Hono<AppEnv>();
 priv.use('*', requireSession);
-priv.get('/me', (c) => c.json({ ok: true }));
+priv.get('/me', async (c) => c.json(await me(c)));
 priv.post('/recovery-code', async (c) => {
   const b = await body<{ password?: string }>(c);
   return c.json({ code: await createRecoveryCode(c, b.password ?? '') });
@@ -93,11 +93,23 @@ export default {
     // Pulizia notturna: sessioni scadute, tentativi vecchi, notifiche scartate da oltre 90 giorni.
     const now = new Date().toISOString();
     const day = new Date(Date.now() - 86400_000).toISOString();
+    const week = new Date(Date.now() - 7 * 86400_000).toISOString();
     const old = new Date(Date.now() - 90 * 86400_000).toISOString();
     await env.DB.batch([
       env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(now),
       env.DB.prepare('DELETE FROM login_attempts WHERE at < ?').bind(day),
       env.DB.prepare("DELETE FROM captures WHERE received_at < ? AND status IN ('duplicate', 'ignored', 'unrecognized')").bind(old),
+    ]);
+    // Ospiti da togliere: senza più nessuna sessione (nessuno può più vedere i dati), oppure vuoti da una settimana.
+    const doomed = `SELECT u.id FROM users u WHERE u.email IS NULL AND (
+      (u.created_at < ?1 AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.id))
+      OR (u.created_at < ?2 AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.user_id = u.id)
+          AND NOT EXISTS (SELECT 1 FROM devices d WHERE d.user_id = u.id AND d.revoked_at IS NULL)))`;
+    const tables = ['captures', 'transactions', 'rules', 'parsers', 'devices', 'labels', 'categories', 'accounts', 'sessions'];
+    await env.DB.batch([
+      env.DB.prepare(`DELETE FROM transaction_labels WHERE transaction_id IN (SELECT id FROM transactions WHERE user_id IN (${doomed}))`).bind(day, week),
+      ...tables.map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE user_id IN (${doomed})`).bind(day, week)),
+      env.DB.prepare(`DELETE FROM users WHERE id IN (${doomed})`).bind(day, week),
     ]);
   },
 } satisfies ExportedHandler<Env>;

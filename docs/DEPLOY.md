@@ -49,7 +49,7 @@ npx wrangler d1 list                                     # un solo database "led
 npx wrangler d1 migrations apply ledgy --remote          # applica solo quelle mancanti
 npx wrangler d1 execute ledgy --remote --command "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
 npm run deploy
-npx wrangler secret list                                 # APP_PASSWORD serve solo finché i dati vecchi non sono collegati a un account
+npx wrangler secret list                                 # nessun secret necessario (APP_PASSWORD non serve più dalla migrazione 0005)
 ```
 
 Controlli finali (sostituisci l'indirizzo):
@@ -57,7 +57,7 @@ Controlli finali (sostituisci l'indirizzo):
 ```bash
 curl -s https://ledgy.<sottodominio>.workers.dev/api/health                       # {"ok":true}
 curl -sI https://ledgy.<sottodominio>.workers.dev/ledgy.shortcut                  # 200, Content-Disposition: attachment
-curl -s https://ledgy.<sottodominio>.workers.dev/api/auth/status                  # {"legacy_available":true} finché i dati vecchi non sono collegati, poi false
+curl -s -o /dev/null -w "%{http_code}\n" https://ledgy.<sottodominio>.workers.dev/api/me     # 401 (senza sessione: l'app crea da sola un ospite)
 curl -s -o /dev/null -w "%{http_code}\n" -X POST https://ledgy.<sottodominio>.workers.dev/api/login \
   -H 'content-type: application/json' -d '{"email":"nessuno@example.com","password":"prova-sbagliata"}'   # 401; 500 = migrazione mancante
 ```
@@ -68,9 +68,7 @@ Tabelle attese: accounts, captures, categories, devices, fx_rates, labels, login
 
 | Sintomo | Causa | Rimedio |
 |---|---|---|
-| Accesso o registrazione: "Errore interno del server" | Codice nuovo senza le migrazioni (fino a `0004_accounts`) | `npx wrangler d1 migrations apply ledgy --remote` |
-| "Collega i tuoi dati": "La vecchia password non è corretta" | Password diversa da quella usata finora (o da `APP_PASSWORD` se non era mai stata cambiata) | Usare l'ultima password con cui si entrava; vedi "Emergenza" |
-| Il tasto "Collega i tuoi dati" non compare | I dati vecchi sono già collegati a un'email | Entrare con quell'email |
+| L'app resta su "Caricamento…" o mostra "Errore interno del server" | Codice nuovo senza le migrazioni (fino a `0005_guests`) | `npx wrangler d1 migrations apply ledgy --remote` |
 | `git pull` si ferma per modifiche locali | `wrangler.jsonc` modificato a mano | `git reset --hard origin/claude/friendly-johnson-c89c0f` |
 | Due database "ledgy" o id diverso in `wrangler.jsonc` | `d1 create` rifatto per errore | Tenere quello con id `48dc70af-…`; l'altro si cancella solo se vuoto |
 | L'app mostra la versione vecchia | `npm run deploy` non eseguito dopo l'aggiornamento | `npm run deploy` |
@@ -83,25 +81,22 @@ Tabelle attese: accounts, captures, categories, devices, fx_rates, labels, login
 
 ## Account, password e recupero
 
-- **Il sito è aperto a tutti, come Multifolio**: chi lo apre vede "Entra / Crea account" e si registra con email e password (almeno 10 caratteri). Ogni account vede solo i propri dati, con le sue categorie, regole, conti e telefoni collegati. Nessuna email viene inviata: l'email serve solo come nome dell'account.
-- **Dati della versione con una sola password** (migrazione `0004_accounts`): restano in un account senza email. Nella schermata di accesso compare "Usavi Ledgy con la vecchia password? Collega i tuoi dati": si scrivono email, nuova password e la vecchia password (quella con cui si entrava, oppure `APP_PASSWORD` se non era mai stata cambiata). Si fa una volta sola; dopo, il tasto sparisce. I telefoni già collegati continuano a funzionare senza cambiare nulla.
-- Dopo il collegamento il secret `APP_PASSWORD` non serve più: si può tenere per l'emergenza qui sotto, oppure cancellare (`npx wrangler secret delete APP_PASSWORD`).
-- **Recupero, come in Multifolio, senza email**: in Altro → Impostazioni si crea un *codice di recupero* (24 caratteri, mostrato una volta sola). Se si dimentica la password: schermata di accesso → "Password dimenticata?" → email + codice + nuova password.
-- Limiti contro i tentativi a raffica: 10 errori in 15 minuti dallo stesso indirizzo IP o sulla stessa email bloccano per 15 minuti; al massimo 5 account nuovi all'ora dalla stessa rete.
+- **Si usa subito, senza account**: chi apre il sito entra come *ospite* (un account senza email, legato a quel browser da una sessione che si rinnova usandola). Può fare tutto, anche collegare il telefono per la cattura.
+- **Crea account** (Altro, o l'avviso in Home): email e password (almeno 10 caratteri). Se l'ospite ha già dati, si sceglie tra *Porta i dati nel nuovo account* e *Inizia con un account vuoto*, poi una finestra chiede conferma.
+- **Entra** in un account esistente: se questo dispositivo ha dati da ospite si sceglie tra *Aggiungi all'account* (categorie, conti, etichette e regole con lo stesso nome si uniscono), *Usa solo i dati dell'account* (quelli dell'ospite si cancellano) e *Sostituisci i dati dell'account*, sempre con conferma. I telefoni collegati dall'ospite passano all'account e continuano a funzionare.
+- **Esci**: il browser torna ospite, vuoto; i dati restano nell'account.
+- Nessuna email viene inviata: l'email serve solo come nome dell'account. Ogni account vede solo i propri dati.
+- **Recupero, come in Multifolio**: in Altro → Impostazioni si crea un *codice di recupero* (24 caratteri, mostrato una volta sola). Se si dimentica la password: Entra → "Password dimenticata?" → email + codice + nuova password.
+- Limiti contro gli abusi: 10 errori in 15 minuti dallo stesso indirizzo IP o sulla stessa email bloccano per 15 minuti; al massimo 5 account e 20 ospiti nuovi all'ora dalla stessa rete.
+- Pulizia notturna (Cron, 01:00 UTC): si tolgono gli ospiti rimasti vuoti (nessun movimento né telefono) dopo 7 giorni e quelli che nessun browser può più aprire (senza sessioni). Gli account con email non si toccano mai.
 - Altro → "Elimina account" cancella l'account e tutti i suoi dati (serve la password).
-- **Emergenza** (solo per l'account con i dati della vecchia versione, persi password e codice): l'agente stacca l'email da quell'account e reimposta `APP_PASSWORD`; poi si rifà "Collega i tuoi dati" con quel secret.
-
-```bash
-npx wrangler secret put APP_PASSWORD
-npx wrangler d1 execute ledgy --remote --command "UPDATE users SET email = NULL, password_hash = NULL WHERE id = 'owner'; DELETE FROM sessions WHERE user_id = 'owner'"
-```
 
 ## Pulizia di Cloudflare
 
-Su Cloudflare per Ledgy servono solo il Worker **ledgy** e il database D1 **ledgy** (id `48dc70af-3f0d-46ab-a832-e9661ccf63b2`), più il secret **APP_PASSWORD** finché i dati vecchi non sono collegati a un account. Tutto il resto creato per Ledgy si può togliere. Non toccare risorse di altri progetti (per esempio Multifolio).
+Su Cloudflare per Ledgy servono solo il Worker **ledgy** e il database D1 **ledgy** (id `48dc70af-3f0d-46ab-a832-e9661ccf63b2`). Nessun secret: `APP_PASSWORD` della prima versione non serve più e si può cancellare. Tutto il resto creato per Ledgy si può togliere. Non toccare risorse di altri progetti (per esempio Multifolio).
 
 ```bash
-npx wrangler secret list                     # tenere solo APP_PASSWORD
+npx wrangler secret list                     # nessun secret serve: APP_PASSWORD si può cancellare
 npx wrangler secret delete RESEND_API_KEY    # e così per RECOVERY_EMAIL, MAIL_FROM, MAIL_DRY_RUN, FX_FIXED se presenti
 npx wrangler d1 list                         # altri database con "ledgy" o "spendregister" nel nome: npx wrangler d1 delete <nome>
 npx wrangler pages project list              # progetti Pages "ledgy"/"spendregister": npx wrangler pages project delete <nome>
@@ -118,7 +113,7 @@ Dashboard Cloudflare → Workers & Pages → ledgy → Settings → Domains & Ro
 ## Note
 
 - Gli indirizzi `/api/in/<token>` sono pubblici per scelta: è da lì che i telefoni mandano le notifiche. Ogni token vale per un solo telefono e si revoca da "Cattura automatica".
-- Registrazione, accesso e recupero sono pubblici; tutto il resto dell'API richiede un account e lavora solo sui suoi dati.
+- Ospite, registrazione, accesso e recupero sono pubblici; tutto il resto dell'API richiede una sessione (ospite o account) e lavora solo sui dati di quell'account.
 - Il database si esporta in qualsiasi momento da Altro → Backup (file JSON reimportabile, oppure CSV), oppure con `npx wrangler d1 export ledgy --remote --output backup.sql`.
 - Il piano gratuito concede 10 ms di CPU per richiesta: per questo export, import e applicazione delle regole allo storico lavorano a pagine, e il file di backup si compone nel browser.
 - D1 tiene in automatico la cronologia (7 giorni sul piano gratuito, 30 su quello a pagamento): per tornare indietro `npx wrangler d1 time-travel restore ledgy --timestamp <data ISO>`.

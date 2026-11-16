@@ -1,10 +1,12 @@
-// Accesso all'API del Worker. In caso di 401 l'app torna alla schermata di accesso.
+// Accesso all'API del Worker. In caso di 401 (sessione persa) l'app riparte, come ospite se serve.
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(public status: number, message: string, public data?: unknown) {
     super(message);
   }
 }
+
+const AUTH_PATHS = ['/me', '/guest', '/login', '/register', '/password/recover'];
 
 let onUnauthorized: () => void = () => {};
 export function setUnauthorizedHandler(fn: () => void) {
@@ -19,9 +21,9 @@ export async function api<T = unknown>(path: string, init: RequestInit & { json?
     headers: { ...(json !== undefined ? { 'content-type': 'application/json' } : {}), ...(rest.headers ?? {}) },
     body: json !== undefined ? JSON.stringify(json) : rest.body,
   });
-  if (res.status === 401 && !path.startsWith('/login')) onUnauthorized();
+  if (res.status === 401 && !AUTH_PATHS.includes(path)) onUnauthorized();
   const data = res.headers.get('content-type')?.includes('json') ? await res.json() : await res.text();
-  if (!res.ok) throw new ApiError(res.status, (data as { error?: string })?.error ?? `Errore ${res.status}`);
+  if (!res.ok) throw new ApiError(res.status, (data as { error?: string })?.error ?? `Errore ${res.status}`, data);
   return data as T;
 }
 

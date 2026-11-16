@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { api, setUnauthorizedHandler } from './api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { api, ApiError, setUnauthorizedHandler } from './api';
 import { Icon } from './icons';
 import { Add } from './pages/Add';
 import { Capture } from './pages/Capture';
@@ -11,28 +11,58 @@ import { Review } from './pages/Review';
 import { RuleEditor, RulesList } from './pages/Rules';
 import { Stats } from './pages/Stats';
 import { TxDetail } from './pages/TxDetail';
-import { useRoute } from './router';
+import { go, useRoute } from './router';
 import { StoreProvider, useStore } from './store';
 
+/** Niente schermata di accesso: senza sessione l'app crea un ospite e si usa subito. */
 export function App() {
-  const [auth, setAuth] = useState<'checking' | 'in' | 'out'>('checking');
-  const logout = useCallback(() => setAuth('out'), []);
+  const [state, setState] = useState<'checking' | 'ready' | 'error'>('checking');
+  const [error, setError] = useState('');
+  const [generation, setGeneration] = useState(0);
+  const entering = useRef(false);
+
+  const enter = useCallback(async () => {
+    if (entering.current) return;
+    entering.current = true;
+    setState('checking');
+    try {
+      await api('/me').catch(async (e) => {
+        if (e instanceof ApiError && e.status === 401) await api('/guest', { method: 'POST' });
+        else throw e;
+      });
+      setGeneration((g) => g + 1);
+      setState('ready');
+    } catch (e) {
+      setError((e as Error).message);
+      setState('error');
+    } finally {
+      entering.current = false;
+    }
+  }, []);
 
   useEffect(() => {
-    setUnauthorizedHandler(logout);
-    api('/me').then(() => setAuth('in')).catch(() => setAuth('out'));
-  }, [logout]);
+    setUnauthorizedHandler(() => { enter(); });
+    enter();
+  }, [enter]);
 
-  if (auth === 'checking') return <main className="app"><div className="empty">Caricamento…</div></main>;
-  if (auth === 'out') return <Login onDone={() => setAuth('in')} />;
+  if (state === 'checking') return <main className="app"><div className="empty">Caricamento…</div></main>;
+  if (state === 'error') {
+    return (
+      <main className="app" style={{ justifyContent: 'center', minHeight: '100vh' }}>
+        <div className="card"><p className="error" style={{ margin: 0 }}>{error}</p><button className="btn" onClick={enter}>Riprova</button></div>
+      </main>
+    );
+  }
+  // Dopo accesso, registrazione o uscita si ricarica tutto da capo.
+  const changed = () => { go('/'); enter(); };
   return (
-    <StoreProvider>
-      <Shell onLogout={logout} />
+    <StoreProvider key={generation}>
+      <Shell onAuthChange={changed} />
     </StoreProvider>
   );
 }
 
-function Shell({ onLogout }: { onLogout: () => void }) {
+function Shell({ onAuthChange }: { onAuthChange: () => void }) {
   const [page, a] = useRoute();
   const { review_count } = useStore();
 
@@ -47,10 +77,11 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     case 'regole': content = a ? <RuleEditor id={a} /> : <RulesList />; break;
     case 'cattura': content = <Capture />; break;
     case 'assistente': content = <ComingSoon title="Assistente AI" text="La chat sulle tue spese, la lettura di scontrini e screenshot e l'inserimento a voce arrivano con il prossimo aggiornamento, con Gemini o NanoGPT." />; break;
-    case 'altro': content = <More onLogout={onLogout} />; break;
+    case 'altro': content = <More onAuthChange={onAuthChange} />; break;
+    case 'account': content = <Login key={a ?? ''} initial={a === 'crea' ? 'register' : 'login'} onDone={onAuthChange} />; break;
     default: content = <Home />;
   }
-  const hideTabs = page === 'aggiungi';
+  const hideTabs = page === 'aggiungi' || page === 'account';
   const current = (p: string) => (page ?? '') === p || (p === 'movimenti' && (page === 'm' || page === 'rivedere')) || (p === 'altro' && ['regole', 'cattura', 'assistente'].includes(page ?? ''));
 
   return (
