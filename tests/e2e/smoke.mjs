@@ -61,42 +61,49 @@ check((await api('/api/bootstrap')).review_count === reviewBefore - 1, 'risolve 
 
 // Aggiungi: tastierino, niente zeri iniziali, salvataggio.
 await page.goto(`${BASE}/#/aggiungi`);
-await page.waitForSelector('.keypad');
-await page.click('.keypad button:text-is("000")');
-check((await page.textContent('.hero-amount')).trim() === '0', 'il tastierino ignora gli zeri iniziali');
-for (const k of ['3', '5', '000']) await page.click(`.keypad button:text-is("${k}")`);
-check((await page.textContent('.hero-amount')).trim() === '35.000', 'il tastierino scrive 35.000');
-await page.fill('input[placeholder^="Es. Warung"]', 'Caffè E2E');
-await page.click('button:has-text("Salva spesa")');
+await page.waitForSelector('.pad');
+await page.click('.pad button:text-is("000")');
+check((await page.textContent('.amount-card .amount')).trim() === '0', 'il tastierino ignora gli zeri iniziali');
+for (const k of ['3', '5', '000']) await page.click(`.pad button:text-is("${k}")`);
+check((await page.textContent('.amount-card .amount')).trim() === '−35.000', 'il tastierino scrive −35.000 in rosso');
+await page.fill('textarea[aria-label="Descrizione"]', 'Colazione E2E');
+await page.fill('input[placeholder="Negozio o persona"]', 'Caffè E2E');
+check(!(await page.isVisible('.pad')) && await page.isVisible('.padsheet button:has-text("Salva spesa")'), 'scrivendo il testo il tastierino lascia posto, il salvataggio resta a portata');
+await page.click('.padsheet button:has-text("Salva spesa")');
 await page.waitForFunction(() => location.hash.startsWith('#/m/'));
 check(true, 'salva una spesa e apre il dettaglio');
 
 // Dettaglio: la nota si scrive direttamente e si salva lasciando il campo.
 const txId = await page.evaluate(() => location.hash.split('/').pop());
-await page.fill('textarea[placeholder="Aggiungi una nota"]', 'Nota E2E');
-await page.click('text=Natura della spesa');
+check((await api(`/api/transactions/${txId}`)).note === 'Colazione E2E', 'la descrizione scritta nella schermata + si salva');
+await page.fill('textarea[placeholder="Aggiungi una descrizione"]', 'Nota E2E');
+await page.click('.section-title:has-text("Dettagli")');
 await page.waitForTimeout(700);
 check((await api(`/api/transactions/${txId}`)).note === 'Nota E2E', 'la nota si modifica e si salva dal dettaglio');
 
 // Schermata +: sottocategoria nuova con un tap dal pannello, e preferito con la stellina.
 await page.goto(`${BASE}/#/aggiungi`);
-await page.waitForSelector('.keypad');
-for (const k of ['2', '5', '000']) await page.click(`.keypad button:text-is("${k}")`);
-await page.fill('input[placeholder^="Es. Warung"]', 'Gelateria E2E');
-await page.click('.pill:has-text("Altre…")');
+await page.waitForSelector('.pad');
+for (const k of ['2', '5', '000']) await page.click(`.pad button:text-is("${k}")`);
+await page.fill('input[placeholder="Negozio o persona"]', 'Gelateria E2E');
+await page.click('button.lrow:has-text("Categoria")');
 await page.waitForSelector('[aria-label="Scegli la categoria"]');
 await page.click('[aria-label="Scegli la categoria"] .pill.add >> nth=0');
 await page.fill('input[placeholder="Nome della sottocategoria"]', 'Gelato E2E');
 await page.click('[aria-label="Scegli la categoria"] button:has-text("Crea")');
-await page.waitForSelector('.pill[aria-pressed="true"]:has-text("Gelato E2E")');
+await page.waitForSelector('button.lrow:has-text("Gelato E2E")');
 check(true, 'crea una sottocategoria dal pannello e la sceglie');
+await page.click('button[aria-label="Scrivi l\'importo"]');
+await page.click('.pad button:text-is("5")');
+await page.click('.pad button[aria-label="Cancella"]');
 await page.click('button[aria-label="Salva anche nei preferiti"]');
-await page.click('button:has-text("Salva spesa")');
+await page.click('.pad button.save');
 await page.waitForFunction(() => location.hash.startsWith('#/m/'));
 check((await api('/api/favorites')).items.some((f) => f.name === 'Gelateria E2E'), 'salva la spesa anche tra i preferiti');
 await page.goto(`${BASE}/#/aggiungi`);
-await page.click('.pill.fav:has-text("Gelateria E2E")');
-check((await page.textContent('.hero-amount')).trim() === '25.000' && await page.inputValue('input[placeholder^="Es. Warung"]') === 'Gelateria E2E', 'un tap su un preferito compila importo e nome');
+await page.click('button:has-text("Preferiti")');
+await page.click('[aria-label="Preferiti"] .lrow:has-text("Gelateria E2E")');
+check((await page.textContent('.amount-card .amount')).trim() === '−25.000' && await page.inputValue('input[placeholder="Negozio o persona"]') === 'Gelateria E2E', 'un tap su un preferito compila importo e nome');
 
 // Statistiche: periodo dal pannello in basso.
 await page.goto(`${BASE}/#/statistiche`);
@@ -133,7 +140,8 @@ check(!(await page.isVisible('text=Cambia password')), "l'ospite non vede cambio
 
 // Crea l'account: con dati sul dispositivo chiede cosa farne e chiede conferma.
 await page.click('a:has-text("Crea account")');
-await page.waitForSelector('.seg');
+await page.waitForFunction(() => location.hash === '#/account/crea');
+await page.waitForSelector('input[type=email]');
 check(await page.isVisible('text=Continua senza account'), 'la pagina account si può lasciare senza registrarsi');
 await page.fill('input[type=email]', EMAIL);
 await page.fill('input[autocomplete=new-password] >> nth=0', PASSWORD);

@@ -68,8 +68,8 @@ function merchantFromLine(text: string, start: number, end: number): string | nu
   const line = `${text.slice(lineStart, start)} ${text.slice(end, nl < 0 ? text.length : nl)}`;
   const words = line
     .replace(/\b\S+\.\S+\/\S*/g, ' ') // indirizzi tipo ntfy.sh/argomento
-    .replace(/[\d.,:;!?()[\]{}"'“”‘’*#|/\\]+/g, ' ')
-    .split(/\s+/)
+    .split(/[\s|;:,()[\]{}"“”‘’]+/)
+    .map((w) => w.replace(/^[^\p{L}\d]+|[^\p{L}\d]+$/gu, '')) // punteggiatura ai bordi, non dentro ("A-A3BL" resta intero)
     .filter((w) => w && !FILLER.has(w.toLowerCase()) && /\p{L}/u.test(w));
   if (!words.length || words.length > 4) return null;
   return cleanMerchant(words.join(' '));

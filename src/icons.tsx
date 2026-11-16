@@ -32,6 +32,22 @@ const PATHS: Record<string, string> = {
   dots: 'M5 12h.01M12 12h.01M19 12h.01',
   transfer: 'M4 8h14l-3-3M20 16H6l3 3',
   question: 'M9 9a3 3 0 1 1 4 2.8c-.6.3-1 .9-1 1.6V14M12 18h.01',
+  repeat: 'M17 2l3 3-3 3M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3M20 13v2a4 4 0 0 1-4 4H4',
+  health: 'M9 3h6v6h6v6h-6v6H9v-6H3V9h6z',
+  ticket: 'M3 8a2 2 0 0 0 0 4v4h18v-4a2 2 0 0 1 0-4V4H3zM14 4v12',
+  plane: 'M3 13l7-2 4-7 2 1-2 6 5-1 2 2-6 3-5 6-2-1 2-5-5 1z',
+  book: 'M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2zM4 21V5M8 7h7',
+  briefcase: 'M4 8h16v11H4zM9 8V5h6v3M4 13h16',
+  family: 'M8 8a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM16 9a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM3 20v-4a5 5 0 0 1 10 0v4M13 20v-3a3 3 0 0 1 6 0v3',
+  gift: 'M4 10h16v10H4zM3 7h18v3H3zM12 7v13M12 7c-1-3-5-4-5-1 0 1 1 1 5 1zM12 7c1-3 5-4 5-1 0 1-1 1-5 1z',
+  paw: 'M8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM16 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM5 14a1.6 1.6 0 1 0 0-3.2A1.6 1.6 0 0 0 5 14zM19 14a1.6 1.6 0 1 0 0-3.2 1.6 1.6 0 0 0 0 3.2zM12 12c-3 0-5 3.5-5 5.5S9 20 12 20s5-.5 5-2.5S15 12 12 12z',
+  wallet: 'M4 7a2 2 0 0 1 2-2h12v4M4 7v11a2 2 0 0 0 2 2h14V9H6a2 2 0 0 1-2-2zM16 14h.01',
+  calendar: 'M4 6h16v14H4zM4 10h16M8 3v4M16 3v4',
+  note: 'M5 4h14v16H5zM8 9h8M8 13h8M8 17h5',
+  store: 'M4 9l1.5-5h13L20 9M4 9h16v11H4zM4 9a2.7 2.7 0 0 0 5.3 0 2.7 2.7 0 0 0 5.4 0 2.7 2.7 0 0 0 5.3 0M10 20v-5h4v5',
+  card: 'M3 6h18v12H3zM3 10h18M7 15h4',
+  tag: 'M3 12V4h8l10 10-8 8zM7.5 8h.01',
+  star: 'M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z',
 };
 
 export function Icon({ name, size = 22, stroke = 1.8, label }: { name: string; size?: number; stroke?: number; label?: string }) {

@@ -68,7 +68,7 @@ Tabelle attese: accounts, captures, categories, devices, fx_rates, labels, login
 
 | Sintomo | Causa | Rimedio |
 |---|---|---|
-| L'app resta su "Caricamento…" o mostra "Errore interno del server" | Codice nuovo senza le migrazioni (fino a `0006_catalog_v2`) | `npx wrangler d1 migrations apply ledgy --remote` |
+| L'app resta su "Caricamento…" o mostra "Errore interno del server" | Codice nuovo senza le migrazioni (fino a `0007_capture_sources`) | `npx wrangler d1 migrations apply ledgy --remote` |
 | `git pull` si ferma per modifiche locali | `wrangler.jsonc` modificato a mano | `git reset --hard origin/claude/friendly-johnson-c89c0f` |
 | Due database "ledgy" o id diverso in `wrangler.jsonc` | `d1 create` rifatto per errore | Tenere quello con id `48dc70af-…`; l'altro si cancella solo se vuoto |
 | L'app mostra la versione vecchia | `npm run deploy` non eseguito dopo l'aggiornamento | `npm run deploy` |

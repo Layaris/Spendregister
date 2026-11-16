@@ -41,16 +41,16 @@ export function More({ onAuthChange }: { onAuthChange: () => void }) {
           </div>
         </section>
       ) : <p className="lead">Account: <b>{store.account.email}</b></p>}
-      <section className="card">
+      <div className="list">
         {LINKS.map(([href, icon, title, text]) => (
-          <a key={href} href={href} className="row" style={{ textDecoration: 'none', color: 'inherit' }}>
-            <span className="ic" style={{ background: 'var(--sunken)' }}><Icon name={icon} size={20} /></span>
-            <span className="grow stack" style={{ gap: 1 }}><b>{title}</b><span className="muted" style={{ fontSize: 13 }}>{text}</span></span>
+          <a key={href} href={href} className="lrow">
+            <span className="lrow-ic" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}><Icon name={icon} size={18} /></span>
+            <span className="grow stack" style={{ gap: 0, minWidth: 0 }}><span style={{ fontWeight: 600 }}>{title}</span><span className="muted" style={{ fontSize: 13 }}>{text}</span></span>
             {href === '#/rivedere' && store.review_count > 0 && <span className="chip warn">{store.review_count}</span>}
             <Icon name="next" size={18} />
           </a>
         ))}
-      </section>
+      </div>
       <Accounts />
       <BackupSection />
       <SettingsSection />
@@ -95,58 +95,92 @@ function Accounts() {
   const [adding, setAdding] = useState(false);
   const [acc, setAcc] = useState({ name: '', currency: 'EUR', initial_balance: '' });
   const [error, setError] = useState<string | null>(null);
-  const [fixing, setFixing] = useState<string | null>(null);
-  const [target, setTarget] = useState('');
+  const [open, setOpen] = useState<string | null>(null);
+  const [edit, setEdit] = useState({ name: '', currency: 'EUR', target: '' });
+  const [confirmCur, setConfirmCur] = useState(false);
+
+  const run = async (fn: () => Promise<unknown>, msg: string) => {
+    setError(null);
+    try {
+      await fn();
+      await store.refresh();
+      store.toast(msg);
+      return true;
+    } catch (e) {
+      setError((e as Error).message);
+      return false;
+    }
+  };
+  const toggle = (id: string) => {
+    const a = store.accounts.find((x) => x.id === id)!;
+    setOpen(open === id ? null : id);
+    setEdit({ name: a.name, currency: a.currency, target: '' });
+    setConfirmCur(false);
+    setError(null);
+  };
   /** Saldo vero → movimento di correzione per la differenza, nella valuta del conto. */
-  const correct = async (accountId: string, currency: string, balance: number) => {
-    const v = parseAmount(target, currency);
+  const correct = (id: string, currency: string, balance: number) => {
+    const v = parseAmount(edit.target, currency);
     if (!v) { setError('Importo non valido'); return; }
     const diff = Math.round(v.value * 1000) - balance;
-    if (!diff) { setFixing(null); return; }
-    setError(null);
-    try {
-      await api('/transactions', { method: 'POST', json: { type: diff > 0 ? 'income' : 'expense', amount: Math.abs(diff) / 1000, currency, account_id: accountId, merchant: 'Correzione saldo' } });
-      await store.refresh();
-      setFixing(null);
-      store.toast('Saldo corretto');
-    } catch (e) {
-      setError((e as Error).message);
-    }
+    if (!diff) { setEdit({ ...edit, target: '' }); return; }
+    run(() => api('/transactions', { method: 'POST', json: { type: diff > 0 ? 'income' : 'expense', amount: Math.abs(diff) / 1000, currency, account_id: id, merchant: 'Correzione saldo' } }), 'Saldo corretto')
+      .then((ok) => ok && setEdit({ ...edit, target: '' }));
   };
   const add = async () => {
-    setError(null);
-    try {
-      await api('/accounts', { method: 'POST', json: { name: acc.name, currency: acc.currency, initial_balance: Number(acc.initial_balance.replace(',', '.')) || 0 } });
-      await store.refresh();
-      setAdding(false);
-      setAcc({ name: '', currency: 'EUR', initial_balance: '' });
-    } catch (e) {
-      setError((e as Error).message);
-    }
+    const ok = await run(() => api('/accounts', { method: 'POST', json: { name: acc.name, currency: acc.currency, initial_balance: Number(acc.initial_balance.replace(',', '.')) || 0 } }), 'Conto aggiunto');
+    if (ok) { setAdding(false); setAcc({ name: '', currency: 'EUR', initial_balance: '' }); }
   };
+
   return (
-    <section className="card">
-      <div className="row between"><h2 className="h2">Conti</h2>{!adding && <button className="btn small" onClick={() => setAdding(true)}>Nuovo conto</button>}</div>
-      {store.accounts.map((a) => (
-        <div key={a.id} className="stack" style={{ gap: 6 }}>
-          <div className="kv">
-            <button className="row" style={{ background: 'none', border: 0, padding: 0, gap: 6, color: 'inherit', cursor: 'pointer' }} onClick={() => { setFixing(fixing === a.id ? null : a.id); setTarget(''); }}>
-              {a.name} <span className="muted">· {a.currency}</span>
+    <section className="stack" style={{ gap: 8 }}>
+      <div className="row between" style={{ padding: '0 6px' }}>
+        <span className="section-title" style={{ margin: 0, padding: 0 }}>Conti</span>
+        {!adding && <button className="btn ghost" style={{ minHeight: 30 }} onClick={() => setAdding(true)}>+ Nuovo conto</button>}
+      </div>
+      <div className="list">
+        {store.accounts.map((a) => (
+          <div key={a.id}>
+            <button className="lrow" onClick={() => toggle(a.id)} aria-expanded={open === a.id}>
+              <span className="lrow-ic" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}><Icon name="wallet" size={18} /></span>
+              <span className="lrow-label">{a.name} <span className="muted" style={{ fontSize: 14 }}>· {a.currency}</span></span>
+              <span className="lrow-value set num money" style={{ fontWeight: 600 }}>{formatMoney(a.balance, a.currency)}</span>
+              <Icon name={open === a.id ? 'down' : 'next'} size={18} />
             </button>
-            <span className="num money">{formatMoney(a.balance, a.currency)}</span>
+            {open === a.id && (
+              <div className="stack" style={{ gap: 10, padding: '4px 16px 16px 60px' }}>
+                <div className="row" style={{ gap: 6 }}>
+                  <input className="input grow" aria-label="Nome del conto" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />
+                  {edit.name.trim() && edit.name.trim() !== a.name && <button className="btn primary" onClick={() => run(() => api(`/accounts/${a.id}`, { method: 'PUT', json: { name: edit.name } }), 'Nome salvato')}>Salva</button>}
+                </div>
+                <label className="field"><span>Valuta del conto</span>
+                  <select className="input" value={edit.currency} onChange={(e) => { setEdit({ ...edit, currency: e.target.value }); setConfirmCur(e.target.value !== a.currency); }}>
+                    {[...new Set([a.currency, ...CURRENCIES])].map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </label>
+                {confirmCur && (
+                  <div className="card" style={{ background: 'var(--sunken)', gap: 8 }}>
+                    <span style={{ fontSize: 15 }}>Il conto passa da {a.currency} a <b>{edit.currency}</b>. Il saldo iniziale si converte al cambio di oggi; i movimenti restano nella loro valuta.</span>
+                    <div className="row" style={{ gap: 8 }}>
+                      <button className="btn grow" onClick={() => { setEdit({ ...edit, currency: a.currency }); setConfirmCur(false); }}>Annulla</button>
+                      <button className="btn primary grow" onClick={() => run(() => api(`/accounts/${a.id}`, { method: 'PUT', json: { currency: edit.currency } }), `Conto in ${edit.currency}`).then((ok) => ok && setConfirmCur(false))}>Cambia valuta</button>
+                    </div>
+                  </div>
+                )}
+                <label className="field"><span>Saldo vero oggi (Ledgy aggiunge la differenza)</span>
+                  <div className="row" style={{ gap: 6 }}>
+                    <input className="input grow num" inputMode="decimal" placeholder={formatMoney(a.balance, a.currency)} value={edit.target} onChange={(e) => setEdit({ ...edit, target: e.target.value })} />
+                    <button className="btn primary" disabled={!edit.target.trim()} onClick={() => correct(a.id, a.currency, a.balance)}>Correggi</button>
+                  </div>
+                </label>
+                <ErrorBox error={error} />
+              </div>
+            )}
           </div>
-          {fixing === a.id && (
-            <div className="row" style={{ gap: 6 }}>
-              <input className="input grow num" inputMode="decimal" autoFocus placeholder={`Saldo vero in ${a.currency}`} value={target} onChange={(e) => setTarget(e.target.value)} />
-              <button className="btn primary" disabled={!target.trim()} onClick={() => correct(a.id, a.currency, a.balance)}>Correggi saldo</button>
-            </div>
-          )}
-        </div>
-      ))}
-      {!adding && <ErrorBox error={error} />}
-      {store.accounts.length > 0 && !fixing && <span className="muted" style={{ fontSize: 13 }}>Tocca un conto per correggerne il saldo: Ledgy aggiunge la differenza come entrata o spesa.</span>}
+        ))}
+      </div>
       {adding && (
-        <div className="stack" style={{ gap: 8 }}>
+        <div className="card">
           <label className="field"><span>Nome</span><input className="input" value={acc.name} onChange={(e) => setAcc({ ...acc, name: e.target.value })} placeholder="Es. Revolut" /></label>
           <div className="row" style={{ gap: 8 }}>
             <label className="field grow"><span>Valuta</span>

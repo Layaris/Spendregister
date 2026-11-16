@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { api, type TxDetail as Detail } from '../api';
 import { back } from '../router';
 import { useApi, useStore } from '../store';
-import { CategoryIcon, CategorySelect, ErrorBox, Loading, TopBar } from '../ui';
+import { Icon } from '../icons';
+import { CategoryIcon, CategorySheet, ErrorBox, Loading, TopBar } from '../ui';
 import { parseAmount } from '../../shared/money';
 import { eur, formatMoney, formatWhen, NATURE_LABEL } from '../util';
 
@@ -11,13 +12,14 @@ export function TxDetail({ id }: { id: string }) {
   const { data: t, error, reload } = useApi<Detail>(`/transactions/${id}`);
   const [err, setErr] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [form, setForm] = useState({ merchant: '', note: '', amount: '', labels: '', when: '' });
+  const [form, setForm] = useState({ merchant: '', note: '', amount: '', labels: '', when: '', card: '' });
+  const [picking, setPicking] = useState(false);
   const [suggest, setSuggest] = useState<{ merchant: string; others: number; category: string } | null>(null);
 
   useEffect(() => {
     if (t) setForm({
-      merchant: t.merchant ?? '', note: t.note ?? '', labels: t.labels.join(', '), when: t.occurred_at.slice(0, 16),
-      amount: String(Math.abs(t.amount) / 1000).replace('.', ','),
+      merchant: t.merchant ?? '', note: t.note ?? '', labels: t.labels.join(', '), when: t.occurred_at.slice(0, 16), card: t.card ?? '',
+      amount: new Intl.NumberFormat('it-IT', { maximumFractionDigits: 3 }).format(Math.abs(t.amount) / 1000),
     });
   }, [t]);
 
@@ -58,21 +60,29 @@ export function TxDetail({ id }: { id: string }) {
 
   const hasNature = t.type === 'expense';
   const income = t.amount > 0;
+  const acc = store.accounts.find((x) => x.id === t.account_id);
+  const cat = store.cat(t.category_id);
+  const blurSave = (field: 'card', value: string, current: string | null) => {
+    if (value.trim() !== (current ?? '')) save({ [field]: value.trim() || null }, 'Salvato');
+  };
 
   return (
-    <div className={`stack ${store.discreet ? 'discreet' : ''}`} style={{ gap: 14 }}>
+    <div className={`stack ${store.discreet ? 'discreet' : ''}`} style={{ gap: 12 }}>
       <TopBar backTo="/movimenti" />
 
-      <section className="card" style={{ alignItems: 'center', textAlign: 'center', gap: 8, padding: '20px 16px' }}>
-        <CategoryIcon id={t.category_id} size={56} />
-        <span style={{ fontWeight: 600, fontSize: 18 }}>{t.merchant ?? 'Movimento'}</span>
-        <span className="hero-amount num money" style={{ fontSize: 40, color: income ? 'var(--pos)' : undefined }}>{eur(t.amount_eur, income)}</span>
+      <section className="card" style={{ alignItems: 'center', textAlign: 'center', gap: 6, padding: '18px 16px' }}>
+        <CategoryIcon id={t.category_id} size={52} />
+        <span style={{ fontWeight: 600, fontSize: 18 }}>{t.merchant ?? (income ? 'Entrata' : 'Spesa')}</span>
+        <span className="hero-amount num money" style={{ fontSize: 40, color: income ? 'var(--pos)' : 'var(--neg)' }}>{eur(t.amount_eur, true)}</span>
         {t.currency !== 'EUR' && t.fx_rate && (
           <span className="muted num" style={{ fontSize: 14 }}>
-            {formatMoney(Math.abs(t.amount), t.currency)} · 1 € = {new Intl.NumberFormat('it-IT', { maximumFractionDigits: 2 }).format(1 / t.fx_rate)} {t.currency}, tasso del {t.fx_date ? formatWhen(t.fx_date, false) : 'giorno'}
+            {formatMoney(Math.abs(t.amount), t.currency)} · 1 € = {new Intl.NumberFormat('it-IT', { maximumFractionDigits: 2 }).format(1 / t.fx_rate)} {t.currency}
           </span>
         )}
-        {t.status === 'review' && <span className="chip warn">{t.review_reason ?? 'Da rivedere'}</span>}
+        <div className="row wrap" style={{ gap: 6, justifyContent: 'center' }}>
+          {t.source === 'capture' && <span className="chip ok"><Icon name="bolt" size={12} stroke={2.2} />Automatica{t.card ? ` · ${t.card}` : ''}</span>}
+          {t.status === 'review' && <span className="chip warn">{t.review_reason ?? 'Da rivedere'}</span>}
+        </div>
       </section>
 
       <ErrorBox error={err} />
@@ -87,59 +97,97 @@ export function TxDetail({ id }: { id: string }) {
         </section>
       )}
 
-      <section className="card">
-        <label className="field"><span>Categoria</span>
-          <CategorySelect value={t.category_id} onChange={(v) => save({ category_id: v }, 'Categoria salvata')} kind={income ? 'income' : 'expense'} />
-        </label>
-        {t.status === 'review' && t.review_choices.length > 0 && (
-          <div className="row wrap" style={{ gap: 8 }}>
-            {t.review_choices.map((c) => <button key={c} className="pill small" onClick={() => save({ category_id: c }, 'Categoria salvata')}>{store.catName(c)}</button>)}
+      {t.status === 'review' && t.review_choices.length > 0 && (
+        <section className="card" style={{ gap: 8 }}>
+          <span style={{ fontWeight: 600 }}>Che cos’era?</span>
+          <div className="row" style={{ gap: 8 }}>
+            {t.review_choices.map((c) => <button key={c} className="btn grow" onClick={() => save({ category_id: c }, 'Categoria salvata')}>{store.catName(c)}</button>)}
           </div>
-        )}
+        </section>
+      )}
+
+      <span className="section-title">Essenziale</span>
+      <div className="list">
+        <div className="lrow note">
+          <span className="lrow-ic"><Icon name="note" size={18} /></span>
+          <textarea className="lrow-input" rows={2} placeholder="Aggiungi una descrizione" aria-label="Descrizione" value={form.note}
+            onChange={(e) => setForm({ ...form, note: e.target.value })} onBlur={onBlur('note', t.note)} />
+        </div>
+        <button className="lrow" onClick={() => setPicking(true)}>
+          {cat ? <CategoryIcon id={t.category_id} size={32} /> : <span className="lrow-ic"><Icon name="question" size={18} /></span>}
+          <span className="lrow-label">Categoria</span>
+          <span className={`lrow-value ${cat ? 'set' : 'accent'}`}>{cat ? cat.name : 'Scegli'}</span>
+          <Icon name="next" size={18} />
+        </button>
+        <label className="lrow">
+          <span className="lrow-ic"><Icon name="store" size={18} /></span>
+          <span className="lrow-label">Dove</span>
+          <input className="lrow-input" placeholder="Negozio o persona" value={form.merchant} onChange={(e) => setForm({ ...form, merchant: e.target.value })} onBlur={onBlur('merchant', t.merchant)} />
+        </label>
+      </div>
+      {picking && <CategorySheet value={t.category_id} kind={income ? 'income' : 'expense'} onPick={(v) => { setPicking(false); save({ category_id: v }, 'Categoria salvata'); }} onClose={() => setPicking(false)} />}
+
+      <span className="section-title">Dettagli</span>
+      <div className="list">
+        <label className="lrow">
+          <span className="lrow-ic"><Icon name="income" size={18} /></span>
+          <span className="lrow-label">Importo</span>
+          <input className="lrow-input num" inputMode="decimal" aria-label={`Importo in ${t.currency}`} value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })}
+            onBlur={() => {
+              const v = parseAmount(form.amount, t.currency)?.value;
+              if (v && Math.round(v * 1000) !== Math.abs(t.amount)) save({ amount: v }, 'Importo salvato');
+            }} />
+          <span className="muted" style={{ fontWeight: 600 }}>{t.currency}</span>
+        </label>
+        <label className="lrow">
+          <span className="lrow-ic"><Icon name="wallet" size={18} /></span>
+          <span className="lrow-label">Conto</span>
+          <span className="lrow-value set">{acc ? `${acc.name} · ${acc.currency}` : 'Nessuno'}</span>
+          <Icon name="next" size={18} />
+          <select className="overlay" aria-label="Conto" value={t.account_id ?? ''} onChange={(e) => save({ account_id: e.target.value || null }, 'Conto salvato')}>
+            <option value="">Nessuno</option>
+            {store.accounts.map((a) => <option key={a.id} value={a.id}>{a.name} · {a.currency}</option>)}
+          </select>
+        </label>
+        <label className="lrow">
+          <span className="lrow-ic"><Icon name="calendar" size={18} /></span>
+          <span className="lrow-label">Data e ora</span>
+          <span className="lrow-value set">{formatWhen(form.when ? `${form.when}:00` : t.occurred_at)}</span>
+          <Icon name="next" size={18} />
+          <input className="overlay" type="datetime-local" aria-label="Data e ora" value={form.when}
+            onChange={(e) => { if (!e.target.value) return; setForm({ ...form, when: e.target.value }); save({ occurred_at: `${e.target.value}:00${t.occurred_at.slice(19)}` }, 'Data salvata'); }} />
+        </label>
+        <label className="lrow">
+          <span className="lrow-ic"><Icon name="card" size={18} /></span>
+          <span className="lrow-label">Carta o banca</span>
+          <input className="lrow-input" placeholder={t.source === 'capture' ? 'Es. Revolut' : 'Facoltativa'} value={form.card}
+            onChange={(e) => setForm({ ...form, card: e.target.value })} onBlur={() => blurSave('card', form.card, t.card)} />
+        </label>
         {hasNature && (
-          <div className="field">
-            <span>Natura della spesa</span>
-            <div className="seg" role="group" aria-label="Natura della spesa">
+          <div className="lrow" style={{ cursor: 'default', padding: '10px 12px' }}>
+            <div className="seg grow nature" role="group" aria-label="Natura della spesa">
               {(['must', 'need', 'want'] as const).map((n) => (
                 <button key={n} aria-pressed={t.nature === n} onClick={() => save({ nature: n })}>{NATURE_LABEL[n]}</button>
               ))}
             </div>
           </div>
         )}
-        <label className="field"><span>Nota</span>
-          <textarea className="input" rows={2} placeholder="Aggiungi una nota" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} onBlur={onBlur('note', t.note)} />
-        </label>
-        <label className="field"><span>Nome</span>
-          <input className="input" value={form.merchant} placeholder="Dove o cosa" onChange={(e) => setForm({ ...form, merchant: e.target.value })} onBlur={onBlur('merchant', t.merchant)} />
-        </label>
-        <div className="row" style={{ gap: 8, alignItems: 'flex-end' }}>
-          <label className="field grow"><span>Importo ({t.currency})</span>
-            <input className="input num" inputMode="decimal" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })}
-              onBlur={() => {
-                const v = parseAmount(form.amount, t.currency)?.value;
-                if (v && Math.round(v * 1000) !== Math.abs(t.amount)) save({ amount: v }, 'Importo salvato');
-              }} />
-          </label>
-          <label className="field grow"><span>Conto</span>
-            <select className="input" value={t.account_id ?? ''} onChange={(e) => save({ account_id: e.target.value || null }, 'Conto salvato')}>
-              <option value="">Nessuno</option>
-              {store.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-          </label>
-        </div>
-        <label className="field"><span>Data e ora</span>
-          <input className="input" type="datetime-local" value={form.when} onChange={(e) => setForm({ ...form, when: e.target.value })}
-            onBlur={() => { if (form.when && form.when !== t.occurred_at.slice(0, 16)) save({ occurred_at: `${form.when}:00${t.occurred_at.slice(19)}` }, 'Data salvata'); }} />
-        </label>
-        <label className="field"><span>Etichette, separate da virgola</span>
-          <input className="input" value={form.labels} placeholder="Es. Viaggio Bangkok" onChange={(e) => setForm({ ...form, labels: e.target.value })}
+      </div>
+      {t.source === 'capture' && <span className="muted" style={{ fontSize: 13, padding: '0 6px' }}>La carta e il conto che scegli qui valgono anche per le prossime notifiche con lo stesso titolo; la carta anche per quelle già arrivate.</span>}
+
+      <span className="section-title">Altro</span>
+      <div className="list">
+        <label className="lrow">
+          <span className="lrow-ic"><Icon name="tag" size={18} /></span>
+          <span className="lrow-label">Etichette</span>
+          <input className="lrow-input" placeholder="Es. Viaggio Bangkok" value={form.labels} onChange={(e) => setForm({ ...form, labels: e.target.value })}
             onBlur={() => { if (form.labels !== t.labels.join(', ')) save({ labels: form.labels.split(',').map((x) => x.trim()).filter(Boolean) }); }} />
         </label>
-        {t.card && <div className="kv"><span>Carta o app</span><span>{t.card}</span></div>}
-        {t.status === 'review' && t.category_id && (
-          <button className="btn primary" onClick={async () => { await api(`/transactions/${t.id}/confirm`, { method: 'POST', json: {} }); reload(); await store.refresh(); }}>Conferma</button>
-        )}
-      </section>
+      </div>
+
+      {t.status === 'review' && t.category_id && (
+        <button className="btn primary block" onClick={async () => { await api(`/transactions/${t.id}/confirm`, { method: 'POST', json: {} }); reload(); await store.refresh(); }}>Conferma</button>
+      )}
 
       {(t.capture || t.rules.length > 0) && (
         <section className="card">
