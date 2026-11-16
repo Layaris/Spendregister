@@ -5,7 +5,7 @@ import { formatMoney, roundMilli, toMilli } from '../shared/money';
 import { cleanMerchantName, parseNotification, parseWithParser, type AiHint, type ParserDef } from '../shared/notification';
 import { evaluateRules } from '../shared/rules';
 import { normalizePostedAt } from '../shared/time';
-import { bad, body, getTimeZone, HttpError, newId, notFound, nowIso, randomToken, type Env } from './lib';
+import { bad, body, getTimeZone, HttpError, newId, notFound, nowIso, randomToken, uid, type AppEnv } from './lib';
 import { categoryFromHistory, convertToEur, defaultAccountId, insertTransaction, loadRules } from './transactions';
 
 interface CapturePayload {
@@ -20,18 +20,19 @@ interface CapturePayload {
   category?: string | null;
 }
 
-export async function loadParsers(db: D1Database): Promise<ParserDef[]> {
+export async function loadParsers(db: D1Database, userId: string): Promise<ParserDef[]> {
   const { results } = await db
-    .prepare('SELECT id, name, app, pattern, flags, direction, default_currency FROM parsers WHERE enabled = 1 ORDER BY created_at')
+    .prepare('SELECT id, name, app, pattern, flags, direction, default_currency FROM parsers WHERE user_id = ? AND enabled = 1 ORDER BY created_at')
+    .bind(userId)
     .all<ParserDef>();
   return results;
 }
 
 async function deviceForToken(db: D1Database, token: string) {
   const dev = await db
-    .prepare('SELECT id, name, platform FROM devices WHERE token_hash = ? AND revoked_at IS NULL')
+    .prepare('SELECT id, user_id, name, platform FROM devices WHERE token_hash = ? AND revoked_at IS NULL')
     .bind(await sha256Hex(token))
-    .first<{ id: string; name: string; platform: string }>();
+    .first<{ id: string; user_id: string; name: string; platform: string }>();
   if (!dev) throw new HttpError(401, 'Indirizzo non valido o revocato');
   return dev;
 }
@@ -44,7 +45,7 @@ export interface CaptureResult {
 }
 
 /** Dalla notifica al movimento: lettura, cambio, regole, doppioni. */
-export async function processCapture(db: D1Database, deviceId: string | null, payload: CapturePayload, existingCaptureId?: string): Promise<CaptureResult> {
+export async function processCapture(db: D1Database, userId: string, deviceId: string | null, payload: CapturePayload, existingCaptureId?: string): Promise<CaptureResult> {
   const p = { ...payload, title: payload.title ? String(payload.title).slice(0, 300) : null, app: payload.app ? String(payload.app).slice(0, 200) : guessAppFromTitle(payload.title) };
   const text = (p.text ?? '').toString().trim().slice(0, 4000);
   if (!text) bad('Testo della notifica mancante');
@@ -55,11 +56,11 @@ export async function processCapture(db: D1Database, deviceId: string | null, pa
 
   const save = async (status: string, detail: string | null, txId: string | null = null) => {
     if (existingCaptureId) {
-      await db.prepare('UPDATE captures SET status = ?, detail = ?, transaction_id = ? WHERE id = ?').bind(status, detail, txId, captureId).run();
+      await db.prepare('UPDATE captures SET status = ?, detail = ?, transaction_id = ? WHERE id = ? AND user_id = ?').bind(status, detail, txId, captureId, userId).run();
     } else {
       await db
-        .prepare('INSERT INTO captures (id, device_id, received_at, posted_at, app, title, text, hint, hash, status, detail, transaction_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        .bind(captureId, deviceId, received, p.posted_at ?? null, p.app ?? null, p.title ?? null, text, hint ? JSON.stringify(hint) : null, hash, status, detail, txId)
+        .prepare('INSERT INTO captures (id, user_id, device_id, received_at, posted_at, app, title, text, hint, hash, status, detail, transaction_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(captureId, userId, deviceId, received, p.posted_at ?? null, p.app ?? null, p.title ?? null, text, hint ? JSON.stringify(hint) : null, hash, status, detail, txId)
         .run();
     }
   };
@@ -67,8 +68,8 @@ export async function processCapture(db: D1Database, deviceId: string | null, pa
   if (!existingCaptureId) {
     const since = new Date(Date.now() - 30 * 60_000).toISOString();
     const dup = await db
-      .prepare("SELECT transaction_id FROM captures WHERE hash = ? AND received_at >= ? AND status IN ('created', 'review') LIMIT 1")
-      .bind(hash, since)
+      .prepare("SELECT transaction_id FROM captures WHERE user_id = ? AND hash = ? AND received_at >= ? AND status IN ('created', 'review') LIMIT 1")
+      .bind(userId, hash, since)
       .first<{ transaction_id: string | null }>();
     if (dup) {
       await save('duplicate', 'Stessa notifica già ricevuta', dup.transaction_id);
@@ -76,13 +77,13 @@ export async function processCapture(db: D1Database, deviceId: string | null, pa
     }
   }
 
-  const parsed = parseNotification({ app: p.app, title: p.title, text, hint }, await loadParsers(db));
+  const parsed = parseNotification({ app: p.app, title: p.title, text, hint }, await loadParsers(db, userId));
   if (!parsed) {
     await save('unrecognized', 'Nessun importo riconosciuto');
     return { status: 'unrecognized', capture_id: captureId };
   }
 
-  const occurred = normalizePostedAt(p.posted_at, await getTimeZone(db));
+  const occurred = normalizePostedAt(p.posted_at, await getTimeZone(db, userId));
   const sign = parsed.direction === 'income' ? 1 : -1;
   const amount = roundMilli(toMilli(parsed.amount), parsed.currency) * sign;
   const conv = await convertToEur(db, amount, parsed.currency, occurred);
@@ -90,7 +91,7 @@ export async function processCapture(db: D1Database, deviceId: string | null, pa
   const merchant = cleanMerchantName(merchantRaw);
   const card = appLabel(p.app);
 
-  const rules = evaluateRules(await loadRules(db), {
+  const rules = evaluateRules(await loadRules(db, userId), {
     merchant, merchant_raw: merchantRaw, text, app: p.app ?? null, currency: parsed.currency, account_id: null,
     amount_eur: (conv?.amount_eur ?? 0) / 1000, occurred_at: occurred, source: 'capture',
   });
@@ -103,7 +104,7 @@ export async function processCapture(db: D1Database, deviceId: string | null, pa
   let category = rules.category_id ?? null;
   let categoryVia = category ? 'regola' : null;
   if (!category && !rules.ask) {
-    category = await categoryFromHistory(db, finalMerchant);
+    category = await categoryFromHistory(db, userId, finalMerchant);
     if (category) categoryVia = 'storico';
   }
 
@@ -111,8 +112,8 @@ export async function processCapture(db: D1Database, deviceId: string | null, pa
   const windowStart = new Date(Date.parse(occurred) - 3 * 60_000).toISOString();
   const windowEnd = new Date(Date.parse(occurred) + 3 * 60_000).toISOString();
   const { results: near } = await db
-    .prepare("SELECT id, amount, currency, merchant_raw, occurred_at FROM transactions WHERE source = 'capture' AND deleted_at IS NULL AND amount = ? AND currency = ? AND occurred_utc BETWEEN ? AND ?")
-    .bind(amount, parsed.currency, windowStart, windowEnd)
+    .prepare("SELECT id, amount, currency, merchant_raw, occurred_at FROM transactions WHERE user_id = ? AND source = 'capture' AND deleted_at IS NULL AND amount = ? AND currency = ? AND occurred_utc BETWEEN ? AND ?")
+    .bind(userId, amount, parsed.currency, windowStart, windowEnd)
     .all<{ id: string; amount: number; currency: string; merchant_raw: string | null; occurred_at: string }>();
   const twin = near.find((n) => isLikelyDuplicate(n, { amount, currency: parsed.currency, merchant_raw: merchantRaw, occurred_at: occurred }));
 
@@ -126,9 +127,9 @@ export async function processCapture(db: D1Database, deviceId: string | null, pa
   if (rules.review) reasons.push('Da controllare per regola');
   const status = reasons.length ? 'review' : 'confirmed';
 
-  const txId = await insertTransaction(db, {
+  const txId = await insertTransaction(db, userId, {
     type: parsed.direction === 'income' ? 'income' : 'expense',
-    account_id: rules.account_id ?? (await defaultAccountId(db)),
+    account_id: rules.account_id ?? (await defaultAccountId(db, userId)),
     amount, currency: parsed.currency, occurred_at: occurred,
     merchant_raw: merchantRaw, merchant: finalMerchant, category_id: category,
     nature: rules.nature ?? null, card, source: 'capture', status,
@@ -152,7 +153,7 @@ export async function processCapture(db: D1Database, deviceId: string | null, pa
 }
 
 /** Ingresso pubblico per i telefoni: /api/in/<token>. Accetta JSON o testo semplice. */
-export const inboundApi = new Hono<{ Bindings: Env }>();
+export const inboundApi = new Hono<AppEnv>();
 
 inboundApi.post('/:token', async (c) => {
   const dev = await deviceForToken(c.env.DB, c.req.param('token'));
@@ -165,7 +166,7 @@ inboundApi.post('/:token', async (c) => {
   if (typeof payload.hint === 'string') {
     try { payload.hint = JSON.parse(payload.hint); } catch { payload.hint = null; }
   }
-  const result = await processCapture(c.env.DB, dev.id, payload);
+  const result = await processCapture(c.env.DB, dev.user_id, dev.id, payload);
   return c.json(result);
 });
 
@@ -176,11 +177,12 @@ inboundApi.post('/:token/ping', async (c) => {
 });
 
 /** Gestione di telefoni, notifiche ricevute e lettori (richiede accesso). */
-export const captureAdminApi = new Hono<{ Bindings: Env }>();
+export const captureAdminApi = new Hono<AppEnv>();
 
 captureAdminApi.get('/devices', async (c) => {
   const { results } = await c.env.DB
-    .prepare('SELECT id, name, platform, method, token_hint, created_at, last_seen_at, last_capture_at FROM devices WHERE revoked_at IS NULL ORDER BY created_at')
+    .prepare('SELECT id, name, platform, method, token_hint, created_at, last_seen_at, last_capture_at FROM devices WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at')
+    .bind(uid(c))
     .all();
   return c.json({ items: results });
 });
@@ -196,8 +198,8 @@ captureAdminApi.post('/devices', async (c) => {
   if (!b.name?.trim()) bad('Dai un nome al telefono');
   const id = newId('dev');
   await c.env.DB
-    .prepare('INSERT INTO devices (id, name, platform, method, token_hash, token_hint, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .bind(id, b.name.trim(), b.platform ?? 'ios', b.method ?? 'shortcut', `pending-${id}`, '', nowIso())
+    .prepare('INSERT INTO devices (id, user_id, name, platform, method, token_hash, token_hint, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(id, uid(c), b.name.trim().slice(0, 80), b.platform ?? 'ios', b.method ?? 'shortcut', `pending-${id}`, '', nowIso())
     .run();
   const issued = await issueToken(c.env.DB, id, new URL(c.req.url).origin);
   return c.json({ id, ...issued }, 201);
@@ -205,13 +207,13 @@ captureAdminApi.post('/devices', async (c) => {
 
 captureAdminApi.post('/devices/:id/token', async (c) => {
   const id = c.req.param('id');
-  const dev = await c.env.DB.prepare('SELECT id FROM devices WHERE id = ? AND revoked_at IS NULL').bind(id).first();
+  const dev = await c.env.DB.prepare('SELECT id FROM devices WHERE id = ? AND user_id = ? AND revoked_at IS NULL').bind(id, uid(c)).first();
   if (!dev) notFound();
   return c.json(await issueToken(c.env.DB, id, new URL(c.req.url).origin));
 });
 
 captureAdminApi.delete('/devices/:id', async (c) => {
-  await c.env.DB.prepare('UPDATE devices SET revoked_at = ? WHERE id = ?').bind(nowIso(), c.req.param('id')).run();
+  await c.env.DB.prepare('UPDATE devices SET revoked_at = ? WHERE id = ? AND user_id = ?').bind(nowIso(), c.req.param('id'), uid(c)).run();
   return c.json({ ok: true });
 });
 
@@ -219,20 +221,20 @@ captureAdminApi.get('/captures', async (c) => {
   const status = c.req.query('status');
   const limit = Math.min(Number(c.req.query('limit')) || 50, 200);
   const stmt = status
-    ? c.env.DB.prepare('SELECT * FROM captures WHERE status = ? ORDER BY received_at DESC LIMIT ?').bind(status, limit)
-    : c.env.DB.prepare('SELECT * FROM captures ORDER BY received_at DESC LIMIT ?').bind(limit);
+    ? c.env.DB.prepare('SELECT * FROM captures WHERE user_id = ? AND status = ? ORDER BY received_at DESC LIMIT ?').bind(uid(c), status, limit)
+    : c.env.DB.prepare('SELECT * FROM captures WHERE user_id = ? ORDER BY received_at DESC LIMIT ?').bind(uid(c), limit);
   const { results } = await stmt.all();
   return c.json({ items: results });
 });
 
 /** Rielabora una notifica (per esempio dopo aver aggiunto un lettore). */
 captureAdminApi.post('/captures/:id/retry', async (c) => {
-  const cap = await c.env.DB.prepare('SELECT * FROM captures WHERE id = ?').bind(c.req.param('id')).first<{
+  const cap = await c.env.DB.prepare('SELECT * FROM captures WHERE id = ? AND user_id = ?').bind(c.req.param('id'), uid(c)).first<{
     id: string; device_id: string | null; app: string | null; title: string | null; text: string; hint: string | null; posted_at: string | null; transaction_id: string | null;
   }>();
   if (!cap) notFound();
   if (cap.transaction_id) bad('Questa notifica ha già creato un movimento');
-  const result = await processCapture(c.env.DB, cap.device_id, {
+  const result = await processCapture(c.env.DB, uid(c), cap.device_id, {
     text: cap.text, title: cap.title, app: cap.app, posted_at: cap.posted_at, hint: cap.hint ? JSON.parse(cap.hint) : null,
   }, cap.id);
   return c.json(result);
@@ -242,12 +244,12 @@ captureAdminApi.post('/captures/:id/retry', async (c) => {
 captureAdminApi.post('/test', async (c) => {
   const b = await body<{ text?: string; app?: string }>(c);
   if (!b.text) bad('Incolla il testo di una notifica');
-  const parsed = parseNotification({ app: b.app, text: b.text }, await loadParsers(c.env.DB));
+  const parsed = parseNotification({ app: b.app, text: b.text }, await loadParsers(c.env.DB, uid(c)));
   return c.json({ parsed, merchant: cleanMerchantName(parsed?.merchant) });
 });
 
 captureAdminApi.get('/parsers', async (c) => {
-  const { results } = await c.env.DB.prepare('SELECT * FROM parsers ORDER BY created_at').all();
+  const { results } = await c.env.DB.prepare('SELECT * FROM parsers WHERE user_id = ? ORDER BY created_at').bind(uid(c)).all();
   return c.json({ items: results });
 });
 
@@ -277,8 +279,8 @@ captureAdminApi.post('/parsers', async (c) => {
   validatePattern(b.pattern);
   const id = newId('prs');
   await c.env.DB
-    .prepare('INSERT INTO parsers (id, name, app, pattern, flags, direction, default_currency, sample, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .bind(id, b.name, b.app, b.pattern, b.flags ?? 'i', b.direction ?? 'expense', b.default_currency ?? null, b.sample ?? null, b.enabled === false ? 0 : 1, nowIso())
+    .prepare('INSERT INTO parsers (id, user_id, name, app, pattern, flags, direction, default_currency, sample, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(id, uid(c), b.name, b.app, b.pattern, b.flags ?? 'i', b.direction ?? 'expense', b.default_currency ?? null, b.sample ?? null, b.enabled === false ? 0 : 1, nowIso())
     .run();
   return c.json({ id }, 201);
 });
@@ -286,19 +288,19 @@ captureAdminApi.post('/parsers', async (c) => {
 captureAdminApi.put('/parsers/:id', async (c) => {
   const b = await body<ParserInput>(c);
   if (b.pattern) validatePattern(b.pattern);
-  const cur = await c.env.DB.prepare('SELECT * FROM parsers WHERE id = ?').bind(c.req.param('id')).first<Record<string, unknown>>();
+  const cur = await c.env.DB.prepare('SELECT * FROM parsers WHERE id = ? AND user_id = ?').bind(c.req.param('id'), uid(c)).first<Record<string, unknown>>();
   if (!cur) notFound();
   await c.env.DB
-    .prepare('UPDATE parsers SET name = ?, app = ?, pattern = ?, flags = ?, direction = ?, default_currency = ?, sample = ?, enabled = ? WHERE id = ?')
+    .prepare('UPDATE parsers SET name = ?, app = ?, pattern = ?, flags = ?, direction = ?, default_currency = ?, sample = ?, enabled = ? WHERE id = ? AND user_id = ?')
     .bind(b.name ?? cur.name, b.app ?? cur.app, b.pattern ?? cur.pattern, b.flags ?? cur.flags, b.direction ?? cur.direction,
       b.default_currency !== undefined ? b.default_currency : cur.default_currency, b.sample !== undefined ? b.sample : cur.sample,
-      b.enabled === undefined ? cur.enabled : b.enabled ? 1 : 0, c.req.param('id'))
+      b.enabled === undefined ? cur.enabled : b.enabled ? 1 : 0, c.req.param('id'), uid(c))
     .run();
   return c.json({ ok: true });
 });
 
 captureAdminApi.delete('/parsers/:id', async (c) => {
-  await c.env.DB.prepare('DELETE FROM parsers WHERE id = ?').bind(c.req.param('id')).run();
+  await c.env.DB.prepare('DELETE FROM parsers WHERE id = ? AND user_id = ?').bind(c.req.param('id'), uid(c)).run();
   return c.json({ ok: true });
 });
 

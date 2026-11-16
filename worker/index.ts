@@ -1,15 +1,16 @@
 import { Hono } from 'hono';
-import { changePassword, createRecoveryCode, login, logout, recoverWithCode, requireSession } from './auth';
+import {
+  changePassword, claimLegacy, createRecoveryCode, deleteAccount, legacyAvailable, login, logout, recoverWithCode, register, requireSession,
+} from './auth';
 import { backupApi } from './backup';
 import { captureAdminApi, inboundApi } from './capture';
 import { catalogApi } from './catalog';
 import { configureFixedRates } from './fx';
-import { body, HttpError, type Env } from './lib';
-import { seedIfEmpty } from './seed';
+import { body, HttpError, type AppEnv, type Env } from './lib';
 import { statsApi } from './stats';
 import { transactionsApi } from './transactions';
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<AppEnv>();
 
 app.use('*', async (c, next) => {
   configureFixedRates(c.env.FX_FIXED);
@@ -24,27 +25,43 @@ app.onError((err, c) => {
 
 app.get('/api/health', (c) => c.json({ ok: true }));
 
+// ---- Account (pubblico) ----
+interface AuthBody { email?: string; password?: string; old_password?: string; code?: string }
+
+/** Per la schermata di accesso: ci sono dati della vecchia versione da collegare a un account? */
+app.get('/api/auth/status', async (c) => c.json({ legacy_available: await legacyAvailable(c.env.DB) }));
+
+app.post('/api/register', async (c) => {
+  const b = await body<AuthBody>(c);
+  await register(c, b.email, b.password ?? '');
+  return c.json({ ok: true }, 201);
+});
 app.post('/api/login', async (c) => {
-  const b = await body<{ password?: string }>(c);
-  await login(c, b.password ?? '');
-  await seedIfEmpty(c.env.DB);
+  const b = await body<AuthBody>(c);
+  await login(c, b.email, b.password ?? '');
   return c.json({ ok: true });
 });
 app.post('/api/logout', async (c) => {
   await logout(c);
   return c.json({ ok: true });
 });
-// Password dimenticata: codice di recupero + nuova password (entra subito).
+app.post('/api/claim', async (c) => {
+  const b = await body<AuthBody>(c);
+  await claimLegacy(c, b.email, b.password ?? '', b.old_password ?? '');
+  return c.json({ ok: true });
+});
+// Password dimenticata: email + codice di recupero + nuova password (entra subito).
 app.post('/api/password/recover', async (c) => {
-  const b = await body<{ code?: string; password?: string }>(c);
-  await recoverWithCode(c, b.code ?? '', b.password ?? '');
+  const b = await body<AuthBody>(c);
+  await recoverWithCode(c, b.email, b.code ?? '', b.password ?? '');
   return c.json({ ok: true });
 });
 
 // Ingresso dei telefoni: protetto dal token nell'indirizzo, non dalla sessione.
 app.route('/api/in', inboundApi);
 
-const priv = new Hono<{ Bindings: Env }>();
+// ---- Tutto il resto: solo con un account e solo sui suoi dati ----
+const priv = new Hono<AppEnv>();
 priv.use('*', requireSession);
 priv.get('/me', (c) => c.json({ ok: true }));
 priv.post('/recovery-code', async (c) => {
@@ -54,6 +71,11 @@ priv.post('/recovery-code', async (c) => {
 priv.put('/password', async (c) => {
   const b = await body<{ current?: string; next?: string }>(c);
   await changePassword(c, b.current ?? '', b.next ?? '');
+  return c.json({ ok: true });
+});
+priv.post('/account/delete', async (c) => {
+  const b = await body<{ password?: string }>(c);
+  await deleteAccount(c, b.password ?? '');
   return c.json({ ok: true });
 });
 priv.route('/', catalogApi);

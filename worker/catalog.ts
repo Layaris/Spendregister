@@ -1,26 +1,30 @@
 import { Hono } from 'hono';
 import { roundMilli, toMilli } from '../shared/money';
-import { evaluateRules, type RuleDefinition } from '../shared/rules';
+import { evaluateRules, type RuleActions, type RuleDefinition } from '../shared/rules';
 import { isValidTimeZone } from '../shared/time';
+import { accountInfo } from './auth';
 import { getEurRate } from './fx';
-import { bad, body, getSetting, getTimeZone, newId, notFound, nowIso, runBatch, setSetting, type Env } from './lib';
-import { loadRules, ruleInputFromTx, type TxRow } from './transactions';
+import { bad, body, newId, notFound, nowIso, runBatch, uid, type AppEnv } from './lib';
+import { checkOwned, loadRules, ruleInputFromTx, type TxRow } from './transactions';
 
-export const catalogApi = new Hono<{ Bindings: Env }>();
+export const catalogApi = new Hono<AppEnv>();
 
-/** Tutto ciò che serve all'app all'avvio. */
+/** Tutto ciò che serve all'app all'avvio, solo per l'account della sessione. */
 catalogApi.get('/bootstrap', async (c) => {
   const db = c.env.DB;
-  const [accounts, categories, labels, review, balances] = await Promise.all([
-    db.prepare('SELECT * FROM accounts WHERE archived = 0 ORDER BY position, name').all(),
-    db.prepare('SELECT * FROM categories WHERE archived = 0 ORDER BY position, name').all(),
-    db.prepare('SELECT * FROM labels ORDER BY name').all(),
-    db.prepare("SELECT COUNT(*) AS n FROM transactions WHERE status = 'review' AND deleted_at IS NULL").first<{ n: number }>(),
+  const u = uid(c);
+  const [accounts, categories, labels, review, balances, account] = await Promise.all([
+    db.prepare('SELECT * FROM accounts WHERE user_id = ? AND archived = 0 ORDER BY position, name').bind(u).all(),
+    db.prepare('SELECT * FROM categories WHERE user_id = ? AND archived = 0 ORDER BY position, name').bind(u).all(),
+    db.prepare('SELECT * FROM labels WHERE user_id = ? ORDER BY name').bind(u).all(),
+    db.prepare("SELECT COUNT(*) AS n FROM transactions WHERE user_id = ? AND status = 'review' AND deleted_at IS NULL").bind(u).first<{ n: number }>(),
     db.prepare(`SELECT a.id, a.currency, a.initial_balance,
                   COALESCE(SUM(CASE WHEN t.currency = a.currency THEN t.amount ELSE NULL END), 0) AS same_cur,
                   COALESCE(SUM(CASE WHEN t.currency <> a.currency THEN t.amount_eur ELSE NULL END), 0) AS other_eur
                 FROM accounts a LEFT JOIN transactions t ON t.account_id = a.id AND t.deleted_at IS NULL AND t.duplicate_of IS NULL
-                GROUP BY a.id`).all<{ id: string; currency: string; initial_balance: number; same_cur: number; other_eur: number }>(),
+                WHERE a.user_id = ?
+                GROUP BY a.id`).bind(u).all<{ id: string; currency: string; initial_balance: number; same_cur: number; other_eur: number }>(),
+    accountInfo(db, u),
   ]);
   const bal = new Map(balances.results.map((b) => [b.id, b]));
   return c.json({
@@ -33,7 +37,8 @@ catalogApi.get('/bootstrap', async (c) => {
     categories: categories.results,
     labels: labels.results,
     review_count: review?.n ?? 0,
-    settings: await publicSettings(db),
+    settings: { timezone: account.timezone, recovery_created_at: account.recovery_created_at },
+    account: { email: account.email },
   });
 });
 
@@ -41,22 +46,23 @@ catalogApi.post('/accounts', async (c) => {
   const b = await body<{ name?: string; type?: string; currency?: string; initial_balance?: number; color?: string }>(c);
   if (!b.name?.trim()) bad('Nome del conto mancante');
   const currency = (b.currency ?? 'EUR').toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) bad('Valuta non valida');
   const id = newId('acc');
   await c.env.DB
-    .prepare('INSERT INTO accounts (id, name, type, currency, initial_balance, color, position, created_at) VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM accounts), ?)')
-    .bind(id, b.name.trim(), b.type ?? 'general', currency, roundMilli(toMilli(b.initial_balance ?? 0), currency), b.color ?? null, nowIso())
+    .prepare('INSERT INTO accounts (id, user_id, name, type, currency, initial_balance, color, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM accounts WHERE user_id = ?), ?)')
+    .bind(id, uid(c), b.name.trim().slice(0, 80), b.type ?? 'general', currency, roundMilli(toMilli(b.initial_balance ?? 0), currency), b.color ?? null, uid(c), nowIso())
     .run();
   return c.json({ id }, 201);
 });
 
 catalogApi.put('/accounts/:id', async (c) => {
   const b = await body<{ name?: string; type?: string; initial_balance?: number; color?: string; archived?: boolean }>(c);
-  const a = await c.env.DB.prepare('SELECT * FROM accounts WHERE id = ?').bind(c.req.param('id')).first<Record<string, unknown>>();
+  const a = await c.env.DB.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').bind(c.req.param('id'), uid(c)).first<Record<string, unknown>>();
   if (!a) notFound();
   await c.env.DB
-    .prepare('UPDATE accounts SET name = ?, type = ?, initial_balance = ?, color = ?, archived = ? WHERE id = ?')
+    .prepare('UPDATE accounts SET name = ?, type = ?, initial_balance = ?, color = ?, archived = ? WHERE id = ? AND user_id = ?')
     .bind(b.name ?? a.name, b.type ?? a.type, b.initial_balance != null ? toMilli(b.initial_balance) : a.initial_balance, b.color ?? a.color,
-      b.archived == null ? a.archived : b.archived ? 1 : 0, c.req.param('id'))
+      b.archived == null ? a.archived : b.archived ? 1 : 0, c.req.param('id'), uid(c))
     .run();
   return c.json({ ok: true });
 });
@@ -64,22 +70,24 @@ catalogApi.put('/accounts/:id', async (c) => {
 catalogApi.post('/categories', async (c) => {
   const b = await body<{ name?: string; parent_id?: string | null; kind?: string; nature?: string | null; color?: string; icon?: string }>(c);
   if (!b.name?.trim()) bad('Nome della categoria mancante');
+  await checkOwned(c.env.DB, 'categories', b.parent_id, uid(c));
   const id = newId('cat');
   await c.env.DB
-    .prepare('INSERT INTO categories (id, name, parent_id, kind, nature, color, icon, position) VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM categories))')
-    .bind(id, b.name.trim(), b.parent_id ?? null, b.kind ?? 'expense', b.nature ?? null, b.color ?? null, b.icon ?? null)
+    .prepare('INSERT INTO categories (id, user_id, name, parent_id, kind, nature, color, icon, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM categories WHERE user_id = ?))')
+    .bind(id, uid(c), b.name.trim().slice(0, 80), b.parent_id ?? null, b.kind === 'income' ? 'income' : 'expense', b.nature ?? null, b.color ?? null, b.icon ?? null, uid(c))
     .run();
   return c.json({ id }, 201);
 });
 
 catalogApi.put('/categories/:id', async (c) => {
   const b = await body<{ name?: string; parent_id?: string | null; nature?: string | null; color?: string; icon?: string; archived?: boolean }>(c);
-  const cat = await c.env.DB.prepare('SELECT * FROM categories WHERE id = ?').bind(c.req.param('id')).first<Record<string, unknown>>();
+  const cat = await c.env.DB.prepare('SELECT * FROM categories WHERE id = ? AND user_id = ?').bind(c.req.param('id'), uid(c)).first<Record<string, unknown>>();
   if (!cat) notFound();
+  if (b.parent_id) await checkOwned(c.env.DB, 'categories', b.parent_id, uid(c));
   await c.env.DB
-    .prepare('UPDATE categories SET name = ?, parent_id = ?, nature = ?, color = ?, icon = ?, archived = ? WHERE id = ?')
+    .prepare('UPDATE categories SET name = ?, parent_id = ?, nature = ?, color = ?, icon = ?, archived = ? WHERE id = ? AND user_id = ?')
     .bind(b.name ?? cat.name, b.parent_id !== undefined ? b.parent_id : cat.parent_id, b.nature !== undefined ? b.nature : cat.nature,
-      b.color ?? cat.color, b.icon ?? cat.icon, b.archived == null ? cat.archived : b.archived ? 1 : 0, c.req.param('id'))
+      b.color ?? cat.color, b.icon ?? cat.icon, b.archived == null ? cat.archived : b.archived ? 1 : 0, c.req.param('id'), uid(c))
     .run();
   return c.json({ ok: true });
 });
@@ -89,17 +97,20 @@ catalogApi.post('/categories/:id/merge', async (c) => {
   const b = await body<{ into?: string }>(c);
   if (!b.into) bad('Categoria di destinazione mancante');
   const id = c.req.param('id');
+  await checkOwned(c.env.DB, 'categories', id, uid(c));
+  await checkOwned(c.env.DB, 'categories', b.into, uid(c));
   await c.env.DB.batch([
-    c.env.DB.prepare('UPDATE transactions SET category_id = ? WHERE category_id = ?').bind(b.into, id),
-    c.env.DB.prepare('UPDATE categories SET parent_id = ? WHERE parent_id = ?').bind(b.into, id),
-    c.env.DB.prepare('UPDATE categories SET archived = 1 WHERE id = ?').bind(id),
+    c.env.DB.prepare('UPDATE transactions SET category_id = ? WHERE category_id = ? AND user_id = ?').bind(b.into, id, uid(c)),
+    c.env.DB.prepare('UPDATE categories SET parent_id = ? WHERE parent_id = ? AND user_id = ?').bind(b.into, id, uid(c)),
+    c.env.DB.prepare('UPDATE categories SET archived = 1 WHERE id = ? AND user_id = ?').bind(id, uid(c)),
   ]);
   return c.json({ ok: true });
 });
 
-/** Tasso per la conversione dal vivo nella schermata Aggiungi. */
+/** Tasso per la conversione dal vivo nella schermata Aggiungi (i cambi sono pubblici e condivisi). */
 catalogApi.get('/fx', async (c) => {
   const currency = (c.req.query('currency') ?? 'EUR').toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) bad('Valuta non valida');
   const date = c.req.query('date') ?? new Date().toISOString().slice(0, 10);
   const rate = await getEurRate(c.env.DB, currency, date);
   return c.json(rate ? { currency, ...rate } : { currency, eurPerUnit: null });
@@ -107,14 +118,21 @@ catalogApi.get('/fx', async (c) => {
 
 // ---- Regole ----
 
-catalogApi.get('/rules', async (c) => c.json({ items: await loadRules(c.env.DB) }));
+catalogApi.get('/rules', async (c) => c.json({ items: await loadRules(c.env.DB, uid(c)) }));
 
-function validateDefinition(d: RuleDefinition | undefined): RuleDefinition {
+/** Controlla la regola e che categorie e conti indicati siano dell'account. */
+async function validateDefinition(db: D1Database, userId: string, d: RuleDefinition | undefined): Promise<RuleDefinition> {
   if (!d || !Array.isArray(d.conditions) || typeof d.actions !== 'object') bad('Regola non valida');
   for (const cond of d.conditions) {
     if (cond.op === 'regex') {
       try { new RegExp(String(cond.value)); } catch { bad(`Espressione non valida: ${cond.value}`); }
     }
+  }
+  const all: RuleActions[] = [d.actions, ...(d.bands ?? []).map((b) => b.actions ?? {})];
+  for (const a of all) {
+    await checkOwned(db, 'categories', a.category_id, userId);
+    await checkOwned(db, 'accounts', a.account_id, userId);
+    for (const id of a.ask ?? []) await checkOwned(db, 'categories', id, userId);
   }
   return d;
 }
@@ -122,29 +140,29 @@ function validateDefinition(d: RuleDefinition | undefined): RuleDefinition {
 catalogApi.post('/rules', async (c) => {
   const b = await body<{ name?: string; priority?: number; enabled?: boolean; definition?: RuleDefinition }>(c);
   if (!b.name?.trim()) bad('Dai un nome alla regola');
-  const def = validateDefinition(b.definition);
+  const def = await validateDefinition(c.env.DB, uid(c), b.definition);
   const id = newId('rule');
   await c.env.DB
-    .prepare('INSERT INTO rules (id, name, enabled, priority, definition, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .bind(id, b.name.trim(), b.enabled === false ? 0 : 1, b.priority ?? 100, JSON.stringify(def), nowIso(), nowIso())
+    .prepare('INSERT INTO rules (id, user_id, name, enabled, priority, definition, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(id, uid(c), b.name.trim().slice(0, 80), b.enabled === false ? 0 : 1, b.priority ?? 100, JSON.stringify(def), nowIso(), nowIso())
     .run();
   return c.json({ id }, 201);
 });
 
 catalogApi.put('/rules/:id', async (c) => {
   const b = await body<{ name?: string; priority?: number; enabled?: boolean; definition?: RuleDefinition }>(c);
-  const r = await c.env.DB.prepare('SELECT * FROM rules WHERE id = ?').bind(c.req.param('id')).first<Record<string, unknown>>();
+  const r = await c.env.DB.prepare('SELECT * FROM rules WHERE id = ? AND user_id = ?').bind(c.req.param('id'), uid(c)).first<Record<string, unknown>>();
   if (!r) notFound();
   await c.env.DB
-    .prepare('UPDATE rules SET name = ?, priority = ?, enabled = ?, definition = ?, updated_at = ? WHERE id = ?')
+    .prepare('UPDATE rules SET name = ?, priority = ?, enabled = ?, definition = ?, updated_at = ? WHERE id = ? AND user_id = ?')
     .bind(b.name ?? r.name, b.priority ?? r.priority, b.enabled == null ? r.enabled : b.enabled ? 1 : 0,
-      b.definition ? JSON.stringify(validateDefinition(b.definition)) : r.definition, nowIso(), c.req.param('id'))
+      b.definition ? JSON.stringify(await validateDefinition(c.env.DB, uid(c), b.definition)) : r.definition, nowIso(), c.req.param('id'), uid(c))
     .run();
   return c.json({ ok: true });
 });
 
 catalogApi.delete('/rules/:id', async (c) => {
-  await c.env.DB.prepare('DELETE FROM rules WHERE id = ?').bind(c.req.param('id')).run();
+  await c.env.DB.prepare('DELETE FROM rules WHERE id = ? AND user_id = ?').bind(c.req.param('id'), uid(c)).run();
   return c.json({ ok: true });
 });
 
@@ -170,13 +188,13 @@ function sqlPrefilter(def: RuleDefinition): { where: string[]; args: unknown[] }
   return { where, args };
 }
 
-async function historyPage(db: D1Database, def: RuleDefinition, ruleId: string, after: number) {
+async function historyPage(db: D1Database, userId: string, def: RuleDefinition, ruleId: string, after: number) {
   const pre = sqlPrefilter(def);
   const { results } = await db
     .prepare(`SELECT rowid AS _rowid, id, type, merchant, merchant_raw, card, currency, account_id, amount_eur, occurred_at, source, category_id
-              FROM transactions WHERE rowid > ? AND deleted_at IS NULL AND type <> 'transfer' ${pre.where.map((w) => `AND ${w}`).join(' ')}
+              FROM transactions WHERE user_id = ? AND rowid > ? AND deleted_at IS NULL AND type <> 'transfer' ${pre.where.map((w) => `AND ${w}`).join(' ')}
               ORDER BY rowid LIMIT ?`)
-    .bind(after, ...pre.args, PAGE)
+    .bind(userId, after, ...pre.args, PAGE)
     .all<TxRow & { _rowid: number }>();
   const rule = { id: ruleId, name: 'anteprima', enabled: true, priority: 0, definition: def };
   const changes: Array<{ id: string; from: string | null; to: string; nature?: string }> = [];
@@ -193,34 +211,34 @@ async function historyPage(db: D1Database, def: RuleDefinition, ruleId: string, 
 
 catalogApi.post('/rules/preview', async (c) => {
   const b = await body<{ definition?: RuleDefinition; after?: number }>(c);
-  const { matched, changes, next } = await historyPage(c.env.DB, validateDefinition(b.definition), 'preview', Number(b.after) || 0);
+  const def = await validateDefinition(c.env.DB, uid(c), b.definition);
+  const { matched, changes, next } = await historyPage(c.env.DB, uid(c), def, 'preview', Number(b.after) || 0);
   return c.json({ matched, changed: changes.length, sample: changes.slice(0, 20), next });
 });
 
 catalogApi.post('/rules/:id/apply', async (c) => {
   const b = await body<{ after?: number }>(c).catch(() => ({} as { after?: number }));
-  const r = await c.env.DB.prepare('SELECT * FROM rules WHERE id = ?').bind(c.req.param('id')).first<{ id: string; definition: string }>();
+  const r = await c.env.DB.prepare('SELECT * FROM rules WHERE id = ? AND user_id = ?').bind(c.req.param('id'), uid(c)).first<{ id: string; definition: string }>();
   if (!r) notFound();
-  const { changes, next } = await historyPage(c.env.DB, JSON.parse(r.definition), r.id, Number(b.after) || 0);
+  const { changes, next } = await historyPage(c.env.DB, uid(c), JSON.parse(r.definition), r.id, Number(b.after) || 0);
   const now = nowIso();
   await runBatch(c.env.DB, changes.map((ch) =>
-    c.env.DB.prepare('UPDATE transactions SET category_id = ?, nature = COALESCE(?, nature), updated_at = ? WHERE id = ?').bind(ch.to, ch.nature ?? null, now, ch.id)));
+    c.env.DB.prepare('UPDATE transactions SET category_id = ?, nature = COALESCE(?, nature), updated_at = ? WHERE id = ? AND user_id = ?').bind(ch.to, ch.nature ?? null, now, ch.id, uid(c))));
   return c.json({ changed: changes.length, next });
 });
 
-// ---- Impostazioni ----
+// ---- Impostazioni dell'account ----
 
-async function publicSettings(db: D1Database) {
-  return { timezone: await getTimeZone(db), recovery_created_at: await getSetting(db, 'recovery_created_at') };
-}
-
-catalogApi.get('/settings', async (c) => c.json(await publicSettings(c.env.DB)));
+catalogApi.get('/settings', async (c) => {
+  const a = await accountInfo(c.env.DB, uid(c));
+  return c.json({ timezone: a.timezone, recovery_created_at: a.recovery_created_at });
+});
 
 catalogApi.put('/settings', async (c) => {
   const b = await body<{ timezone?: string }>(c);
   if (b.timezone !== undefined) {
     if (!isValidTimeZone(b.timezone)) bad('Fuso orario non valido');
-    await setSetting(c.env.DB, 'timezone', b.timezone);
+    await c.env.DB.prepare('UPDATE users SET timezone = ? WHERE id = ?').bind(b.timezone, uid(c)).run();
   }
   return c.json({ ok: true });
 });

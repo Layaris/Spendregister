@@ -41,7 +41,9 @@ export function Add() {
     const count = new Map<string, number>();
     for (const t of recent.data?.items ?? []) if (t.category_id && (kind === 'income') === t.amount_eur > 0) count.set(t.category_id, (count.get(t.category_id) ?? 0) + 1);
     const ids = [...count.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
-    const fallback = kind === 'expense' ? ['cat_food_restaurant', 'cat_food_groceries', 'cat_transport_taxi', 'cat_food_bar', 'cat_shop'] : ['cat_income_salary', 'cat_income_refund'];
+    // Categorie iniziali più comuni: ogni account le ha con il proprio suffisso (cat_food~usr_…).
+    const bases = kind === 'expense' ? ['cat_food_restaurant', 'cat_food_groceries', 'cat_transport_taxi', 'cat_food_bar', 'cat_shop'] : ['cat_income_salary', 'cat_income_refund'];
+    const fallback = bases.map((b) => store.categories.find((c) => c.id.split('~')[0] === b)?.id).filter((x): x is string => !!x);
     return [...new Set([...ids, ...fallback])].filter((id) => store.cat(id)).slice(0, 6);
   }, [recent.data, kind, store]);
 

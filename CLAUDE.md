@@ -19,7 +19,7 @@ Funzioni scelte, decisioni e note tecniche: [docs/funzioni.md](docs/funzioni.md)
 - `npm run test:e2e`: prova dell'interfaccia con Playwright su un Worker già avviato (vedi l'intestazione di `tests/e2e/smoke.mjs`).
 - `npm run typecheck`: controllo dei tipi di web app e Worker.
 - `npm run build`: compila la web app in `dist/`.
-- Sviluppo in locale: `npm run db:migrate:local`, un file `.dev.vars` con `APP_PASSWORD=...`, poi `npm run build && npx wrangler dev`.
+- Sviluppo in locale: `npm run db:migrate:local`, poi `npm run build && npx wrangler dev` e si crea un account dalla schermata di accesso.
 - `python3 tools/shortcut/build_shortcut.py`: rigenera il comando iPhone non firmato in `tools/shortcut/out/` (ignorata da git). La versione firmata con HubSign, servita dall'app a `/ledgy.shortcut`, è `public/ledgy.shortcut`: se cambia lo script, va rifirmata e sostituita.
 - Pubblicazione: [docs/DEPLOY.md](docs/DEPLOY.md).
 
@@ -35,6 +35,6 @@ Funzioni scelte, decisioni e note tecniche: [docs/funzioni.md](docs/funzioni.md)
 - Frontend: React + Capacitor, un solo codice per web (PWA), Android e iOS. Parti native piccole in Kotlin (lettore notifiche) e Swift (App Intents, estensione Condividi).
 - Backend: Cloudflare, sul piano gratuito del proprietario. Un solo Worker `ledgy` con static assets serve web app e API; D1 come database; R2 per le foto (quando servirà); Cron Trigger per le pulizie notturne. Niente Supabase.
 - Limite da rispettare: 10 ms di CPU per richiesta sul piano gratuito. Tutto ciò che scorre molti dati (export, import, regole sullo storico, import da Wallet) lavora a pagine guidate dal browser.
-- Password: `APP_PASSWORD` iniziale, poi impronta PBKDF2 in `settings`. Recupero con codice di recupero (24 caratteri, come Multifolio), niente email né servizi esterni.
+- Account come Multifolio: sito aperto, registrazione con email e password (impronta PBKDF2 in `users`), ogni riga ha `user_id`. Le categorie, regole e conti iniziali di un account hanno id con suffisso (`cat_food~usr_…`); l'account `owner` (dati della versione con una sola password) li ha senza e si collega a un'email con la vecchia password o `APP_PASSWORD`. Recupero con codice di recupero (24 caratteri), niente email né servizi esterni.
 - Ordine: prima web app + server, con la cattura via automazioni del telefono (Comandi su iPhone, MacroDroid su Android). Poi le app native.
 - Niente cifratura end-to-end: il server deve leggere il testo delle notifiche per creare le spese.

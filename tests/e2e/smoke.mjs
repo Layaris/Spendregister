@@ -1,8 +1,9 @@
 // Prova dell'interfaccia in un browser a misura di iPhone (Playwright deve essere installato).
 // Uso: avvia il Worker (vedi CLAUDE.md), poi
-//   NODE_PATH=$(npm root -g) E2E_URL=http://127.0.0.1:8787 E2E_PASSWORD=... node tests/e2e/smoke.mjs
-// Controlla che ogni schermata si apra senza errori e senza uscire dallo schermo, e prova i flussi
-// principali: accesso, recupero, revisione, inserimento, regola, impostazioni, codice di recupero, backup.
+//   NODE_PATH=$(npm root -g) E2E_URL=http://127.0.0.1:8787 node tests/e2e/smoke.mjs
+// Crea un account di prova nuovo, controlla che ogni schermata si apra senza errori e senza uscire
+// dallo schermo, prova i flussi principali (registrazione, recupero, revisione, inserimento, regola,
+// impostazioni, codice di recupero, backup, uscita e accesso) e alla fine elimina l'account.
 import { createRequire } from 'node:module';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,7 +13,8 @@ import { join } from 'node:path';
 const { chromium } = createRequire(import.meta.url)('playwright');
 
 const BASE = process.env.E2E_URL ?? 'http://127.0.0.1:8787';
-const PASSWORD = process.env.E2E_PASSWORD ?? 'prova-locale';
+const EMAIL = `e2e-${Date.now()}@example.com`;
+const PASSWORD = 'password-e2e-123';
 const failures = [];
 const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'ERRORE'} ${what}`); if (!ok) failures.push(what); };
 
@@ -27,10 +29,13 @@ check(await page.isVisible('text=Password dimenticata?'), 'la schermata di acces
 await page.click('text=Password dimenticata?');
 check(await page.isVisible('text=Codice di recupero'), '"Password dimenticata?" chiede il codice di recupero');
 await page.click("text=Torna all'accesso");
-await page.fill('input[type=password]', PASSWORD);
-await page.click('button:has-text("Entra")');
+await page.click('.seg button:has-text("Crea account")');
+await page.fill('input[type=email]', EMAIL);
+await page.fill('input[autocomplete=new-password] >> nth=0', PASSWORD);
+await page.fill('input[autocomplete=new-password] >> nth=1', PASSWORD);
+await page.click('button.primary:has-text("Crea account")');
 await page.waitForSelector('.tabbar');
-check(true, 'accesso');
+check(true, 'crea un account ed entra');
 
 // Dati di prova inviati come farebbe un telefono.
 const api = (path, init) => page.evaluate(async ([p, i]) => { const r = await fetch(p, i); return r.json(); }, [path, init]);
@@ -41,7 +46,8 @@ const stamp = Date.now() % 100000;
 await api(inPath, json({ title: 'Revolut', text: `Hai pagato Rp${60 + (stamp % 30)}.000 a Grab* E2E${stamp}` }));
 await api(inPath, json({ title: 'BCA', text: `Transaksi berhasil Rp 41.${String(stamp % 1000).padStart(3, '0')} di INDOMARET E2E` }));
 
-const routes = ['', 'rivedere', 'movimenti', 'aggiungi', 'statistiche', 'regole', 'regole/rule_grab', 'cattura', 'altro', 'assistente'];
+const grabRule = (await api('/api/rules')).items.find((r) => r.name === 'Grab').id;
+const routes = ['', 'rivedere', 'movimenti', 'aggiungi', 'statistiche', 'regole', `regole/${grabRule}`, 'cattura', 'altro', 'assistente'];
 for (const r of routes) {
   await page.goto(`${BASE}/#/${r}`);
   await page.waitForTimeout(500);
@@ -70,7 +76,7 @@ await page.waitForFunction(() => location.hash.startsWith('#/m/'));
 check(true, 'salva una spesa e apre il dettaglio');
 
 // Regola: anteprima sullo storico.
-await page.goto(`${BASE}/#/regole/rule_grab`);
+await page.goto(`${BASE}/#/regole/${grabRule}`);
 await page.click('button:has-text("Prova")');
 await page.waitForSelector('p:has-text("Corrisponde a")');
 check(true, "l'anteprima della regola risponde");
@@ -108,7 +114,22 @@ await page.click('button:has-text("Aggiungi ai dati attuali")');
 await page.waitForSelector('text=già presenti', { timeout: 20000 });
 check((await api('/api/transactions?limit=500')).items.length === before, '"aggiungi" con lo stesso backup non duplica');
 
-await api(`/api/capture/devices/${dev.id}`, { method: 'DELETE' });
+// Esce, rientra con email e password, poi elimina l'account di prova.
+await page.goto(`${BASE}/#/altro`);
+await page.click('button:has-text("Esci")');
+await page.waitForSelector('text=Password dimenticata?');
+await page.fill('input[type=email]', EMAIL);
+await page.fill('input[type=password]', PASSWORD);
+await page.click('button.primary:has-text("Entra")');
+await page.waitForSelector('.tabbar');
+check((await api('/api/transactions?limit=500')).items.length === before, 'rientra con email e password e ritrova i dati');
+await page.goto(`${BASE}/#/altro`);
+await page.click('button:has-text("Elimina account")');
+await page.fill('input[aria-label="Password per eliminare l\'account"]', PASSWORD);
+await page.click('button:has-text("Elimina per sempre")');
+await page.waitForSelector('text=Password dimenticata?');
+const gone = await page.evaluate(async ([e, p]) => (await fetch('/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: e, password: p }) })).status, [EMAIL, PASSWORD]);
+check(gone === 401, "elimina l'account di prova");
 check(errors.length === 0, `nessun errore in console${errors.length ? `: ${errors.join(' | ')}` : ''}`);
 await browser.close();
 if (failures.length) {

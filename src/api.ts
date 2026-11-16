@@ -29,7 +29,7 @@ export interface Account { id: string; name: string; type: string; currency: str
 export interface Category { id: string; name: string; parent_id: string | null; kind: 'expense' | 'income'; nature: string | null; color: string | null; icon: string | null }
 export interface Label { id: string; name: string }
 export interface Settings { timezone: string; recovery_created_at: string | null }
-export interface Bootstrap { accounts: Account[]; categories: Category[]; labels: Label[]; review_count: number; settings: Settings }
+export interface Bootstrap { accounts: Account[]; categories: Category[]; labels: Label[]; review_count: number; settings: Settings; account: { email: string | null } }
 
 export interface Tx {
   id: string;

@@ -3,7 +3,7 @@ import type { Context } from 'hono';
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
-  /** Password iniziale; dopo un cambio dall'app vale quella salvata nel database. */
+  /** Vecchia password della versione a utente singolo: serve solo a collegare i dati esistenti a un account. */
   APP_PASSWORD?: string;
   /** Solo per i test: tassi fissi, es. "IDR:0.00005,SGD:0.7". */
   FX_FIXED?: string;
@@ -18,11 +18,17 @@ export async function setSetting(db: D1Database, key: string, value: string): Pr
   await db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind(key, value).run();
 }
 
-export async function getTimeZone(db: D1Database): Promise<string> {
-  return (await getSetting(db, 'timezone')) ?? 'Asia/Makassar';
+/** Fuso orario dell'account. */
+export async function getTimeZone(db: D1Database, userId: string): Promise<string> {
+  const row = await db.prepare('SELECT timezone FROM users WHERE id = ?').bind(userId).first<{ timezone: string }>();
+  return row?.timezone ?? 'Asia/Makassar';
 }
 
-export type AppContext = Context<{ Bindings: Env }>;
+export type AppEnv = { Bindings: Env; Variables: { userId: string } };
+export type AppContext = Context<AppEnv>;
+
+/** L'account della richiesta (impostato dal controllo della sessione). */
+export const uid = (c: AppContext): string => c.get('userId');
 
 export const nowIso = (): string => new Date().toISOString();
 

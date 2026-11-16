@@ -23,6 +23,7 @@ export function More({ onLogout }: { onLogout: () => void }) {
   return (
     <div className="stack" style={{ gap: 14 }}>
       <h1 className="page-title">Altro</h1>
+      {store.account.email && <p className="lead">Account: <b>{store.account.email}</b></p>}
       <section className="card">
         {LINKS.map(([href, icon, title, text]) => (
           <a key={href} href={href} className="row" style={{ textDecoration: 'none', color: 'inherit' }}>
@@ -37,7 +38,38 @@ export function More({ onLogout }: { onLogout: () => void }) {
       <BackupSection />
       <SettingsSection />
       <button className="btn" onClick={logout}>Esci</button>
+      <DeleteAccount onDone={onLogout} />
     </div>
+  );
+}
+
+/** Elimina l'account e tutti i suoi dati, con la password come conferma. */
+function DeleteAccount({ onDone }: { onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const remove = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    try {
+      await api('/account/delete', { method: 'POST', json: { password } });
+      onDone();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+  if (!open) return <button className="btn ghost" style={{ color: 'var(--danger)', alignSelf: 'center' }} onClick={() => setOpen(true)}>Elimina account</button>;
+  return (
+    <form className="card" onSubmit={remove}>
+      <h2 className="h2">Elimina account</h2>
+      <p className="error" style={{ margin: 0 }}>Cancella per sempre l'account e tutti i suoi dati: movimenti, conti, regole, telefoni collegati. Se vuoi conservarli, prima esporta un backup.</p>
+      <input className="input" type="password" autoComplete="current-password" placeholder="Password" aria-label="Password per eliminare l'account" value={password} onChange={(e) => setPassword(e.target.value)} />
+      <ErrorBox error={error} />
+      <div className="row" style={{ gap: 8 }}>
+        <button className="btn grow" style={{ background: 'var(--danger-soft)', color: 'var(--danger)' }} disabled={!password}>Elimina per sempre</button>
+        <button type="button" className="btn" onClick={() => setOpen(false)}>Annulla</button>
+      </div>
+    </form>
   );
 }
 
@@ -126,7 +158,7 @@ function BackupSection() {
   return (
     <section className="card">
       <h2 className="h2">Backup</h2>
-      <p className="muted" style={{ margin: 0, fontSize: 14 }}>Il backup contiene movimenti, conti, categorie, etichette, regole, lettori, telefoni collegati e notifiche ricevute. Non contiene la password.</p>
+      <p className="muted" style={{ margin: 0, fontSize: 14 }}>Il backup contiene i dati del tuo account: movimenti, conti, categorie, etichette, regole, lettori, telefoni collegati e notifiche ricevute. Non contiene la password né il codice di recupero.</p>
       <div className="row" style={{ gap: 8 }}>
         <button className="btn grow" disabled={busy} onClick={() => doExport('json')}><Icon name="download" size={18} />Esporta backup</button>
         <button className="btn grow" disabled={busy} onClick={() => doExport('csv')}>Esporta CSV</button>
@@ -145,7 +177,7 @@ function BackupSection() {
             <button className="btn" disabled={busy} onClick={() => setConfirmReplace(true)}>Sostituisci i dati attuali…</button>
           ) : (
             <div className="stack" style={{ gap: 8 }}>
-              <span className="error">Cancella tutti i dati attuali dell'account e mette quelli del backup. I telefoni collegati dopo la data del backup andranno ricollegati. Se qualcosa va storto, i dati di prima vengono rimessi.</span>
+              <span className="error">Cancella tutti i dati attuali del tuo account e mette quelli del backup. I telefoni collegati dopo la data del backup andranno ricollegati. Se qualcosa va storto, i dati di prima vengono rimessi.</span>
               <div className="row" style={{ gap: 8 }}>
                 <button className="btn grow" style={{ background: 'var(--danger-soft)', color: 'var(--danger)' }} disabled={busy} onClick={() => doImport('replace')}>Sì, sostituisci tutto</button>
                 <button className="btn" disabled={busy} onClick={() => setConfirmReplace(false)}>Annulla</button>
@@ -256,7 +288,7 @@ function RecoveryCode() {
         <span className="muted" style={{ fontSize: 13 }}>
           {exists
             ? `Attivo dal ${new Date(store.settings.recovery_created_at!).toLocaleDateString('it-IT')}. Se dimentichi la password, nella schermata di accesso premi "Password dimenticata?" e inserisci il codice.`
-            : 'Non ancora creato. Senza codice, se dimentichi la password serve il tuo agente su Cloudflare per reimpostarla.'}
+            : 'Non ancora creato. Crealo subito: senza codice, se dimentichi la password non potrai più entrare nel tuo account.'}
         </span>
       )}
       {!code && (asking ? (

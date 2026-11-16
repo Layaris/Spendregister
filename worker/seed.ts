@@ -74,29 +74,40 @@ const PRESETS: Array<{ id: string; name: string; priority: number; definition: R
   } },
 ];
 
-export async function seedIfEmpty(db: D1Database): Promise<void> {
-  const cats = await db.prepare('SELECT COUNT(*) AS n FROM categories').first<{ n: number }>();
+/** Id delle voci iniziali: uguali alla versione a utente singolo per l'account "owner", con il suffisso dell'account per gli altri. */
+export function seedId(base: string, userId: string): string {
+  return userId === 'owner' ? base : `${base}~${userId}`;
+}
+
+function remap(def: RuleDefinition, userId: string): RuleDefinition {
+  const id = (x: string | undefined) => (x ? seedId(x, userId) : x);
+  const fix = (a: RuleDefinition['actions']) => ({ ...a, category_id: id(a.category_id), ask: a.ask?.map((x) => seedId(x, userId)) });
+  return { ...def, actions: fix(def.actions), bands: def.bands?.map((b) => ({ ...b, actions: fix(b.actions) })) };
+}
+
+/** Categorie in stile Wallet, regole pronte per l'Indonesia e il conto Contanti, se l'account non ne ha. */
+export async function seedUser(db: D1Database, userId: string): Promise<void> {
   const stmts: D1PreparedStatement[] = [];
+  const cats = await db.prepare('SELECT COUNT(*) AS n FROM categories WHERE user_id = ?').bind(userId).first<{ n: number }>();
   if (!cats?.n) {
     let pos = 0;
+    const insert = 'INSERT INTO categories (id, user_id, name, parent_id, kind, nature, color, icon, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
     for (const p of TREE) {
-      stmts.push(db.prepare('INSERT INTO categories (id, name, parent_id, kind, nature, color, icon, position) VALUES (?, ?, NULL, ?, ?, ?, ?, ?)')
-        .bind(p.id, p.name, p.kind, p.nature, p.color, p.icon, pos++));
+      stmts.push(db.prepare(insert).bind(seedId(p.id, userId), userId, p.name, null, p.kind, p.nature, p.color, p.icon, pos++));
       for (const [id, name, nature] of p.children) {
-        stmts.push(db.prepare('INSERT INTO categories (id, name, parent_id, kind, nature, color, icon, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-          .bind(id, name, p.id, p.kind, nature, p.color, p.icon, pos++));
+        stmts.push(db.prepare(insert).bind(seedId(id, userId), userId, name, seedId(p.id, userId), p.kind, nature, p.color, p.icon, pos++));
       }
     }
     const now = nowIso();
     for (const r of PRESETS) {
-      stmts.push(db.prepare('INSERT INTO rules (id, name, enabled, priority, definition, created_at, updated_at) VALUES (?, ?, 1, ?, ?, ?, ?)')
-        .bind(r.id, r.name, r.priority, JSON.stringify(r.definition), now, now));
+      stmts.push(db.prepare('INSERT INTO rules (id, user_id, name, enabled, priority, definition, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?)')
+        .bind(seedId(r.id, userId), userId, r.name, r.priority, JSON.stringify(remap(r.definition, userId)), now, now));
     }
   }
-  const accounts = await db.prepare('SELECT COUNT(*) AS n FROM accounts').first<{ n: number }>();
+  const accounts = await db.prepare('SELECT COUNT(*) AS n FROM accounts WHERE user_id = ?').bind(userId).first<{ n: number }>();
   if (!accounts?.n) {
-    stmts.push(db.prepare("INSERT INTO accounts (id, name, type, currency, initial_balance, position, created_at) VALUES ('acc_cash', 'Contanti', 'cash', 'EUR', 0, 0, ?)")
-      .bind(nowIso()));
+    stmts.push(db.prepare("INSERT INTO accounts (id, user_id, name, type, currency, initial_balance, position, created_at) VALUES (?, ?, 'Contanti', 'cash', 'EUR', 0, 0, ?)")
+      .bind(seedId('acc_cash', userId), userId, nowIso()));
   }
   if (stmts.length) await runBatch(db, stmts);
 }

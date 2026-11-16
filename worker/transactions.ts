@@ -4,7 +4,7 @@ import { cleanMerchantName } from '../shared/notification';
 import { evaluateRules, type Rule, type RuleDefinition, type RuleInput } from '../shared/rules';
 import { getEurRate } from './fx';
 import { normalizePostedAt } from '../shared/time';
-import { bad, body, getTimeZone, newId, notFound, nowIso, parseJson, runBatch, type Env } from './lib';
+import { bad, body, getTimeZone, newId, notFound, nowIso, parseJson, runBatch, uid, type AppEnv } from './lib';
 
 export interface TxRow {
   id: string;
@@ -69,8 +69,8 @@ export function toUtc(iso: string): string {
   return Number.isNaN(t) ? new Date().toISOString() : new Date(t).toISOString();
 }
 
-export async function loadRules(db: D1Database): Promise<Rule[]> {
-  const { results } = await db.prepare('SELECT id, name, enabled, priority, definition FROM rules ORDER BY priority').all<{
+export async function loadRules(db: D1Database, userId: string): Promise<Rule[]> {
+  const { results } = await db.prepare('SELECT id, name, enabled, priority, definition FROM rules WHERE user_id = ? ORDER BY priority').bind(userId).all<{
     id: string; name: string; enabled: number; priority: number; definition: string;
   }>();
   return results.map((r) => ({ id: r.id, name: r.name, enabled: !!r.enabled, priority: r.priority, definition: parseJson<RuleDefinition>(r.definition, { conditions: [], actions: {} }) }));
@@ -84,19 +84,19 @@ export async function convertToEur(db: D1Database, amountMilli: number, currency
 }
 
 /** Conto usato quando nessuna regola ne indica uno: il primo della lista. */
-export async function defaultAccountId(db: D1Database): Promise<string | null> {
-  const row = await db.prepare('SELECT id FROM accounts WHERE archived = 0 ORDER BY position, created_at LIMIT 1').first<{ id: string }>();
+export async function defaultAccountId(db: D1Database, userId: string): Promise<string | null> {
+  const row = await db.prepare('SELECT id FROM accounts WHERE user_id = ? AND archived = 0 ORDER BY position, created_at LIMIT 1').bind(userId).first<{ id: string }>();
   return row?.id ?? null;
 }
 
 /** Categoria più usata in passato per lo stesso merchant (solo movimenti confermati). */
-export async function categoryFromHistory(db: D1Database, merchant: string | null): Promise<string | null> {
+export async function categoryFromHistory(db: D1Database, userId: string, merchant: string | null): Promise<string | null> {
   if (!merchant) return null;
   const row = await db
     .prepare(`SELECT category_id, COUNT(*) AS n FROM transactions
-              WHERE merchant = ? AND status = 'confirmed' AND category_id IS NOT NULL AND deleted_at IS NULL
+              WHERE user_id = ? AND merchant = ? AND status = 'confirmed' AND category_id IS NOT NULL AND deleted_at IS NULL
               GROUP BY category_id ORDER BY n DESC LIMIT 2`)
-    .bind(merchant)
+    .bind(userId, merchant)
     .all<{ category_id: string; n: number }>();
   const [first, second] = row.results;
   if (!first) return null;
@@ -104,23 +104,30 @@ export async function categoryFromHistory(db: D1Database, merchant: string | nul
   return first.category_id;
 }
 
-async function ensureLabels(db: D1Database, names: string[]): Promise<string[]> {
+/** Una categoria o un conto indicato dal browser deve essere dell'account. */
+export async function checkOwned(db: D1Database, table: 'categories' | 'accounts', id: string | null | undefined, userId: string) {
+  if (!id) return;
+  const row = await db.prepare(`SELECT 1 FROM ${table} WHERE id = ? AND user_id = ?`).bind(id, userId).first();
+  if (!row) bad(table === 'categories' ? 'Categoria non valida' : 'Conto non valido');
+}
+
+async function ensureLabels(db: D1Database, userId: string, names: string[]): Promise<string[]> {
   const ids: string[] = [];
   for (const raw of names) {
     const name = raw.trim();
     if (!name) continue;
-    const found = await db.prepare('SELECT id FROM labels WHERE name = ? COLLATE NOCASE').bind(name).first<{ id: string }>();
+    const found = await db.prepare('SELECT id FROM labels WHERE user_id = ? AND name = ? COLLATE NOCASE').bind(userId, name).first<{ id: string }>();
     if (found) ids.push(found.id);
     else {
       const id = newId('lab');
-      await db.prepare('INSERT INTO labels (id, name) VALUES (?, ?)').bind(id, name).run();
+      await db.prepare('INSERT INTO labels (id, user_id, name) VALUES (?, ?, ?)').bind(id, userId, name).run();
       ids.push(id);
     }
   }
   return ids;
 }
 
-export async function insertTransaction(db: D1Database, t: NewTx): Promise<string> {
+export async function insertTransaction(db: D1Database, userId: string, t: NewTx): Promise<string> {
   const id = newId('tx');
   const now = nowIso();
   let fx = t.amount_eur != null ? { amount_eur: t.amount_eur, fx_rate: t.fx_rate ?? null, fx_date: t.fx_date ?? null } : null;
@@ -128,19 +135,19 @@ export async function insertTransaction(db: D1Database, t: NewTx): Promise<strin
   const status = t.status ?? (fx ? 'confirmed' : 'review');
   const reason = t.review_reason ?? (fx ? null : 'Cambio non disponibile');
   await db
-    .prepare(`INSERT INTO transactions (id, type, account_id, amount, currency, amount_eur, fx_rate, fx_date, occurred_at, occurred_utc, merchant_raw, merchant,
+    .prepare(`INSERT INTO transactions (id, user_id, type, account_id, amount, currency, amount_eur, fx_rate, fx_date, occurred_at, occurred_utc, merchant_raw, merchant,
               note, category_id, nature, card, source, status, review_reason, review_choices, transfer_group, duplicate_of, capture_id, rule_ids,
               place, external_id, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(
-      id, t.type, t.account_id, t.amount, t.currency, fx?.amount_eur ?? 0, fx?.fx_rate ?? null, fx?.fx_date ?? null, t.occurred_at, toUtc(t.occurred_at),
+      id, userId, t.type, t.account_id, t.amount, t.currency, fx?.amount_eur ?? 0, fx?.fx_rate ?? null, fx?.fx_date ?? null, t.occurred_at, toUtc(t.occurred_at),
       t.merchant_raw ?? null, t.merchant ?? null, t.note ?? null, t.category_id ?? null, t.nature ?? null, t.card ?? null, t.source,
       status, reason, t.review_choices?.length ? JSON.stringify(t.review_choices) : null, t.transfer_group ?? null, t.duplicate_of ?? null,
       t.capture_id ?? null, t.rule_ids?.length ? JSON.stringify(t.rule_ids) : null, t.place ?? null, t.external_id ?? null, now, now,
     )
     .run();
   if (t.labels?.length) {
-    const ids = await ensureLabels(db, t.labels);
+    const ids = await ensureLabels(db, userId, t.labels);
     await runBatch(db, ids.map((l) => db.prepare('INSERT OR IGNORE INTO transaction_labels (transaction_id, label_id) VALUES (?, ?)').bind(id, l)));
   }
   return id;
@@ -179,18 +186,18 @@ export function ruleInputFromTx(t: TxRow, text: string | null = null, app: strin
   };
 }
 
-export const transactionsApi = new Hono<{ Bindings: Env }>();
+export const transactionsApi = new Hono<AppEnv>();
 
 transactionsApi.get('/', async (c) => {
   const q = c.req.query();
-  const where = ['t.deleted_at IS NULL'];
-  const args: unknown[] = [];
+  const where = ['t.user_id = ?', 't.deleted_at IS NULL'];
+  const args: unknown[] = [uid(c)];
   // from/to sono date locali (YYYY-MM-DD), to escluso.
   if (q.from) { where.push('substr(t.occurred_at, 1, 10) >= ?'); args.push(q.from); }
   if (q.to) { where.push('substr(t.occurred_at, 1, 10) < ?'); args.push(q.to); }
   if (q.status) { where.push('t.status = ?'); args.push(q.status); }
   if (q.account) { where.push('t.account_id = ?'); args.push(q.account); }
-  if (q.category) { where.push('(t.category_id = ? OR t.category_id IN (SELECT id FROM categories WHERE parent_id = ?))'); args.push(q.category, q.category); }
+  if (q.category) { where.push('(t.category_id = ? OR t.category_id IN (SELECT id FROM categories WHERE parent_id = ? AND user_id = ?))'); args.push(q.category, q.category, uid(c)); }
   if (q.merchant) { where.push('t.merchant = ?'); args.push(q.merchant); }
   if (q.q) { where.push('(t.merchant LIKE ? OR t.merchant_raw LIKE ? OR t.note LIKE ?)'); args.push(`%${q.q}%`, `%${q.q}%`, `%${q.q}%`); }
   const limit = Math.min(Number(q.limit) || 100, 500);
@@ -203,14 +210,14 @@ transactionsApi.get('/', async (c) => {
 });
 
 transactionsApi.get('/:id', async (c) => {
-  const row = await c.env.DB.prepare('SELECT * FROM transactions WHERE id = ? AND deleted_at IS NULL').bind(c.req.param('id')).first<TxRow>();
+  const row = await c.env.DB.prepare('SELECT * FROM transactions WHERE id = ? AND user_id = ? AND deleted_at IS NULL').bind(c.req.param('id'), uid(c)).first<TxRow>();
   if (!row) notFound();
   const [tx] = await withLabels(c.env.DB, [row]);
   const capture = row.capture_id
-    ? await c.env.DB.prepare('SELECT id, app, title, text, received_at, posted_at, detail, device_id FROM captures WHERE id = ?').bind(row.capture_id).first()
+    ? await c.env.DB.prepare('SELECT id, app, title, text, received_at, posted_at, detail, device_id FROM captures WHERE id = ? AND user_id = ?').bind(row.capture_id, uid(c)).first()
     : null;
   const ruleNames = tx.rule_ids.length
-    ? (await c.env.DB.prepare(`SELECT id, name FROM rules WHERE id IN (${tx.rule_ids.map(() => '?').join(',')})`).bind(...tx.rule_ids).all()).results
+    ? (await c.env.DB.prepare(`SELECT id, name FROM rules WHERE user_id = ? AND id IN (${tx.rule_ids.map(() => '?').join(',')})`).bind(uid(c), ...tx.rule_ids).all()).results
     : [];
   return c.json({ ...tx, capture, rules: ruleNames });
 });
@@ -236,7 +243,10 @@ transactionsApi.post('/', async (c) => {
   if (type === 'transfer') bad('I trasferimenti non si creano da qui');
   const currency = (b.currency ?? 'EUR').toUpperCase();
   if (!/^[A-Z]{3}$/.test(currency)) bad('Valuta non valida');
-  const occurred = normalizePostedAt(b.occurred_at, await getTimeZone(c.env.DB));
+  const userId = uid(c);
+  await checkOwned(c.env.DB, 'categories', b.category_id, userId);
+  await checkOwned(c.env.DB, 'accounts', b.account_id, userId);
+  const occurred = normalizePostedAt(b.occurred_at, await getTimeZone(c.env.DB, userId));
   const milli = roundMilli(toMilli(b.amount), currency) * (type === 'income' ? 1 : -1);
   const merchantRaw = b.merchant?.trim() || null;
   const merchant = cleanMerchantName(merchantRaw);
@@ -245,17 +255,17 @@ transactionsApi.post('/', async (c) => {
   let labels = b.labels ?? [];
   const ruleIds: string[] = [];
   if (!category && merchant) {
-    const rules = await loadRules(c.env.DB);
+    const rules = await loadRules(c.env.DB, userId);
     const conv = await convertToEur(c.env.DB, milli, currency, occurred);
     const r = evaluateRules(rules, { merchant, merchant_raw: merchantRaw, text: null, app: null, currency, account_id: b.account_id ?? null, amount_eur: (conv?.amount_eur ?? 0) / 1000, occurred_at: occurred, source: 'manual' });
-    category = r.category_id ?? (await categoryFromHistory(c.env.DB, merchant));
+    category = r.category_id ?? (await categoryFromHistory(c.env.DB, userId, merchant));
     nature = nature ?? r.nature ?? null;
     labels = [...labels, ...r.labels];
     ruleIds.push(...r.matched);
   }
   nature = nature ?? (await defaultNature(c.env.DB, category));
-  const id = await insertTransaction(c.env.DB, {
-    type, account_id: b.account_id ?? (await defaultAccountId(c.env.DB)), amount: milli, currency, occurred_at: occurred, merchant_raw: merchantRaw,
+  const id = await insertTransaction(c.env.DB, userId, {
+    type, account_id: b.account_id ?? (await defaultAccountId(c.env.DB, userId)), amount: milli, currency, occurred_at: occurred, merchant_raw: merchantRaw,
     merchant: merchant ?? merchantRaw, note: b.note ?? null, category_id: category, nature, source: 'manual', labels, rule_ids: ruleIds, place: b.place ?? null,
   });
   return c.json({ id }, 201);
@@ -263,12 +273,15 @@ transactionsApi.post('/', async (c) => {
 
 transactionsApi.put('/:id', async (c) => {
   const id = c.req.param('id');
-  const row = await c.env.DB.prepare('SELECT * FROM transactions WHERE id = ? AND deleted_at IS NULL').bind(id).first<TxRow>();
+  const userId = uid(c);
+  const row = await c.env.DB.prepare('SELECT * FROM transactions WHERE id = ? AND user_id = ? AND deleted_at IS NULL').bind(id, userId).first<TxRow>();
   if (!row) notFound();
   const b = await body<TxInput>(c);
+  await checkOwned(c.env.DB, 'categories', b.category_id, userId);
+  await checkOwned(c.env.DB, 'accounts', b.account_id, userId);
   const type = b.type ?? row.type;
   const currency = (b.currency ?? row.currency).toUpperCase();
-  const occurred = b.occurred_at ? normalizePostedAt(b.occurred_at, await getTimeZone(c.env.DB)) : row.occurred_at;
+  const occurred = b.occurred_at ? normalizePostedAt(b.occurred_at, await getTimeZone(c.env.DB, userId)) : row.occurred_at;
   if (!/^[A-Z]{3}$/.test(currency)) bad('Valuta non valida');
   let amount = row.amount;
   if (b.amount != null) amount = roundMilli(toMilli(Math.abs(b.amount)), currency) * (type === 'income' ? 1 : -1);
@@ -283,20 +296,20 @@ transactionsApi.put('/:id', async (c) => {
   const nature = b.nature !== undefined ? b.nature : category !== row.category_id ? await defaultNature(c.env.DB, category) : row.nature;
   await c.env.DB
     .prepare(`UPDATE transactions SET type = ?, account_id = ?, amount = ?, currency = ?, amount_eur = ?, fx_rate = ?, fx_date = ?, occurred_at = ?,
-              occurred_utc = ?, merchant = ?, note = ?, category_id = ?, nature = ?, place = ?, updated_at = ? WHERE id = ?`)
+              occurred_utc = ?, merchant = ?, note = ?, category_id = ?, nature = ?, place = ?, updated_at = ? WHERE id = ? AND user_id = ?`)
     .bind(type, b.account_id !== undefined ? b.account_id : row.account_id, amount, currency, fx.amount_eur, fx.fx_rate, fx.fx_date, occurred, toUtc(occurred),
-      merchant, b.note !== undefined ? b.note : row.note, category, nature, b.place !== undefined ? b.place : row.place, nowIso(), id)
+      merchant, b.note !== undefined ? b.note : row.note, category, nature, b.place !== undefined ? b.place : row.place, nowIso(), id, userId)
     .run();
   if (b.labels) {
     await c.env.DB.prepare('DELETE FROM transaction_labels WHERE transaction_id = ?').bind(id).run();
-    const ids = await ensureLabels(c.env.DB, b.labels);
+    const ids = await ensureLabels(c.env.DB, userId, b.labels);
     await runBatch(c.env.DB, ids.map((l) => c.env.DB.prepare('INSERT OR IGNORE INTO transaction_labels (transaction_id, label_id) VALUES (?, ?)').bind(id, l)));
   }
   return c.json({ ok: true });
 });
 
 transactionsApi.delete('/:id', async (c) => {
-  await c.env.DB.prepare('UPDATE transactions SET deleted_at = ?, updated_at = ? WHERE id = ?').bind(nowIso(), nowIso(), c.req.param('id')).run();
+  await c.env.DB.prepare('UPDATE transactions SET deleted_at = ?, updated_at = ? WHERE id = ? AND user_id = ?').bind(nowIso(), nowIso(), c.req.param('id'), uid(c)).run();
   return c.json({ ok: true });
 });
 
@@ -304,13 +317,14 @@ transactionsApi.delete('/:id', async (c) => {
 transactionsApi.post('/:id/confirm', async (c) => {
   const id = c.req.param('id');
   const b = await body<{ category_id?: string | null }>(c).catch(() => ({} as { category_id?: string | null }));
-  const row = await c.env.DB.prepare('SELECT * FROM transactions WHERE id = ?').bind(id).first<TxRow>();
+  const row = await c.env.DB.prepare('SELECT * FROM transactions WHERE id = ? AND user_id = ?').bind(id, uid(c)).first<TxRow>();
   if (!row) notFound();
+  await checkOwned(c.env.DB, 'categories', b.category_id, uid(c));
   const category = b.category_id ?? row.category_id;
   const nature = row.nature ?? (await defaultNature(c.env.DB, category));
   await c.env.DB
-    .prepare("UPDATE transactions SET status = 'confirmed', category_id = ?, nature = ?, review_reason = NULL, review_choices = NULL, duplicate_of = NULL, updated_at = ? WHERE id = ?")
-    .bind(category, nature, nowIso(), id)
+    .prepare("UPDATE transactions SET status = 'confirmed', category_id = ?, nature = ?, review_reason = NULL, review_choices = NULL, duplicate_of = NULL, updated_at = ? WHERE id = ? AND user_id = ?")
+    .bind(category, nature, nowIso(), id, uid(c))
     .run();
   return c.json({ ok: true });
 });
@@ -318,21 +332,21 @@ transactionsApi.post('/:id/confirm', async (c) => {
 /** Doppione: elimina questo movimento e tiene l'originale. */
 transactionsApi.post('/:id/merge', async (c) => {
   const id = c.req.param('id');
-  const row = await c.env.DB.prepare('SELECT duplicate_of FROM transactions WHERE id = ?').bind(id).first<{ duplicate_of: string | null }>();
+  const row = await c.env.DB.prepare('SELECT duplicate_of FROM transactions WHERE id = ? AND user_id = ?').bind(id, uid(c)).first<{ duplicate_of: string | null }>();
   if (!row?.duplicate_of) bad('Questo movimento non è segnato come doppione');
-  await c.env.DB.prepare('UPDATE transactions SET deleted_at = ?, updated_at = ? WHERE id = ?').bind(nowIso(), nowIso(), id).run();
+  await c.env.DB.prepare('UPDATE transactions SET deleted_at = ?, updated_at = ? WHERE id = ? AND user_id = ?').bind(nowIso(), nowIso(), id, uid(c)).run();
   return c.json({ ok: true, kept: row.duplicate_of });
 });
 
 /** Non è un doppione: resta come spesa a sé, da rivedere solo se manca la categoria. */
 transactionsApi.post('/:id/not-duplicate', async (c) => {
   const id = c.req.param('id');
-  const row = await c.env.DB.prepare('SELECT category_id, review_choices FROM transactions WHERE id = ?').bind(id).first<{ category_id: string | null; review_choices: string | null }>();
+  const row = await c.env.DB.prepare('SELECT category_id, review_choices FROM transactions WHERE id = ? AND user_id = ?').bind(id, uid(c)).first<{ category_id: string | null; review_choices: string | null }>();
   if (!row) notFound();
   const ready = !!row.category_id && !row.review_choices;
   await c.env.DB
-    .prepare('UPDATE transactions SET duplicate_of = NULL, status = ?, review_reason = ?, updated_at = ? WHERE id = ?')
-    .bind(ready ? 'confirmed' : 'review', ready ? null : row.review_choices ? 'Scegli la categoria' : 'Categoria da scegliere', nowIso(), id)
+    .prepare('UPDATE transactions SET duplicate_of = NULL, status = ?, review_reason = ?, updated_at = ? WHERE id = ? AND user_id = ?')
+    .bind(ready ? 'confirmed' : 'review', ready ? null : row.review_choices ? 'Scegli la categoria' : 'Categoria da scegliere', nowIso(), id, uid(c))
     .run();
   return c.json({ ok: true, status: ready ? 'confirmed' : 'review' });
 });
@@ -340,8 +354,8 @@ transactionsApi.post('/:id/not-duplicate', async (c) => {
 /** Conferma in blocco i movimenti da rivedere che hanno già una categoria. */
 transactionsApi.post('/confirm-ready', async (c) => {
   const r = await c.env.DB
-    .prepare("UPDATE transactions SET status = 'confirmed', review_reason = NULL, updated_at = ? WHERE status = 'review' AND category_id IS NOT NULL AND duplicate_of IS NULL AND review_choices IS NULL AND deleted_at IS NULL")
-    .bind(nowIso())
+    .prepare("UPDATE transactions SET status = 'confirmed', review_reason = NULL, updated_at = ? WHERE user_id = ? AND status = 'review' AND category_id IS NOT NULL AND duplicate_of IS NULL AND review_choices IS NULL AND deleted_at IS NULL")
+    .bind(nowIso(), uid(c))
     .run();
   return c.json({ confirmed: r.meta.changes ?? 0 });
 });

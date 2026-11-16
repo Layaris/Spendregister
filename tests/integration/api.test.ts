@@ -1,8 +1,11 @@
 // Test d'integrazione: il vero Worker con D1 locale e tassi fissi (IDR 0.00005, SGD 0.7).
-// I test sono in ordine e condividono il database.
+// I test sono in ordine e condividono il database. Il database parte con i dati della versione a
+// utente singolo (account "owner" non collegato, vedi server.ts).
 import { beforeAll, describe, expect, inject, it } from 'vitest';
+import { LEGACY_PASSWORD, LEGACY_TOKEN } from './server';
 
 const BASE = inject('baseUrl');
+const EMAIL = 'anna@example.com';
 const PASSWORD = 'password-di-prova-123';
 const NEW_PASSWORD = 'nuova-password-sicura-456';
 
@@ -39,6 +42,13 @@ class Client {
 
 const me = new Client();
 let deviceUrl = '';
+// Le categorie e i conti iniziali di ogni account hanno il suffisso dell'account (cat_food~usr_…).
+const own: Record<string, string> = {};
+const C = (base: string) => own[base] ?? `${base}?`;
+async function loadOwn(c: Client, into: Record<string, string>) {
+  const b = (await c.get('/api/bootstrap')).json;
+  for (const x of [...b.categories, ...b.accounts]) into[x.id.split('~')[0]] = x.id;
+}
 let device2Url = '';
 const ids: Record<string, string> = {};
 
@@ -53,6 +63,41 @@ async function tx(id: string) {
   return (await me.get(`/api/transactions/${id}`)).json;
 }
 
+describe('dati della versione con una sola password', () => {
+  const owner = new Client('10.6.6.1');
+  it('la schermata di accesso propone di collegarli', async () => {
+    expect((await owner.get('/api/auth/status')).json).toEqual({ legacy_available: true });
+  });
+  it('il vecchio iPhone continua a registrare le spese', async () => {
+    const r = await owner.post(`/api/in/${LEGACY_TOKEN}`, { text: 'Hai pagato Rp20.000 a Warung Lama', posted_at: '2026-11-03T12:00:00+08:00' });
+    expect(r.json.transaction_id).toBeTruthy();
+  });
+  it('rifiuta la vecchia password sbagliata', async () => {
+    expect((await owner.post('/api/claim', { email: 'io@example.com', password: 'nuova-password-owner-1', old_password: 'non-era-questa' })).status).toBe(401);
+    expect((await owner.get('/api/me')).status).toBe(401);
+  });
+  it('con la vecchia password i dati diventano di un account con email', async () => {
+    expect((await owner.post('/api/claim', { email: 'io@example.com', password: 'nuova-password-owner-1', old_password: LEGACY_PASSWORD })).status).toBe(200);
+    const b = (await owner.get('/api/bootstrap')).json;
+    expect(b.account.email).toBe('io@example.com');
+    expect(b.accounts.map((a: any) => a.id)).toEqual(['acc_cash']);
+    expect(b.categories.some((c: any) => c.id === 'cat_food_bar')).toBe(true);
+    const merchants = (await owner.get('/api/transactions')).json.items.map((t: any) => t.merchant).sort();
+    expect(merchants).toEqual(['Caffè vecchio', 'Warung Lama']);
+    expect((await owner.get('/api/rules')).json.items.map((r: any) => r.name)).toContain('Grab');
+  });
+  it('non si possono collegare una seconda volta', async () => {
+    expect((await owner.get('/api/auth/status')).json).toEqual({ legacy_available: false });
+    expect((await new Client('10.6.6.2').post('/api/claim', { email: 'ladro@example.com', password: 'nuova-password-ladro-1', old_password: LEGACY_PASSWORD })).status).toBe(400);
+  });
+  it('poi si entra con email e password e il vecchio iPhone scrive nello stesso account', async () => {
+    const again = new Client('10.6.6.3');
+    expect((await again.post('/api/login', { email: 'io@example.com', password: 'nuova-password-owner-1' })).status).toBe(200);
+    await again.post(`/api/in/${LEGACY_TOKEN}`, { text: 'Hai pagato Rp30.000 a Bakso Pak Joko', posted_at: '2026-11-04T12:00:00+08:00' });
+    expect((await again.get('/api/transactions?q=Bakso')).json.items.length).toBe(1);
+  });
+});
+
 describe('accesso', () => {
   it('risponde allo stato di salute', async () => {
     expect((await me.get('/api/health')).json).toEqual({ ok: true });
@@ -60,17 +105,38 @@ describe('accesso', () => {
   it('rifiuta le richieste senza sessione', async () => {
     expect((await me.get('/api/bootstrap')).status).toBe(401);
   });
-  it('rifiuta la password sbagliata', async () => {
-    expect((await new Client('10.1.1.1').post('/api/login', { password: 'sbagliata' })).status).toBe(401);
+  it('il sito è aperto: la pagina si carica senza password', async () => {
+    const r = await fetch(`${BASE}/`);
+    expect(r.status).toBe(200);
+    expect(await r.text()).toContain('<title>');
   });
-  it('entra con la password giusta e crea i dati iniziali', async () => {
-    expect((await me.post('/api/login', { password: PASSWORD })).status).toBe(200);
+  it('crea un account con email e password e i dati iniziali', async () => {
+    expect((await new Client('10.1.1.2').post('/api/register', { email: 'non-una-email', password: PASSWORD })).status).toBe(400);
+    expect((await new Client('10.1.1.2').post('/api/register', { email: 'x@example.com', password: 'corta' })).status).toBe(400);
+    expect((await me.post('/api/register', { email: ' Anna@Example.com ', password: PASSWORD })).status).toBe(201);
+    expect((await me.get('/api/me')).status).toBe(200);
     const b = (await me.get('/api/bootstrap')).json;
+    expect(b.account.email).toBe(EMAIL);
     expect(b.accounts.map((a: any) => a.name)).toEqual(['Contanti']);
     expect(b.categories.length).toBeGreaterThan(50);
     expect(b.settings.timezone).toBe('Asia/Makassar');
     expect(b.settings.recovery_created_at).toBeNull();
     expect((await me.get('/api/rules')).json.items.map((r: any) => r.name)).toContain('Grab');
+    expect((await me.get('/api/transactions')).json.items).toEqual([]);
+    await loadOwn(me, own);
+    expect(C('cat_food_restaurant')).toMatch(/^cat_food_restaurant~usr_/);
+  });
+  it('non accetta due account con la stessa email', async () => {
+    expect((await new Client('10.1.1.3').post('/api/register', { email: EMAIL, password: 'altra-password-123' })).status).toBe(409);
+  });
+  it('esce ed entra con email e password', async () => {
+    const c = new Client('10.1.1.4');
+    expect((await c.post('/api/login', { email: EMAIL, password: 'sbagliata-123' })).status).toBe(401);
+    expect((await c.post('/api/login', { email: 'nessuno@example.com', password: PASSWORD })).status).toBe(401);
+    expect((await c.post('/api/login', { email: 'ANNA@example.com', password: PASSWORD })).status).toBe(200);
+    expect((await c.post('/api/logout')).status).toBe(200);
+    expect((await c.get('/api/me')).status).toBe(401);
+    expect((await me.get('/api/me')).status).toBe(200);
   });
 });
 
@@ -99,7 +165,7 @@ describe('cattura delle notifiche', () => {
     expect(t.amount_eur).toBe(-2780);
     expect(t.merchant).toBe('Grab');
     expect(t.card).toBe('Revolut');
-    expect(t.review_choices).toEqual(['cat_food_restaurant', 'cat_transport_taxi']);
+    expect(t.review_choices).toEqual([C('cat_food_restaurant'), C('cat_transport_taxi')]);
     expect(t.capture.text).toContain('Rp55.600');
     ids.grabAsk = t.id;
   });
@@ -111,7 +177,7 @@ describe('cattura delle notifiche', () => {
     const r = await capture(deviceUrl, { text: 'Hai pagato Rp25.000 a Grab* A-B1', posted_at: '2026-11-10T16:00:00+08:00' });
     expect(r.json.status).toBe('created');
     const t = await tx(r.json.transaction_id);
-    expect(t.category_id).toBe('cat_transport_taxi');
+    expect(t.category_id).toBe(C('cat_transport_taxi'));
     expect(t.nature).toBe('need');
     ids.grabTaxi = t.id;
   });
@@ -127,7 +193,7 @@ describe('cattura delle notifiche', () => {
     expect(r.json.status).toBe('created');
     const t = await tx(r.json.transaction_id);
     expect(t.occurred_at).toBe('2026-11-11T07:15:00+08:00');
-    expect(t.category_id).toBe('cat_food_groceries');
+    expect(t.category_id).toBe(C('cat_food_groceries'));
     expect(t.card).toBe('BCA');
   });
   it('accetta il testo semplice e senza ora usa adesso nel fuso scelto', async () => {
@@ -183,7 +249,7 @@ describe('lettori per banca', () => {
 
 describe('da rivedere', () => {
   it('conferma la scelta della fascia "chiedimi"', async () => {
-    expect((await me.post(`/api/transactions/${ids.grabAsk}/confirm`, { category_id: 'cat_food_restaurant' })).status).toBe(200);
+    expect((await me.post(`/api/transactions/${ids.grabAsk}/confirm`, { category_id: C('cat_food_restaurant') })).status).toBe(200);
     const t = await tx(ids.grabAsk);
     expect(t.status).toBe('confirmed');
     expect(t.review_choices).toEqual([]);
@@ -211,29 +277,29 @@ describe('da rivedere', () => {
 
 describe('movimenti', () => {
   it('crea una spesa a mano in rupie e la converte', async () => {
-    const r = await me.post('/api/transactions', { amount: 45000, currency: 'IDR', merchant: 'Warung Nasi Goreng', category_id: 'cat_food_restaurant', occurred_at: '2026-11-12T20:10:00+08:00', labels: ['Bali', 'Cena'] });
+    const r = await me.post('/api/transactions', { amount: 45000, currency: 'IDR', merchant: 'Warung Nasi Goreng', category_id: C('cat_food_restaurant'), occurred_at: '2026-11-12T20:10:00+08:00', labels: ['Bali', 'Cena'] });
     expect(r.status).toBe(201);
     const t = await tx(r.json.id);
     expect(t.amount_eur).toBe(-2250);
-    expect(t.account_id).toBe('acc_cash');
+    expect(t.account_id).toBe(C('acc_cash'));
     expect(t.labels.sort()).toEqual(['Bali', 'Cena']);
     ids.manual = t.id;
   });
   it('senza categoria usa quella dello storico per lo stesso merchant', async () => {
     const r = await me.post('/api/transactions', { amount: 30000, currency: 'IDR', merchant: 'Warung Nasi Goreng', occurred_at: '2026-11-13T20:10:00+08:00' });
-    expect((await tx(r.json.id)).category_id).toBe('cat_food_restaurant');
+    expect((await tx(r.json.id)).category_id).toBe(C('cat_food_restaurant'));
   });
   it('modifica importo, valuta, categoria ed etichette', async () => {
-    await me.put(`/api/transactions/${ids.manual}`, { amount: 3.5, currency: 'EUR', category_id: 'cat_food_bar', labels: ['Bali'] });
+    await me.put(`/api/transactions/${ids.manual}`, { amount: 3.5, currency: 'EUR', category_id: C('cat_food_bar'), labels: ['Bali'] });
     const t = await tx(ids.manual);
     expect(t.amount).toBe(-3500);
     expect(t.amount_eur).toBe(-3500);
-    expect(t.category_id).toBe('cat_food_bar');
+    expect(t.category_id).toBe(C('cat_food_bar'));
     expect(t.labels).toEqual(['Bali']);
   });
   it('filtra per testo, categoria e stato', async () => {
     expect((await me.get('/api/transactions?q=nasi')).json.items.length).toBe(2);
-    const food = (await me.get('/api/transactions?category=cat_food')).json.items;
+    const food = (await me.get(`/api/transactions?category=${C('cat_food')}`)).json.items;
     expect(food.every((t: any) => t.category_id?.startsWith('cat_food'))).toBe(true);
     expect((await me.get('/api/transactions?status=review')).json.items.every((t: any) => t.status === 'review')).toBe(true);
   });
@@ -277,7 +343,7 @@ describe('regole', () => {
     expect((await me.post('/api/rules', { name: 'x', definition: { conditions: [{ field: 'merchant', op: 'regex', value: '(' }], actions: {} } })).status).toBe(400);
   });
   it('crea una regola, la prova sullo storico e la applica', async () => {
-    const definition = { conditions: [{ field: 'merchant', op: 'contains', value: 'kopi' }], actions: { category_id: 'cat_food_bar', labels: ['Caffè'] } };
+    const definition = { conditions: [{ field: 'merchant', op: 'contains', value: 'kopi' }], actions: { category_id: C('cat_food_bar'), labels: ['Caffè'] } };
     const preview = (await me.post('/api/rules/preview', { definition })).json;
     expect(preview.matched).toBe(1);
     expect(preview.changed).toBe(1);
@@ -286,13 +352,13 @@ describe('regole', () => {
     const applied = (await me.post(`/api/rules/${r.json.id}/apply`, { after: 0 })).json;
     expect(applied.changed).toBe(1);
     const kopi = (await me.get('/api/transactions?q=kopi')).json.items[0];
-    expect(kopi.category_id).toBe('cat_food_bar');
+    expect(kopi.category_id).toBe(C('cat_food_bar'));
     ids.rule = r.json.id;
   });
   it('la regola nuova vale per le notifiche successive', async () => {
     const r = await capture(deviceUrl, { text: 'Hai pagato Rp28.000 a KOPI KENANGAN', posted_at: '2026-11-14T08:00:00+08:00' });
     const t = await tx(r.json.transaction_id);
-    expect(t.category_id).toBe('cat_food_bar');
+    expect(t.category_id).toBe(C('cat_food_bar'));
     expect(t.labels).toEqual(['Caffè']);
   });
   it('disattiva ed elimina una regola', async () => {
@@ -396,8 +462,8 @@ describe('backup', () => {
     const r = await importAll(me, other, 'merge');
     expect(r.status).toBe(200);
     const t = await tx('tx_da_altro_backup');
-    expect(t.category_id).toBe('cat_food_bar');
-    expect(t.account_id).toBe('acc_cash');
+    expect(t.category_id).toBe(C('cat_food_bar'));
+    expect(t.account_id).toBe(C('acc_cash'));
     expect(t.labels).toEqual(['Bali']);
     const cats = (await me.get('/api/bootstrap')).json.categories;
     expect(cats.filter((c: any) => c.name === 'Bar, caffè').length).toBe(1);
@@ -418,7 +484,7 @@ describe('backup', () => {
 describe('password', () => {
   const other = new Client();
   beforeAll(async () => {
-    await other.post('/api/login', { password: PASSWORD });
+    await other.post('/api/login', { email: EMAIL, password: PASSWORD });
   });
   it('rifiuta il cambio con la password attuale sbagliata o troppo corta', async () => {
     expect((await me.put('/api/password', { current: 'sbagliata', next: NEW_PASSWORD })).status).toBe(400);
@@ -429,11 +495,11 @@ describe('password', () => {
     expect((await me.put('/api/password', { current: PASSWORD, next: NEW_PASSWORD })).status).toBe(200);
     expect((await me.get('/api/me')).status).toBe(200);
     expect((await other.get('/api/me')).status).toBe(401);
-    expect((await new Client('10.2.2.2').post('/api/login', { password: PASSWORD })).status).toBe(401);
-    expect((await new Client('10.2.2.3').post('/api/login', { password: NEW_PASSWORD })).status).toBe(200);
+    expect((await new Client('10.2.2.2').post('/api/login', { email: EMAIL, password: PASSWORD })).status).toBe(401);
+    expect((await new Client('10.2.2.3').post('/api/login', { email: EMAIL, password: NEW_PASSWORD })).status).toBe(200);
   });
   it('senza codice di recupero il recupero non è possibile', async () => {
-    expect((await new Client('10.5.5.1').post('/api/password/recover', { code: 'AAAA-BBBB-CCCC-DDDD-EEEE-FFFF', password: 'qualunque-cosa-1' })).status).toBe(400);
+    expect((await new Client('10.5.5.1').post('/api/password/recover', { email: EMAIL, code: 'AAAA-BBBB-CCCC-DDDD-EEEE-FFFF', password: 'qualunque-cosa-1' })).status).toBe(401);
   });
   let code = '';
   it('crea il codice di recupero solo con la password giusta e lo mostra una volta', async () => {
@@ -449,30 +515,111 @@ describe('password', () => {
     const old = code;
     code = (await me.post('/api/recovery-code', { password: NEW_PASSWORD })).json.code;
     expect(code).not.toBe(old);
-    expect((await new Client('10.5.5.2').post('/api/password/recover', { code: old, password: 'con-il-vecchio-codice-1' })).status).toBe(401);
+    expect((await new Client('10.5.5.2').post('/api/password/recover', { email: EMAIL, code: old, password: 'con-il-vecchio-codice-1' })).status).toBe(401);
   });
   it('recupera la password con il codice: entra subito e chiude le altre sessioni', async () => {
     const c = new Client('10.5.5.3');
-    expect((await c.post('/api/password/recover', { code, password: 'corta' })).status).toBe(400);
+    expect((await c.post('/api/password/recover', { email: EMAIL, code, password: 'corta' })).status).toBe(400);
     // Minuscole e spazi vanno bene: il codice si normalizza.
     const loose = code.toLowerCase().replace(/-/g, ' ');
-    expect((await c.post('/api/password/recover', { code: loose, password: 'recuperata-con-il-codice-789' })).status).toBe(200);
+    expect((await c.post('/api/password/recover', { email: EMAIL, code: loose, password: 'recuperata-con-il-codice-789' })).status).toBe(200);
     expect((await c.get('/api/me')).status).toBe(200);
     expect((await me.get('/api/me')).status).toBe(401);
-    expect((await new Client('10.3.3.3').post('/api/login', { password: NEW_PASSWORD })).status).toBe(401);
-    expect((await new Client('10.3.3.4').post('/api/login', { password: 'recuperata-con-il-codice-789' })).status).toBe(200);
+    expect((await new Client('10.3.3.3').post('/api/login', { email: EMAIL, password: NEW_PASSWORD })).status).toBe(401);
+    expect((await new Client('10.3.3.4').post('/api/login', { email: EMAIL, password: 'recuperata-con-il-codice-789' })).status).toBe(200);
     // Il codice resta valido per una prossima volta.
-    expect((await new Client('10.5.5.4').post('/api/password/recover', { code, password: 'recuperata-con-il-codice-789' })).status).toBe(200);
+    expect((await new Client('10.5.5.4').post('/api/password/recover', { email: EMAIL, code, password: 'recuperata-con-il-codice-789' })).status).toBe(200);
   });
   it('blocca chi prova codici a raffica', async () => {
     const attacker = new Client('10.8.8.8');
-    for (let i = 0; i < 10; i++) expect((await attacker.post('/api/password/recover', { code: `ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZ${i}`, password: 'tentativo-lungo-1' })).status).toBe(401);
-    expect((await attacker.post('/api/password/recover', { code, password: 'tentativo-lungo-1' })).status).toBe(429);
+    for (let i = 0; i < 10; i++) expect((await attacker.post('/api/password/recover', { email: `x${i}@example.com`, code: `ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZ${i}`, password: 'tentativo-lungo-1' })).status).toBe(401);
+    expect((await attacker.post('/api/password/recover', { email: EMAIL, code, password: 'tentativo-lungo-1' })).status).toBe(429);
   });
   it('blocca chi sbaglia la password troppe volte', async () => {
     const attacker = new Client('10.9.9.9');
-    for (let i = 0; i < 10; i++) expect((await attacker.post('/api/login', { password: `tentativo-${i}` })).status).toBe(401);
-    expect((await attacker.post('/api/login', { password: 'recuperata-con-il-codice-789' })).status).toBe(429);
-    expect((await new Client('10.4.4.4').post('/api/login', { password: 'recuperata-con-il-codice-789' })).status).toBe(200);
+    for (let i = 0; i < 10; i++) expect((await attacker.post('/api/login', { email: `y${i}@example.com`, password: `tentativo-${i}` })).status).toBe(401);
+    expect((await attacker.post('/api/login', { email: EMAIL, password: 'recuperata-con-il-codice-789' })).status).toBe(429);
+    expect((await new Client('10.4.4.4').post('/api/login', { email: EMAIL, password: 'recuperata-con-il-codice-789' })).status).toBe(200);
+  });
+  it('blocca chi prova tante password sulla stessa email, anche da indirizzi diversi', async () => {
+    const victim = 'carla@example.com';
+    expect((await new Client('10.12.0.1').post('/api/register', { email: victim, password: 'password-di-carla-1' })).status).toBe(201);
+    for (let i = 0; i < 10; i++) expect((await new Client(`10.12.1.${i}`).post('/api/login', { email: victim, password: `tentativo-${i}` })).status).toBe(401);
+    expect((await new Client('10.12.2.1').post('/api/login', { email: victim, password: 'password-di-carla-1' })).status).toBe(429);
+    // Le altre email non sono toccate.
+    expect((await new Client('10.12.2.2').post('/api/login', { email: EMAIL, password: 'recuperata-con-il-codice-789' })).status).toBe(200);
+  });
+});
+
+describe('account separati', () => {
+  const anna = new Client('10.10.0.1');
+  const bob = new Client('10.10.0.2');
+  const bobOwn: Record<string, string> = {};
+  let annaBackup: any;
+  let annaCount = 0;
+  beforeAll(async () => {
+    await anna.post('/api/login', { email: EMAIL, password: 'recuperata-con-il-codice-789' });
+    annaCount = (await anna.get('/api/transactions?limit=500')).json.items.length;
+    annaBackup = await exportAll(anna);
+  });
+  it('un account nuovo parte vuoto, con categorie sue', async () => {
+    expect((await bob.post('/api/register', { email: 'bob@example.com', password: 'password-di-bob-1' })).status).toBe(201);
+    await loadOwn(bob, bobOwn);
+    expect(bobOwn.cat_food_bar).toBeTruthy();
+    expect(bobOwn.cat_food_bar).not.toBe(C('cat_food_bar'));
+    expect((await bob.get('/api/transactions')).json.items).toEqual([]);
+    expect((await bob.get('/api/capture/devices')).json.items).toEqual([]);
+    expect((await bob.get('/api/stats?from=2026-11-01&to=2026-12-01')).json.spent).toBe(0);
+    expect((await bob.get('/api/transactions/tx_vecchio')).status).toBe(404);
+  });
+  it('non può leggere, cambiare o cancellare i movimenti di un altro', async () => {
+    const id = ids.grabAsk;
+    expect((await bob.get(`/api/transactions/${id}`)).status).toBe(404);
+    expect((await bob.put(`/api/transactions/${id}`, { amount: 1 })).status).toBe(404);
+    expect((await bob.post(`/api/transactions/${id}/confirm`, { category_id: bobOwn.cat_food_bar })).status).toBe(404);
+    await bob.del(`/api/transactions/${id}`);
+    expect((await anna.get(`/api/transactions/${id}`)).json.merchant).toBe('Grab');
+  });
+  it('non può usare categorie e conti di un altro', async () => {
+    expect((await bob.post('/api/transactions', { amount: 1, currency: 'EUR', category_id: C('cat_food_bar') })).status).toBe(400);
+    expect((await bob.post('/api/transactions', { amount: 1, currency: 'EUR', account_id: C('acc_cash') })).status).toBe(400);
+    const definition = { conditions: [{ field: 'merchant', op: 'contains', value: 'x' }], actions: { category_id: C('cat_food_bar') } };
+    expect((await bob.post('/api/rules', { name: 'x', definition })).status).toBe(400);
+    expect((await bob.put(`/api/categories/${C('cat_food_bar')}`, { name: 'Rubata' })).status).toBe(404);
+  });
+  it('i telefoni di ciascuno scrivono solo nel proprio account', async () => {
+    const dev = (await bob.post('/api/capture/devices', { name: 'Telefono di Bob', platform: 'android', method: 'macrodroid' })).json.url.replace(BASE, '');
+    const r = await bob.post(dev, { text: 'Hai pagato Rp40.000 a Warung di Bob', posted_at: '2026-11-15T12:00:00+08:00' });
+    expect((await bob.get(`/api/transactions/${r.json.transaction_id}`)).json.merchant).toBe('Warung di Bob');
+    expect((await anna.get(`/api/transactions/${r.json.transaction_id}`)).status).toBe(404);
+    expect((await anna.get('/api/transactions?q=Bob')).json.items.length).toBe(0);
+  });
+  it('importare il backup di un altro non tocca i suoi dati', async () => {
+    expect((await importAll(bob, annaBackup, 'merge')).status).toBe(200);
+    expect((await importAll(bob, annaBackup, 'replace')).status).toBe(200);
+    const bobTx = (await bob.get('/api/transactions?limit=500')).json.items;
+    expect(bobTx.length).toBe(annaCount);
+    expect(bobTx.every((t: any) => !t.category_id || t.category_id.endsWith(bobOwn.cat_food_bar.split('~')[1]))).toBe(true);
+    // Anna ha ancora tutto, con le sue categorie.
+    expect((await anna.get('/api/transactions?limit=500')).json.items.length).toBe(annaCount);
+    expect((await anna.get(`/api/transactions/${ids.grabAsk}`)).json.category_id).toBe(C('cat_food_restaurant'));
+    // I telefoni di Anna mandano ancora le spese ad Anna.
+    const r = await anna.post(deviceUrl.replace(BASE, ''), { text: 'Hai pagato Rp21.000 a Dopo il backup di Bob', posted_at: '2026-11-15T13:00:00+08:00' });
+    expect((await anna.get(`/api/transactions/${r.json.transaction_id}`)).status).toBe(200);
+    expect((await bob.get(`/api/transactions/${r.json.transaction_id}`)).status).toBe(404);
+  });
+  it('elimina l’account con tutti i dati solo con la password giusta', async () => {
+    expect((await bob.post('/api/account/delete', { password: 'sbagliata-123' })).status).toBe(400);
+    expect((await bob.post('/api/account/delete', { password: 'password-di-bob-1' })).status).toBe(200);
+    expect((await bob.get('/api/me')).status).toBe(401);
+    expect((await new Client('10.10.0.3').post('/api/login', { email: 'bob@example.com', password: 'password-di-bob-1' })).status).toBe(401);
+    expect((await anna.get('/api/transactions?limit=500')).json.items.length).toBe(annaCount + 1);
+    // L'email torna libera.
+    expect((await new Client('10.10.0.4').post('/api/register', { email: 'bob@example.com', password: 'password-di-bob-2' })).status).toBe(201);
+  });
+  it('limita gli account creati dalla stessa rete', async () => {
+    const net = new Client('10.11.0.1');
+    for (let i = 0; i < 5; i++) expect((await net.post('/api/register', { email: `utente${i}@example.com`, password: 'password-lunga-1' })).status).toBe(201);
+    expect((await net.post('/api/register', { email: 'utente9@example.com', password: 'password-lunga-1' })).status).toBe(429);
   });
 });
