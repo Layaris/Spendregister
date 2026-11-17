@@ -1,41 +1,53 @@
 import { useState, type ReactNode } from 'react';
 import { api, type Stats, type Tx } from '../api';
 import { Icon } from '../icons';
+import { setPeriod, usePeriodSpec } from '../period';
+import { PeriodSheet, periodArrows } from '../PeriodSheet';
 import { useApi, useStore } from '../store';
-import { CategoryIcon, Money, TxRow } from '../ui';
-import { eur, formatDayShort, formatMoney, monthPeriod, pct, relativeTime } from '../util';
-
-interface Device { id: string; name: string; last_seen_at: string | null; last_capture_at: string | null }
+import { CategoryIcon, TxRow } from '../ui';
+import { eur, formatDayShort, formatMoney, monthPeriod, pct, periodOf } from '../util';
 
 /** Schede della Home: si accendono, si spengono e si riordinano (Personalizza). */
 export const HOME_WIDGETS: Array<[string, string]> = [
-  ['hero', 'Speso nel mese e saldo'], ['review', 'Da rivedere'], ['capture', 'Stato della cattura'], ['accounts', 'Conti'],
+  ['hero', 'Speso, saldo e previsione'], ['review', 'Da rivedere'], ['accounts', 'Conti'],
   ['cashflow', 'Entrate e uscite'], ['balance', 'Andamento del saldo'], ['top', 'Spese principali'], ['cards', 'Spesa per carta'], ['recent', 'Ultimi movimenti'],
 ];
-export const DEFAULT_HOME = ['hero', 'review', 'capture', 'accounts', 'cashflow', 'top', 'cards', 'recent'];
+export const DEFAULT_HOME = ['hero', 'review', 'accounts', 'cashflow', 'top', 'cards', 'recent'];
+
+const CURRENT_LABEL: Record<string, string> = {
+  day: 'Speso oggi', week: 'Speso questa settimana', month: 'Speso questo mese', year: 'Speso quest’anno', ytd: 'Speso da inizio anno', custom: 'Speso nel periodo',
+};
 
 export function Home() {
   const store = useStore();
-  const [offset, setOffset] = useState(0);
+  const spec = usePeriodSpec();
+  const [picker, setPicker] = useState(false);
   const [customize, setCustomize] = useState(false);
-  const layout = store.settings.home_layout ?? DEFAULT_HOME;
+  const known = new Set(HOME_WIDGETS.map(([k]) => k));
+  const layout = (store.settings.home_layout ?? DEFAULT_HOME).filter((k) => known.has(k));
   const on = (k: string) => layout.includes(k);
-  const period = monthPeriod(offset);
+  const period = periodOf(spec);
   const stats = useApi<Stats>(`/stats?from=${period.from}&to=${period.to}`, [store.review_count]);
   const balance = useApi<{ series: Array<{ day: string; balance: number }> }>(on('balance') ? '/stats/balance?days=30' : null, [store.review_count]);
-  const now = useApi<{ series: Array<{ day: string; balance: number }> }>(on('hero') ? '/stats/balance?days=1' : null, [store.review_count]);
-  const total = now.data?.series.at(-1)?.balance ?? null;
+  // Saldo di tutti i conti: la somma dei saldi mostrati in "Conti", ciascuno al cambio di oggi.
+  const total = store.accounts.reduce((sum, a) => sum + (a.balance_eur ?? 0), 0);
   const recent = useApi<{ items: Tx[] }>('/transactions?limit=5', [store.review_count]);
   const review = useApi<{ items: Tx[] }>('/transactions?status=review&limit=1', [store.review_count]);
-  const devices = useApi<{ items: Device[] }>('/capture/devices');
 
   const s = stats.data;
   const firstReview = review.data?.items[0];
-  const lastCapture = devices.data?.items.map((d) => d.last_capture_at).filter(Boolean).sort().pop() ?? null;
-  const stale = devices.data?.items.filter((d) => !d.last_seen_at || Date.now() - Date.parse(d.last_seen_at) > 26 * 3600_000) ?? [];
   const diff = s && s.previous.spent > 0 ? Math.round(((s.spent - s.previous.spent) / s.previous.spent) * 100) : null;
   const daysLeft = s ? Math.max(s.days.total - s.days.elapsed, 0) : 0;
-  const monthName = offset === 0 ? 'questo mese' : 'nel mese';
+  const ongoing = daysLeft > 0 && s != null && s.days.elapsed > 0;
+  const current = spec.offset === 0 && spec.kind !== 'custom';
+  const spentLabel = current ? CURRENT_LABEL[spec.kind] : 'Speso nel periodo';
+  const endWord = spec.kind === 'month' ? 'mese' : spec.kind === 'year' || spec.kind === 'ytd' ? 'anno' : spec.kind === 'week' ? 'settimana' : 'periodo';
+  const [prevShort, prevWord] = spec.kind === 'month' ? ['sul mese prima', 'allo stesso periodo del mese prima']
+    : spec.kind === 'year' ? ['sull’anno prima', 'all’anno prima'] : ['sul periodo prima', 'al periodo precedente della stessa durata'];
+  const sub = !s ? '' : ongoing ? (daysLeft === 1 ? 'Ultimo giorno' : `Mancano ${daysLeft} giorni`) : spec.kind === 'day' ? '' : `${s.days.total} giorni · concluso`;
+  // Nome concreto del periodo (la scheda sotto dice già "questo mese").
+  const year = Number(period.from.slice(0, 4));
+  const title = spec.kind === 'month' ? monthPeriod(spec.offset).label : spec.kind === 'year' ? String(year) : spec.kind === 'ytd' ? `Da inizio ${year}` : period.label;
 
   const resolve = async (t: Tx, category: string) => {
     await api(`/transactions/${t.id}/confirm`, { method: 'POST', json: { category_id: category } });
@@ -46,44 +58,33 @@ export function Home() {
   const widgets: Record<string, ReactNode> = {
     hero: (
       <section className="card hero">
-        <div className="row between">
-          <span className="label">Speso {monthName}</span>
-          {diff != null && <span className={`chip ${diff > 0 ? 'warn' : 'ok'}`} title="Rispetto allo stesso periodo del mese prima">{diff > 0 ? '+' : ''}{diff}% sul mese prima</span>}
+        <div className="row between" style={{ alignItems: 'flex-start' }}>
+          <span className="label">{spentLabel}</span>
+          {diff != null && <span className={`chip ${diff > 0 ? 'warn' : 'ok'}`} title={`Rispetto ${prevWord}`}>{diff > 0 ? '+' : ''}{diff}% {prevShort}</span>}
         </div>
         <span className="hero-amount num money">{s ? eur(s.spent) : '…'}</span>
         <div className="metrics">
-          <div className="metric" title="Somma dei conti, in valuta di visualizzazione">
-            <span>Saldo totale</span>
-            <b className={`num money ${total != null && total < 0 ? 'neg' : ''}`}>{total != null ? eur(total) : '…'}</b>
+          <div className="metric">
+            <span>Saldo di tutti i conti</span>
+            <b className={`num money ${total < 0 ? 'neg' : ''}`}>{eur(total)}</b>
           </div>
           <div className="metric">
-            <span>Al giorno</span>
+            <span>Spesa media al giorno</span>
             <b className="num money">{s ? eur(s.days.elapsed ? Math.round(s.spent / s.days.elapsed) : 0) : '…'}</b>
           </div>
-          {offset === 0 && daysLeft > 0 ? (
+          {ongoing ? (
             <div className="metric">
-              <span>Previsione</span>
+              <span>Spesa prevista a fine {endWord}</span>
               <b className="num money">{s ? eur(s.forecast) : '…'}</b>
             </div>
           ) : (
             <div className="metric">
-              <span>Entrate</span>
+              <span>Entrate del periodo</span>
               <b className="num money pos">{s ? eur(s.income) : '…'}</b>
             </div>
           )}
         </div>
       </section>
-    ),
-    capture: (
-      <a href="#/cattura" className="card" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, padding: '12px 14px', textDecoration: 'none', color: 'inherit' }}>
-        <span className={`dot ${stale.length ? 'warn' : ''}`} />
-        <span className="grow" style={{ fontSize: 14 }}>
-          {!devices.data?.items.length ? 'Collega un telefono per registrare le spese da sole'
-            : stale.length ? `${stale.map((d) => d.name).join(', ')}: nessun segnale da oltre un giorno`
-            : `Cattura attiva su ${devices.data.items.length} ${devices.data.items.length === 1 ? 'dispositivo' : 'dispositivi'} · ultima spesa ${relativeTime(lastCapture)}`}
-        </span>
-        <Icon name="next" size={18} />
-      </a>
     ),
     review: store.review_count > 0 && firstReview ? (
       <section className="card warn">
@@ -94,7 +95,7 @@ export function Home() {
         <div className="row">
           <CategoryIcon id={firstReview.category_id} />
           <div className="grow stack" style={{ gap: 2 }}>
-            <span style={{ fontWeight: 600 }}>{firstReview.merchant ?? 'Spesa'} · <Money milli={firstReview.amount_eur} /></span>
+            <span style={{ fontWeight: 600 }}>{firstReview.merchant ?? 'Spesa'} · <span className="num money">{eur(firstReview.amount_eur)}</span></span>
             <span className="muted" style={{ fontSize: 13 }}>{firstReview.review_reason}</span>
           </div>
         </div>
@@ -179,10 +180,13 @@ export function Home() {
   return (
     <div className={`stack ${store.discreet ? 'discreet' : ''}`} style={{ gap: 16 }}>
       <div className="row between">
-        <div className="row" style={{ gap: 4, background: 'var(--card)', borderRadius: 12, padding: '0 4px' }}>
-          <button className="iconbtn" style={{ width: 36 }} aria-label="Mese precedente" onClick={() => setOffset(offset - 1)}><Icon name="back" size={18} /></button>
-          <span style={{ fontWeight: 600, fontSize: 14 }}>{period.label}</span>
-          <button className="iconbtn" style={{ width: 36 }} aria-label="Mese successivo" onClick={() => setOffset(offset + 1)} disabled={offset >= 0}><Icon name="next" size={18} /></button>
+        <div className="periodpill">
+          <button className="iconbtn" aria-label="Periodo precedente" disabled={!periodArrows(spec.kind)} onClick={() => setPeriod({ ...spec, offset: spec.offset - 1 })}><Icon name="back" size={18} /></button>
+          <button className="periodpill-label" onClick={() => setPicker(true)} aria-haspopup="dialog" aria-label={`Periodo: ${title}. Tocca per scegliere mese, anno o date`}>
+            <span className="periodpill-title">{title} <span aria-hidden="true" className="muted">▾</span></span>
+            {sub && <span className="periodpill-sub">{sub}</span>}
+          </button>
+          <button className="iconbtn" aria-label="Periodo successivo" onClick={() => setPeriod({ ...spec, offset: spec.offset + 1 })} disabled={!periodArrows(spec.kind) || spec.offset >= 0}><Icon name="next" size={18} /></button>
         </div>
         <div className="row" style={{ gap: 8 }}>
           <button className="iconbtn" aria-label="Personalizza la Home" onClick={() => setCustomize(true)}><Icon name="rules" /></button>
@@ -199,6 +203,7 @@ export function Home() {
 
       {layout.map((k) => widgets[k] ? <div key={k} className="stack" style={{ gap: 0 }}>{widgets[k]}</div> : null)}
 
+      {picker && <PeriodSheet onClose={() => setPicker(false)} />}
       {customize && <CustomizeHome layout={layout} onClose={() => setCustomize(false)} />}
     </div>
   );

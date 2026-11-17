@@ -27,7 +27,7 @@ export async function api<T = unknown>(path: string, init: RequestInit & { json?
   return data as T;
 }
 
-export interface Account { id: string; name: string; type: string; currency: string; initial_balance: number; balance: number; color: string | null }
+export interface Account { id: string; name: string; type: string; currency: string; initial_balance: number; balance: number; balance_eur: number | null; color: string | null }
 export interface Category { id: string; name: string; parent_id: string | null; kind: 'expense' | 'income'; nature: string | null; color: string | null; icon: string | null }
 export interface Label { id: string; name: string }
 export type Theme = 'light' | 'blue' | 'dark' | 'system';

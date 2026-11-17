@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { Stats as StatsData } from '../api';
 import { Icon } from '../icons';
 import { setPeriod, usePeriodSpec } from '../period';
+import { PeriodSheet, periodArrows } from '../PeriodSheet';
 import { go } from '../router';
 import { useApi, useStore } from '../store';
 import { ErrorBox, Loading, TopBar } from '../ui';
@@ -368,13 +369,7 @@ export function PeriodBar() {
   const spec = usePeriodSpec();
   const period = periodOf(spec);
   const [open, setOpen] = useState(false);
-  const [range, setRange] = useState({ from: spec.from ?? localDay(new Date(new Date().getFullYear(), new Date().getMonth(), 1)), to: spec.to ?? localDay() });
-  const arrows = spec.kind !== 'ytd' && spec.kind !== 'custom';
-  const pick = (kind: PeriodKind) => {
-    if (kind === 'custom') return;
-    setPeriod({ kind, offset: 0 });
-    setOpen(false);
-  };
+  const arrows = periodArrows(spec.kind);
   return (
     <>
       <div className="periodbar">
@@ -382,25 +377,7 @@ export function PeriodBar() {
         <button className="periodbar-label" onClick={() => setOpen(true)} aria-haspopup="dialog">{period.label} <span aria-hidden="true">▾</span></button>
         <button className="iconbtn" aria-label="Periodo successivo" disabled={!arrows || spec.offset >= 0} onClick={() => setPeriod({ ...spec, offset: spec.offset + 1 })}><Icon name="next" size={20} /></button>
       </div>
-      {open && (
-        <div className="modal-backdrop" onClick={() => setOpen(false)}>
-          <div className="modal card" role="dialog" aria-modal="true" aria-label="Seleziona periodo" onClick={(e) => e.stopPropagation()} style={{ gap: 4 }}>
-            <div className="row between"><h2 className="h2">Seleziona periodo</h2><button className="btn ghost" onClick={() => setOpen(false)}>Annulla</button></div>
-            {PERIOD_KINDS.filter(([k]) => k !== 'custom').map(([k, label]) => (
-              <button key={k} className="sheet-option" aria-pressed={spec.kind === k} onClick={() => pick(k)}>{label}</button>
-            ))}
-            <div className="stack" style={{ gap: 8, paddingTop: 8 }}>
-              <span className="label">Dal … al …</span>
-              <div className="row" style={{ gap: 8 }}>
-                <input className="input grow" type="date" aria-label="Dal" value={range.from} max={range.to} onChange={(e) => setRange({ ...range, from: e.target.value })} />
-                <input className="input grow" type="date" aria-label="Al" value={range.to} min={range.from} onChange={(e) => setRange({ ...range, to: e.target.value })} />
-              </div>
-              <button className="btn primary" disabled={!range.from || !range.to || range.from > range.to}
-                onClick={() => { setPeriod({ kind: 'custom', offset: 0, from: range.from, to: range.to }); setOpen(false); }}>Mostra queste date</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {open && <PeriodSheet onClose={() => setOpen(false)} />}
     </>
   );
 }

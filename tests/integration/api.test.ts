@@ -1193,7 +1193,10 @@ describe('Home personalizzabile', () => {
   beforeAll(async () => { await c.post('/api/guest'); });
   it('parte con la disposizione predefinita, si cambia e finisce nel backup', async () => {
     expect((await c.get('/api/bootstrap')).json.settings.home_layout).toBeNull();
-    expect((await c.put('/api/settings', { home_layout: ['hero', 'widget-inventato'] })).status).toBe(400);
+    expect((await c.put('/api/settings', { home_layout: ['hero', 3] })).status).toBe(400);
+    // Schede che non esistono più (lo stato della cattura è passato in Altro) si scartano senza errore.
+    expect((await c.put('/api/settings', { home_layout: ['hero', 'capture', 'widget-inventato'] })).status).toBe(200);
+    expect((await c.get('/api/bootstrap')).json.settings.home_layout).toEqual(['hero']);
     expect((await c.put('/api/settings', { home_layout: ['hero', 'cashflow', 'recent', 'cashflow'] })).status).toBe(200);
     expect((await c.get('/api/bootstrap')).json.settings.home_layout).toEqual(['hero', 'cashflow', 'recent']);
     const rows = (await c.get('/api/backup/export?table=settings')).json.rows;
@@ -1271,6 +1274,20 @@ describe('chiavi AI tra ospite e account', () => {
     await g.put('/api/ai', { gemini_key: 'gemini-ok' });
     expect((await g.post('/api/login', { email: 'ai@example.com', password: 'password-ai-123' })).status).toBe(200);
     expect((await g.get('/api/ai')).json.gemini).toBe('…i-ok');
+  });
+});
+
+describe('saldo di tutti i conti', () => {
+  it('ogni conto ha il controvalore in euro al cambio di oggi, e la somma è il saldo della Home', async () => {
+    const c = new Client('10.51.0.1');
+    await c.post('/api/guest');
+    const usd = (await c.post('/api/accounts', { name: 'Wise USD', currency: 'USD', initial_balance: 100 })).json.id;
+    await c.post('/api/transactions', { amount: 30, currency: 'USD', merchant: 'Grab', account_id: usd });
+    const accs = (await c.get('/api/bootstrap')).json.accounts as Array<{ id: string; balance: number; balance_eur: number | null; currency: string }>;
+    const a = accs.find((x) => x.id === usd)!;
+    expect(a.balance).toBe(70_000);
+    expect(a.balance_eur).toBe(63_000); // 70 USD × 0,9
+    for (const x of accs.filter((x) => x.currency === 'EUR')) expect(x.balance_eur).toBe(x.balance);
   });
 });
 

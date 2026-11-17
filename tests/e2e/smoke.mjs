@@ -251,7 +251,21 @@ check((await me()).email === EMAIL && (await api('/api/transactions?limit=500'))
 // Home: il riquadro in alto ha speso del mese, saldo totale e altre due cifre.
 await page.goto(`${BASE}/#/`);
 await page.waitForSelector('.hero .metric b:not(:has-text("…"))');
-check(await page.locator('.hero .metric').count() === 3 && await page.isVisible('.hero >> text=Saldo totale'), 'la Home mostra speso, saldo totale e altre metriche in un riquadro');
+check(await page.locator('.hero .metric').count() === 3 && await page.isVisible('.hero >> text=Saldo di tutti i conti') && await page.isVisible('.hero >> text=Spesa media al giorno'),
+  'la Home mostra speso, saldo di tutti i conti e altre metriche con nomi chiari');
+const sumEur = (await api('/api/bootstrap')).accounts.reduce((t, a) => t + (a.balance_eur ?? 0), 0);
+check((await page.textContent('.hero .metric b')).replace(/\s/g, '').includes((sumEur / 1000).toFixed(2).replace('.', ',').replace('-', '−')), 'il saldo di tutti i conti è la somma dei conti');
+check(!(await page.isVisible('text=Cattura attiva')) && !(await page.isVisible('text=Collega un telefono')), 'lo stato della cattura non è più in Home');
+// Periodo della Home: tocco sul nome → anno, da inizio anno, date a scelta.
+await page.click('.periodpill-label');
+await page.click('[aria-label="Seleziona periodo"] button:has-text("Quest’anno")');
+await page.waitForSelector('.hero >> text=Speso quest’anno');
+check(await page.isVisible('.hero >> text=Spesa prevista a fine anno') && (await page.textContent('.periodpill-title')).includes(String(new Date().getFullYear())), 'sceglie l’anno dalla Home, con previsione a fine anno');
+await page.click('.periodpill-label');
+await page.click('[aria-label="Seleziona periodo"] button:has-text("Questo mese")');
+await page.waitForSelector('.hero >> text=Speso questo mese');
+await page.goto(`${BASE}/#/altro`);
+check(await page.waitForSelector('a[href="#/cattura"] >> text=/Attiva su|Nessun telefono|nessun segnale/', { timeout: 5000 }).then(() => true, () => false), 'lo stato della cattura è in Altro');
 
 // Svuota il bilancio: chiede conferma, toglie solo i movimenti, tiene conti, categorie e impostazioni.
 const accountsBefore = (await api('/api/bootstrap')).accounts.length;

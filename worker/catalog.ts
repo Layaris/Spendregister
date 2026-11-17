@@ -32,7 +32,7 @@ catalogApi.get('/bootstrap', async (c) => {
   // Movimenti in un'altra valuta: il loro controvalore in euro, riportato nella valuta del conto al cambio di oggi.
   const today = new Date().toISOString().slice(0, 10);
   const rates = new Map<string, number | null>();
-  for (const cur of new Set(balances.results.filter((b) => b.currency !== 'EUR' && b.other_eur).map((b) => b.currency))) {
+  for (const cur of new Set(balances.results.filter((b) => b.currency !== 'EUR').map((b) => b.currency))) {
     rates.set(cur, (await getEurRate(db, cur, today))?.eurPerUnit ?? null);
   }
   return c.json({
@@ -40,7 +40,9 @@ catalogApi.get('/bootstrap', async (c) => {
       const b = bal.get(a.id as string);
       const rate = b && b.currency !== 'EUR' ? rates.get(b.currency) : 1;
       const extra = b?.other_eur && rate ? Math.round(b.other_eur / rate) : 0;
-      return { ...a, balance: (b?.initial_balance ?? 0) + (b?.same_cur ?? 0) + extra };
+      const balance = (b?.initial_balance ?? 0) + (b?.same_cur ?? 0) + extra;
+      // Controvalore in euro al cambio di oggi: la Home somma questi per il saldo totale.
+      return { ...a, balance, balance_eur: rate ? Math.round(balance * rate) : null };
     }),
     categories: categories.results,
     labels: labels.results,
@@ -361,7 +363,7 @@ catalogApi.get('/settings', async (c) => {
 /** Valute in cui si possono vedere totali e saldi (Impostazioni). */
 export const DISPLAY_CURRENCIES = ['EUR', 'USD', 'AED', 'PHP', 'IDR', 'SGD', 'CNY', 'THB'];
 /** Schede possibili della Home (src/pages/Home.tsx). */
-export const HOME_WIDGETS = ['hero', 'review', 'capture', 'accounts', 'cashflow', 'balance', 'top', 'cards', 'recent'];
+export const HOME_WIDGETS = ['hero', 'review', 'accounts', 'cashflow', 'balance', 'top', 'cards', 'recent'];
 
 catalogApi.put('/settings', async (c) => {
   const b = await body<{ timezone?: string; display_currency?: string; theme?: string; home_layout?: string[] | null }>(c);
@@ -379,9 +381,11 @@ catalogApi.put('/settings', async (c) => {
     await db.prepare('UPDATE users SET theme = ? WHERE id = ?').bind(b.theme, uid(c)).run();
   }
   if (b.home_layout !== undefined) {
-    const ok = b.home_layout === null || (Array.isArray(b.home_layout) && b.home_layout.length <= 20 && b.home_layout.every((k) => HOME_WIDGETS.includes(k)));
+    const ok = b.home_layout === null || (Array.isArray(b.home_layout) && b.home_layout.length <= 20 && b.home_layout.every((k) => typeof k === 'string'));
     if (!ok) bad('Disposizione della Home non valida');
-    await db.prepare('UPDATE users SET home_layout = ? WHERE id = ?').bind(b.home_layout ? JSON.stringify([...new Set(b.home_layout)]) : null, uid(c)).run();
+    // Schede tolte nel frattempo (es. "capture", passata nelle impostazioni) si scartano senza errore.
+    const keep = b.home_layout ? [...new Set(b.home_layout)].filter((k) => HOME_WIDGETS.includes(k)) : null;
+    await db.prepare('UPDATE users SET home_layout = ? WHERE id = ?').bind(keep ? JSON.stringify(keep) : null, uid(c)).run();
   }
   return c.json({ ok: true });
 });

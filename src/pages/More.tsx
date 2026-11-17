@@ -8,7 +8,7 @@ import { applyTheme, useApi, useStore } from '../store';
 import { AiSettings } from './AiSettings';
 import type { Theme } from '../api';
 import { ErrorBox } from '../ui';
-import { CURRENCIES, formatMoney } from '../util';
+import { CURRENCIES, formatMoney, relativeTime } from '../util';
 
 const DISPLAY_CURRENCIES: Array<[string, string]> = [
   ['EUR', 'Euro'], ['USD', 'Dollaro USA'], ['AED', 'Dirham emiratino'], ['PHP', 'Peso filippino'], ['IDR', 'Rupia indonesiana'],
@@ -23,9 +23,24 @@ const LINKS: Array<[string, string, string, string]> = [
   ['#/assistente', 'sparkle', 'Assistente AI', 'Domande sulle spese, scontrini, screenshot'],
 ];
 
+interface Device { name: string; last_seen_at: string | null; last_capture_at: string | null }
+
+/** Stato della cattura (era nella Home): telefoni collegati, segnale, ultima spesa. */
+function useCaptureStatus(): { text: string; warn: boolean } | null {
+  const devices = useApi<{ items: Device[] }>('/capture/devices');
+  const items = devices.data?.items;
+  if (!items) return null;
+  if (!items.length) return { text: 'Nessun telefono collegato: collegane uno per registrare le spese da sole', warn: true };
+  const stale = items.filter((d) => !d.last_seen_at || Date.now() - Date.parse(d.last_seen_at) > 26 * 3600_000);
+  if (stale.length) return { text: `${stale.map((d) => d.name).join(', ')}: nessun segnale da oltre un giorno`, warn: true };
+  const last = items.map((d) => d.last_capture_at).filter(Boolean).sort().pop() ?? null;
+  return { text: `Attiva su ${items.length} ${items.length === 1 ? 'dispositivo' : 'dispositivi'} · ultima spesa ${relativeTime(last)}`, warn: false };
+}
+
 export function More({ onAuthChange }: { onAuthChange: () => void }) {
   const store = useStore();
   const guest = !store.account.email;
+  const capture = useCaptureStatus();
   const logout = async () => {
     await api('/logout', { method: 'POST' });
     onAuthChange();
@@ -47,7 +62,9 @@ export function More({ onAuthChange }: { onAuthChange: () => void }) {
         {LINKS.map(([href, icon, title, text]) => (
           <a key={href} href={href} className="lrow">
             <span className="lrow-ic" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}><Icon name={icon} size={18} /></span>
-            <span className="grow stack" style={{ gap: 0, minWidth: 0 }}><span style={{ fontWeight: 600 }}>{title}</span><span className="muted" style={{ fontSize: 13 }}>{text}</span></span>
+            <span className="grow stack" style={{ gap: 0, minWidth: 0 }}><span style={{ fontWeight: 600 }}>{title}</span>{href === '#/cattura' && capture
+                ? <span className="row" style={{ gap: 6, fontSize: 13, alignItems: 'baseline' }}><span className={`dot ${capture.warn ? 'warn' : ''}`} style={{ flexShrink: 0, transform: 'translateY(-1px)' }} /><span className="muted">{capture.text}</span></span>
+                : <span className="muted" style={{ fontSize: 13 }}>{text}</span>}</span>
             {href === '#/rivedere' && store.review_count > 0 && <span className="chip warn">{store.review_count}</span>}
             <Icon name="next" size={18} />
           </a>
