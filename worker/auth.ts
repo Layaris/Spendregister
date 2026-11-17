@@ -295,10 +295,12 @@ export async function recoverWithCode(c: AppContext, emailIn: unknown, code: str
 
 export async function accountInfo(db: D1Database, userId: string) {
   const u = await userById(db, userId);
-  const x = u as (typeof u & { display_currency?: string; theme?: string }) | null;
+  const x = u as (typeof u & { display_currency?: string; theme?: string; home_layout?: string | null }) | null;
+  let home: string[] | null = null;
+  try { home = x?.home_layout ? (JSON.parse(x.home_layout) as string[]) : null; } catch { home = null; }
   return {
     email: u?.email ?? null, timezone: u?.timezone ?? 'Asia/Makassar', recovery_created_at: u?.recovery_created_at ?? null,
-    display_currency: x?.display_currency ?? 'EUR', theme: x?.theme ?? 'light',
+    display_currency: x?.display_currency ?? 'EUR', theme: x?.theme ?? 'light', home_layout: home,
   };
 }
 

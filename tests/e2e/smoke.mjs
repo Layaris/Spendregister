@@ -142,6 +142,19 @@ await page.click('button:has-text("Salva lettore")');
 await page.waitForTimeout(800);
 check((await api('/api/capture/parsers')).items.some((p) => p.name === 'Carta E2E'), 'salva il lettore');
 
+// Home: si spegne l'andamento e si accende "Entrate e uscite", nell'ordine scelto.
+await page.goto(`${BASE}/#/`);
+await page.click('button[aria-label="Personalizza la Home"]');
+await page.click('[aria-label="Personalizza la Home"] button[aria-label="Mostra Andamento del saldo"]');
+await page.waitForTimeout(500);
+await page.click('[aria-label="Personalizza la Home"] button[aria-label="Nascondi Andamento del saldo"]');
+await page.click('[aria-label="Personalizza la Home"] button[aria-label="Sposta su Entrate e uscite"]');
+await page.waitForTimeout(500);
+await page.click('[aria-label="Personalizza la Home"] button:has-text("Fatto")');
+const home = (await api('/api/bootstrap')).settings.home_layout;
+check(home.includes('cashflow') && !home.includes('balance') && home.indexOf('cashflow') < home.indexOf('accounts'), 'la Home si personalizza e si salva');
+check(await page.isVisible('h2:has-text("Entrate e uscite")'), 'la scheda Entrate e uscite è in Home');
+
 // Categorie: un gruppo facoltativo si accende e si spegne.
 await page.goto(`${BASE}/#/categorie`);
 await page.click('button[aria-label="Accendi Animali"]');

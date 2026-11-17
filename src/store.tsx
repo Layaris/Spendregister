@@ -16,7 +16,7 @@ interface Store extends Bootstrap {
 const Ctx = createContext<Store | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [data, setData] = useState<Bootstrap>({ accounts: [], categories: [], labels: [], review_count: 0, settings: { timezone: 'Asia/Makassar', recovery_created_at: null, display_currency: 'EUR', theme: 'light' }, account: { email: null } });
+  const [data, setData] = useState<Bootstrap>({ accounts: [], categories: [], labels: [], review_count: 0, settings: { timezone: 'Asia/Makassar', recovery_created_at: null, display_currency: 'EUR', theme: 'light', home_layout: null }, account: { email: null } });
   const [loaded, setLoaded] = useState(false);
   const [discreet, setDiscreetState] = useState(() => {
     try { return localStorage.getItem('ledgy-discreet') === '1'; } catch { return false; }

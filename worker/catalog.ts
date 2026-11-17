@@ -45,7 +45,7 @@ catalogApi.get('/bootstrap', async (c) => {
     categories: categories.results,
     labels: labels.results,
     review_count: review?.n ?? 0,
-    settings: { timezone: account.timezone, recovery_created_at: account.recovery_created_at, display_currency: account.display_currency, theme: account.theme },
+    settings: { timezone: account.timezone, recovery_created_at: account.recovery_created_at, display_currency: account.display_currency, theme: account.theme, home_layout: account.home_layout },
     account: { email: account.email },
   });
 });
@@ -355,14 +355,16 @@ catalogApi.post('/rules/:id/apply', async (c) => {
 
 catalogApi.get('/settings', async (c) => {
   const a = await accountInfo(c.env.DB, uid(c));
-  return c.json({ timezone: a.timezone, recovery_created_at: a.recovery_created_at, display_currency: a.display_currency, theme: a.theme });
+  return c.json({ timezone: a.timezone, recovery_created_at: a.recovery_created_at, display_currency: a.display_currency, theme: a.theme, home_layout: a.home_layout });
 });
 
 /** Valute in cui si possono vedere totali e saldi (Impostazioni). */
 export const DISPLAY_CURRENCIES = ['EUR', 'USD', 'AED', 'PHP', 'IDR', 'SGD', 'CNY', 'THB'];
+/** Schede possibili della Home (src/pages/Home.tsx). */
+export const HOME_WIDGETS = ['hero', 'review', 'capture', 'accounts', 'cashflow', 'balance', 'top', 'cards', 'recent'];
 
 catalogApi.put('/settings', async (c) => {
-  const b = await body<{ timezone?: string; display_currency?: string; theme?: string }>(c);
+  const b = await body<{ timezone?: string; display_currency?: string; theme?: string; home_layout?: string[] | null }>(c);
   const db = c.env.DB;
   if (b.timezone !== undefined) {
     if (!isValidTimeZone(b.timezone)) bad('Fuso orario non valido');
@@ -375,6 +377,11 @@ catalogApi.put('/settings', async (c) => {
   if (b.theme !== undefined) {
     if (!['light', 'blue', 'dark', 'system'].includes(b.theme)) bad('Tema non valido');
     await db.prepare('UPDATE users SET theme = ? WHERE id = ?').bind(b.theme, uid(c)).run();
+  }
+  if (b.home_layout !== undefined) {
+    const ok = b.home_layout === null || (Array.isArray(b.home_layout) && b.home_layout.length <= 20 && b.home_layout.every((k) => HOME_WIDGETS.includes(k)));
+    if (!ok) bad('Disposizione della Home non valida');
+    await db.prepare('UPDATE users SET home_layout = ? WHERE id = ?').bind(b.home_layout ? JSON.stringify([...new Set(b.home_layout)]) : null, uid(c)).run();
   }
   return c.json({ ok: true });
 });

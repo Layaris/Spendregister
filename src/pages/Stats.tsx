@@ -57,6 +57,17 @@ function Overview() {
           <Tile to="flusso" label="Flusso di cassa" value={eur(flow, true)} tone={flow >= 0 ? 'pos' : 'neg'}
             chart={<MiniBars income={s.income} spent={s.spent} />} extra={<Delta now={flow} before={prevFlow} up="good" />} />
           {ongoing && <Tile to="spese" label="Previsione a fine periodo" value={eur(s.forecast)} note={`Spesa finora ${eur(s.spent)} in ${s.days.elapsed} di ${s.days.total} giorni`} />}
+          {s.by_card.some((x) => x.card) && (
+            <a href="#/statistiche/spese" onClick={() => setTimeout(() => document.getElementById('per-carta')?.scrollIntoView({ behavior: 'smooth' }), 400)} className="card" style={{ textDecoration: 'none', color: 'inherit', padding: '16px 18px', gap: 8 }}>
+              <span className="label">Per carta</span>
+              {s.by_card.slice(0, 3).map((x) => (
+                <span key={x.card ?? 'none'} className="row between" style={{ fontSize: 15 }}>
+                  <span>{x.card ?? <span className="muted">Senza carta</span>}</span>
+                  <b className="num money">{eur(x.total)} <span className="muted" style={{ fontWeight: 400, fontSize: 13 }}>{Math.round((x.total / s.spent) * 100)}%</span></b>
+                </span>
+              ))}
+            </a>
+          )}
           <Tile to="entrate" label="Entrate" value={eur(s.income)} tone="pos" extra={<Delta now={s.income} before={s.previous.income} up="good" />} note={s.previous.income ? 'rispetto al periodo precedente' : undefined} />
         </>
       )}
@@ -141,7 +152,7 @@ function Spending({ s }: { s: StatsData }) {
         })}
       </section>
       {s.by_card.some((x) => x.card) && (
-        <section className="card">
+        <section className="card" id="per-carta">
           <div className="row between"><span className="label">Per carta</span><a href="#/carte" style={{ fontSize: 14, textDecoration: 'none' }}>Carte</a></div>
           <span className="muted" style={{ fontSize: 13, marginTop: -6 }}>Le stesse spese del totale, divise per carta: non si sommano.</span>
           {s.by_card.map((x) => (

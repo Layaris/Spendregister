@@ -1179,6 +1179,26 @@ describe('regole predefinite per chi viaggia', () => {
   });
 });
 
+describe('Home personalizzabile', () => {
+  const c = new Client('10.48.0.1');
+  beforeAll(async () => { await c.post('/api/guest'); });
+  it('parte con la disposizione predefinita, si cambia e finisce nel backup', async () => {
+    expect((await c.get('/api/bootstrap')).json.settings.home_layout).toBeNull();
+    expect((await c.put('/api/settings', { home_layout: ['hero', 'widget-inventato'] })).status).toBe(400);
+    expect((await c.put('/api/settings', { home_layout: ['hero', 'cashflow', 'recent', 'cashflow'] })).status).toBe(200);
+    expect((await c.get('/api/bootstrap')).json.settings.home_layout).toEqual(['hero', 'cashflow', 'recent']);
+    const rows = (await c.get('/api/backup/export?table=settings')).json.rows;
+    expect(rows).toEqual(expect.arrayContaining([{ key: 'home_layout', value: '["hero","cashflow","recent"]' }]));
+    const d = new Client('10.48.0.2');
+    await d.post('/api/guest');
+    await d.post('/api/backup/import/begin', { mode: 'replace', format: 'ledgy-backup', version: 1 });
+    await d.post('/api/backup/import/chunk', { mode: 'replace', table: 'settings', rows, maps: {} });
+    expect((await d.get('/api/bootstrap')).json.settings.home_layout).toEqual(['hero', 'cashflow', 'recent']);
+    await c.put('/api/settings', { home_layout: null });
+    expect((await c.get('/api/bootstrap')).json.settings.home_layout).toBeNull();
+  });
+});
+
 describe('pulizia notturna', () => {
   const withSession = (token: string) => { const c = new Client('10.30.0.1'); c.cookie = `ledgy_session=${token}`; return c; };
   const ping = (token: string) => new Client('10.30.0.2').post(`/api/in/${token}/ping`, {});

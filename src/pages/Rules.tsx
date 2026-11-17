@@ -24,7 +24,11 @@ export function RulesList() {
     reload();
   };
   const describe = (r: Rule) => {
-    const parts = r.definition.conditions.map((c) => `${FIELDS.find((f) => f[0] === c.field)?.[1].toLowerCase()} ${OPS.find((o) => o[0] === c.op)?.[1]} “${c.value}”`);
+    const short = (v: unknown) => {
+      const t = String(v).replace(/\\b|\\W\*|\\W\?|\\s\*/g, '').replace(/\|/g, ', ');
+      return t.length > 60 ? `${t.slice(0, 57)}…` : t;
+    };
+    const parts = r.definition.conditions.map((c) => `${FIELDS.find((f) => f[0] === c.field)?.[1].toLowerCase()} ${OPS.find((o) => o[0] === c.op)?.[1]} “${short(c.value)}”`);
     const target = r.definition.actions.category_id ? ` → ${store.catName(r.definition.actions.category_id)}` : r.definition.bands?.length ? ` → ${r.definition.bands.length} fasce di importo` : '';
     return `${parts.join(' e ') || 'sempre'}${target}`;
   };
@@ -44,7 +48,7 @@ export function RulesList() {
             <div key={r.id} className="row" style={{ alignItems: 'flex-start' }}>
               <a href={`#/regole/${r.id}`} className="grow stack" style={{ gap: 2, textDecoration: 'none', color: 'inherit', opacity: r.enabled ? 1 : 0.55 }}>
                 <span style={{ fontWeight: 600 }}>{r.name}</span>
-                <span className="muted" style={{ fontSize: 13 }}>{describe(r)}</span>
+                <span className="muted" style={{ fontSize: 13, overflowWrap: 'anywhere' }}>{describe(r)}</span>
               </a>
               <Toggle on={r.enabled} label={`Regola ${r.name} attiva`} onChange={() => toggle(r)} />
             </div>

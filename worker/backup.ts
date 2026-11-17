@@ -44,9 +44,9 @@ backupApi.get('/export', async (c) => {
   if (!cols) bad('Tabella sconosciuta');
   const u = uid(c);
   if (table === 'settings') {
-    const s = await c.env.DB.prepare('SELECT timezone, display_currency, theme FROM users WHERE id = ?').bind(u).first<{ timezone: string; display_currency: string; theme: string }>();
+    const s = await c.env.DB.prepare('SELECT timezone, display_currency, theme, home_layout FROM users WHERE id = ?').bind(u).first<{ timezone: string; display_currency: string; theme: string; home_layout: string | null }>();
     return c.json({ rows: [
-      { key: 'timezone', value: s?.timezone ?? 'Asia/Makassar' }, { key: 'display_currency', value: s?.display_currency ?? 'EUR' }, { key: 'theme', value: s?.theme ?? 'light' },
+      { key: 'timezone', value: s?.timezone ?? 'Asia/Makassar' }, { key: 'display_currency', value: s?.display_currency ?? 'EUR' }, { key: 'theme', value: s?.theme ?? 'light' }, { key: 'home_layout', value: s?.home_layout ?? null },
     ], next: null });
   }
   const after = Number(c.req.query('after')) || 0;
@@ -170,6 +170,10 @@ backupApi.post('/import/chunk', async (c) => {
       if (typeof cur === 'string' && /^[A-Z]{3}$/.test(cur)) await db.prepare('UPDATE users SET display_currency = ? WHERE id = ?').bind(cur, u).run();
       const theme = get('theme');
       if (typeof theme === 'string' && ['light', 'blue', 'dark', 'system'].includes(theme)) await db.prepare('UPDATE users SET theme = ? WHERE id = ?').bind(theme, u).run();
+      const home = get('home_layout');
+      if (typeof home === 'string') {
+        try { if (Array.isArray(JSON.parse(home))) await db.prepare('UPDATE users SET home_layout = ? WHERE id = ?').bind(home, u).run(); } catch { /* ignora */ }
+      }
     }
     return c.json({ inserted: merge ? 0 : rows.length, skipped: merge ? rows.length : 0 });
   }
