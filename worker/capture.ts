@@ -96,7 +96,8 @@ export async function processCapture(db: D1Database, userId: string, deviceId: s
   const source = key
     ? await db.prepare('SELECT card, account_id FROM capture_sources WHERE user_id = ? AND key = ?').bind(userId, key).first<{ card: string | null; account_id: string | null }>()
     : null;
-  const card = source?.card ?? appLabel(p.app);
+  // Ordine: carta scritta dall'utente per questa fonte, poi il nome del lettore per banca, poi il nome dell'app.
+  const card = source?.card ?? parsed.bank ?? appLabel(p.app);
 
   const rules = evaluateRules(await loadRules(db, userId), {
     merchant, merchant_raw: merchantRaw, text, app: p.app ?? null, currency: parsed.currency, account_id: null,

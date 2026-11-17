@@ -21,6 +21,8 @@ export interface ParsedPayment {
   confidence: 'high' | 'medium' | 'low';
   ambiguous: boolean;
   via: string;
+  /** Nome del lettore che ha letto la notifica: è la carta o la banca con cui si è pagato. */
+  bank?: string;
 }
 
 export interface AiHint {
@@ -142,6 +144,7 @@ export function parseWithParser(p: ParserDef, text: string): ParsedPayment | nul
     confidence: 'high',
     ambiguous: parsed.ambiguous,
     via: `lettore: ${p.name}`,
+    bank: p.name.trim() || undefined,
   };
 }
 

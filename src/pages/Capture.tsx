@@ -202,7 +202,7 @@ function Parsers({ list, reload }: { list: Parser[] | null; reload: () => void }
   return (
     <section className="card">
       <div className="row between"><h2 className="h2">Lettori per banca</h2>{!open && <button className="btn small" onClick={() => setOpen(true)}>Nuovo</button>}</div>
-      <p className="muted" style={{ margin: 0, fontSize: 13 }}>Senza lettore Ledgy usa una lettura generica, che riconosce la maggior parte delle notifiche. Un lettore serve per le banche con un formato insolito.</p>
+      <p className="muted" style={{ margin: 0, fontSize: 13 }}>Senza lettore Ledgy usa una lettura generica, che riconosce la maggior parte delle notifiche. Un lettore serve per le banche con un formato insolito, e il suo nome compare come carta su ogni spesa che legge.</p>
       {list?.map((p) => (
         <div key={p.id} className="row" style={{ fontSize: 14 }}>
           <span className="grow"><b>{p.name}</b> <span className="muted">· {p.app}</span></span>
@@ -211,7 +211,7 @@ function Parsers({ list, reload }: { list: Parser[] | null; reload: () => void }
       ))}
       {open && (
         <div className="stack" style={{ gap: 8 }}>
-          <label className="field"><span>Nome</span><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Es. Jago" /></label>
+          <label className="field"><span>Nome della carta o banca</span><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Es. Xplace, Jago" /></label>
           <label className="field"><span>App (nome pacchetto o nome)</span><input className="input" value={form.app} onChange={(e) => setForm({ ...form, app: e.target.value })} placeholder="com.jago.digitalBanking" /></label>
           <label className="field"><span>Notifica di esempio</span><textarea className="input" value={form.sample} onChange={(e) => setForm({ ...form, sample: e.target.value })} /></label>
           <label className="field"><span>Modello (regex con i gruppi amount, currency, merchant)</span><input className="input mono" value={form.pattern} onChange={(e) => setForm({ ...form, pattern: e.target.value })} placeholder="Pembayaran (?<amount>[\d.]+) ke (?<merchant>.+?) berhasil" /></label>

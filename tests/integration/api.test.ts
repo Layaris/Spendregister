@@ -978,6 +978,14 @@ describe('carta o banca e conti in altre valute', () => {
     expect(after).toMatchObject({ type: 'expense', amount: -52900000, category_id: null });
     expect(after.amount_eur).toBeLessThan(0);
   });
+  it('una notifica letta da un lettore per banca prende il nome del lettore come carta', async () => {
+    const pattern = '(?<amount>[\\d.,]+) (?<currency>[A-Z]{3})\\W+(?<merchant>.+?)\\W+Card payment';
+    expect((await c.post('/api/capture/parsers', { name: 'Xplace', app: 'Pagamento Xplace', pattern })).status).toBe(201);
+    const r = await c.post(phone, { title: 'Pagamento Xplace', text: '52.50 EUR | GENKI* GT-652379 | Card payment | Cashback: +$2.35' });
+    const t = (await c.get(`/api/transactions/${r.json.transaction_id}`)).json;
+    expect(t).toMatchObject({ card: 'Xplace', type: 'expense', merchant: 'Genki', category_id: own.cat_health_insurance });
+    expect(t.capture.detail).toContain('lettore: Xplace');
+  });
   it('le carte riconosciute finiscono nel backup', async () => {
     const rows = (await c.get('/api/backup/export?table=capture_sources')).json.rows;
     expect(rows).toEqual([expect.objectContaining({ key: 'card payment', card: 'Carta cripto', account_id: wise })]);
