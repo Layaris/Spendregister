@@ -202,3 +202,77 @@ export function cleanMerchantName(raw: string | null | undefined): string | null
   if (s === s.toUpperCase() && s.length > 3) s = s.toLowerCase().replace(/\b\p{L}/gu, (c) => c.toUpperCase());
   return s;
 }
+
+// ---- Lettore creato da una notifica vera (Cattura automatica › Ultime notifiche › Crea lettore) ----
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** Testo fisso del modello: caratteri speciali protetti, numeri e spazi resi generici. */
+const literal = (s: string) => escapeRe(s).replace(/\d+/g, '\\d+').replace(/\s+/g, '\\s+');
+
+/**
+ * Propone il modello di un lettore per una notifica: importo, valuta e negozio come gruppi, il resto come
+ * testo fisso vicino. Restituisce null se il modello proposto non rilegge la notifica stessa.
+ */
+export function suggestPattern(text: string): string | null {
+  const re = (src: RegExp) => new RegExp(src.source, 'gd');
+  type Hit = { start: number; end: number; parts: Array<[number, number, 'amount' | 'currency']> };
+  const hits: Hit[] = [];
+  for (const m of text.matchAll(re(PREFIX_RE))) {
+    const [c, n] = [m.indices![1]!, m.indices![2]!];
+    if (currencyFromToken(m[1]) && parseAmount(m[2].trim(), currencyFromToken(m[1])!)?.value) hits.push({ start: c[0], end: n[1], parts: [[c[0], c[1], 'currency'], [n[0], n[1], 'amount']] });
+  }
+  for (const m of text.matchAll(re(SUFFIX_RE))) {
+    const [n, c] = [m.indices![1]!, m.indices![2]!];
+    if (currencyFromToken(m[2]) && parseAmount(m[1].trim(), currencyFromToken(m[2])!)?.value) hits.push({ start: n[0], end: c[1], parts: [[n[0], n[1], 'amount'], [c[0], c[1], 'currency']] });
+  }
+  hits.sort((a, b) => a.start - b.start);
+  const hit = hits[0];
+  if (!hit) return null;
+  const expected = parseGeneric(text);
+
+  // Negozio: dopo "a / at / presso…", altrimenti ciò che segue l'importo fino al prossimo separatore.
+  let shop: [number, number] | null = null;
+  const mm = re(MERCHANT_RE).exec(text);
+  if (mm?.indices?.[1] && mm[1].trim().length >= 2) shop = [mm.indices[1][0], mm.indices[1][0] + mm[1].trimEnd().length];
+  if (!shop) {
+    const rest = text.slice(hit.end);
+    const skip = rest.match(/^[^\p{L}\d\n]*/u)![0].length;
+    const seg = rest.slice(skip).match(/^[^|\n;]+/)?.[0]?.trimEnd() ?? '';
+    if (/\p{L}/u.test(seg) && !/^\p{Lu}{3}\b/u.test(seg.trim())) shop = [hit.end + skip, hit.end + skip + seg.length];
+  }
+
+  const block = (h: Hit) => {
+    let out = '';
+    let pos = h.start;
+    for (const [s, e, kind] of h.parts) {
+      out += text.slice(pos, s) ? '\\s?' : '';
+      const tok = text.slice(s, e);
+      out += kind === 'amount' ? '(?<amount>\\d[\\d.,\\s]*\\d|\\d)' : /^[A-Z]{3}$/.test(tok) ? '(?<currency>[A-Z]{3})' : `(?<currency>${escapeRe(tok)})`;
+      pos = e;
+    }
+    return out;
+  };
+  const lineStart = text.lastIndexOf('\n', Math.min(hit.start, shop?.[0] ?? hit.start) - 1) + 1;
+  const before = text.slice(Math.max(lineStart, Math.min(hit.start, shop?.[0] ?? hit.start) - 25), Math.min(hit.start, shop?.[0] ?? hit.start));
+  const ctx = before.replace(/^\S*\s/, '').trimStart();
+  const build = (withShop: boolean) => {
+    let p = ctx ? literal(ctx) : '';
+    if (!withShop || !shop) return p + block(hit);
+    const [first, second] = hit.start < shop[0] ? ['amount', 'shop'] : ['shop', 'amount'];
+    const between = first === 'amount' ? text.slice(hit.end, shop[0]) : text.slice(shop[1], hit.start);
+    const gap = /^[^\p{L}\d]*$/u.test(between) ? '\\W+' : literal(between);
+    p += first === 'amount' ? block(hit) + gap + '(?<merchant>.+?)' : '(?<merchant>.+?)' + gap + block(hit);
+    if (second === 'shop') {
+      const after = text.slice(shop[1]).split('\n')[0];
+      const next = after.match(/^[^\d]{1,20}/)?.[0].replace(/\s+\S*$/, (x) => (after.length > 20 ? '' : x)) ?? '';
+      p += next.trim() ? literal(next.trimEnd()) : '(?=\\n|$)';
+    }
+    return p;
+  };
+  for (const withShop of [true, false]) {
+    const pattern = build(withShop);
+    const r = parseWithParser({ id: 'prova', name: 'prova', app: '', pattern, flags: 'i', direction: 'expense', default_currency: null }, text);
+    if (r && expected && r.amount === expected.amount && r.currency === expected.currency && (!withShop || r.merchant)) return pattern;
+  }
+  return null;
+}

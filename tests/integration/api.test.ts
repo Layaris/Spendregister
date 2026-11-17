@@ -2,6 +2,7 @@
 // I test sono in ordine e condividono il database. Il database parte con qualche ospite e account
 // creati "a gennaio" (vedi server.ts), per la pulizia notturna.
 import { beforeAll, describe, expect, inject, it } from 'vitest';
+import { suggestPattern } from '../../shared/notification';
 import { OLD, V1_CATEGORIES } from './server';
 
 const BASE = inject('baseUrl');
@@ -989,6 +990,33 @@ describe('carta o banca e conti in altre valute', () => {
   it('le carte riconosciute finiscono nel backup', async () => {
     const rows = (await c.get('/api/backup/export?table=capture_sources')).json.rows;
     expect(rows).toEqual([expect.objectContaining({ key: 'card payment', card: 'Carta cripto', account_id: wise })]);
+  });
+});
+
+describe('lettore creato da una notifica arrivata', () => {
+  const c = new Client('10.44.0.1');
+  let phone = '';
+  let txId = '';
+  beforeAll(async () => {
+    await c.post('/api/guest');
+    phone = await newDevice(c);
+  });
+  it('dalla notifica arriva il modello proposto, il lettore dà la carta anche alle spese già arrivate', async () => {
+    const text = '52,900.00 IDR | Grab* A-A3D4M24GXEQSAV | Card payment | Cashback: +$0.12';
+    txId = (await c.post(phone, { title: '💳 Card payment', text })).json.transaction_id;
+    expect((await c.get(`/api/transactions/${txId}`)).json.card).toBeNull();
+    const pattern = suggestPattern(text)!;
+    expect((await c.post('/api/capture/parsers/test', { pattern, text })).json.parsed).toMatchObject({ amount: 52900, currency: 'IDR', merchant: 'Grab* A-A3D4M24GXEQSAV' });
+    const r = await c.post('/api/capture/parsers', { name: ' Xplace ', app: 'Card payment', pattern, sample: text });
+    expect(r.json.applied).toBe(1);
+    expect((await c.get(`/api/transactions/${txId}`)).json.card).toBe('Xplace');
+    const next = await c.post(phone, { title: '💳 Card payment', text: '52.50 EUR | GENKI* GT-652379 | Card payment | Cashback: +$2.35' });
+    expect((await c.get(`/api/transactions/${next.json.transaction_id}`)).json).toMatchObject({ card: 'Xplace', merchant: 'Genki', type: 'expense' });
+  });
+  it('rinominare il lettore rinomina la carta sulle spese', async () => {
+    const id = (await c.get('/api/capture/parsers')).json.items[0].id;
+    await c.put(`/api/capture/parsers/${id}`, { name: 'Xplace Visa' });
+    expect((await c.get(`/api/transactions/${txId}`)).json.card).toBe('Xplace Visa');
   });
 });
 

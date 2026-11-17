@@ -1,7 +1,7 @@
 import { categoryFromKeywords } from '../shared/keywords';
 import { describe, expect, it } from 'vitest';
 import { amountAppearsInText, formatMoney, parseAmount, roundMilli, toMilli } from '../shared/money';
-import { cleanMerchantName, parseFromHint, parseGeneric, parseNotification, parseWithParser } from '../shared/notification';
+import { cleanMerchantName, parseFromHint, parseGeneric, parseNotification, parseWithParser, suggestPattern } from '../shared/notification';
 import { evaluateRules, type Rule, type RuleInput } from '../shared/rules';
 import { isLikelyDuplicate } from '../shared/dedupe';
 
@@ -225,5 +225,29 @@ describe('entrate e spese', () => {
   it('un cashback da solo è un’entrata, un rimborso anche dentro un pagamento', () => {
     expect(parseNotification({ text: 'Cashback 2.50 USD credited' }, [])?.direction).toBe('income');
     expect(parseNotification({ text: 'Refund of card payment 12 EUR from Zara' }, [])?.direction).toBe('income');
+  });
+});
+
+describe('lettore proposto da una notifica vera', () => {
+  const check = (text: string, want: { amount: number; currency: string; merchant?: string }) => {
+    const pattern = suggestPattern(text);
+    expect(pattern).toBeTruthy();
+    const r = parseWithParser({ id: 'x', name: 'x', app: 'x', pattern: pattern!, flags: 'i', direction: 'expense', default_currency: null }, `Titolo\n${text}`);
+    expect(r).toMatchObject(want);
+    return pattern!;
+  };
+  it('notifica Xplace "importo | negozio | Card payment | Cashback"', () => {
+    const p = check('52,900.00 IDR | Grab* A-A3D4M24GXEQSAV | Card payment | Cashback: +$0.12', { amount: 52900, currency: 'IDR', merchant: 'Grab* A-A3D4M24GXEQSAV' });
+    // Lo stesso modello legge le altre notifiche della stessa carta.
+    const r = parseWithParser({ id: 'x', name: 'x', app: 'x', pattern: p, flags: 'i', direction: 'expense', default_currency: null }, '52.50 EUR | GENKI* GT-652379 | Card payment | Cashback: +$2.35');
+    expect(r).toMatchObject({ amount: 52.5, currency: 'EUR', merchant: 'GENKI* GT-652379' });
+  });
+  it('notifiche con "a / at" e simbolo della valuta', () => {
+    check('Hai pagato Rp55.600 a Grab* A-A359GUFW36UCAV', { amount: 55600, currency: 'IDR', merchant: 'Grab* A-A359GUFW36UCAV' });
+    check('You spent 12.50 SGD at Ya Kun Kaya Toast', { amount: 12.5, currency: 'SGD', merchant: 'Ya Kun Kaya Toast' });
+    check('Transaksi berhasil Rp 48.500 di INDOMARET SEMINYAK', { amount: 48500, currency: 'IDR', merchant: 'INDOMARET SEMINYAK' });
+  });
+  it('senza importo non propone nulla', () => {
+    expect(suggestPattern('Il tuo codice di verifica è 482913')).toBeNull();
   });
 });

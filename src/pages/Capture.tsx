@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { suggestPattern } from '../../shared/notification';
 import { api } from '../api';
 import { Icon } from '../icons';
 import { useApi, useStore } from '../store';
@@ -15,6 +16,7 @@ export function Capture() {
   const store = useStore();
   const devices = useApi<{ items: Device[] }>('/capture/devices');
   const captures = useApi<{ items: Capture[] }>('/capture/captures?limit=30');
+  const [draft, setDraft] = useState<Draft | null>(null);
   const parsers = useApi<{ items: Parser[] }>('/capture/parsers');
   const [connect, setConnect] = useState<{ platform: 'ios' | 'android'; url?: string } | null>(null);
   const [name, setName] = useState('');
@@ -125,13 +127,14 @@ export function Capture() {
             <div className="raw" style={{ fontSize: 11 }}>{[c.title, c.text].filter(Boolean).join(' · ')}</div>
             <div className="row" style={{ gap: 8 }}>
               {c.detail && <span className="muted grow" style={{ fontSize: 12 }}>{c.detail}</span>}
+              <button className="btn small" onClick={() => setDraft({ app: (c.title ?? c.app ?? '').replace(/^[^\p{L}\d]+/u, '').trim(), sample: c.text, pattern: suggestPattern(c.text) ?? '', key: Date.now() })}>Crea lettore</button>
               {c.transaction_id ? <a className="btn small" href={`#/m/${c.transaction_id}`}>Apri</a> : c.status === 'unrecognized' && <button className="btn small" onClick={() => retry(c)}>Riprova</button>}
             </div>
           </div>
         ))}
       </section>
 
-      <Parsers list={parsers.data?.items ?? null} reload={parsers.reload} />
+      <Parsers list={parsers.data?.items ?? null} reload={() => { parsers.reload(); captures.reload(); }} draft={draft} />
     </div>
   );
 }
@@ -167,18 +170,41 @@ function AndroidSteps({ url }: { url: string }) {
   );
 }
 
-function Parsers({ list, reload }: { list: Parser[] | null; reload: () => void }) {
+interface Draft { app: string; sample: string; pattern: string; key: number }
+
+function Parsers({ list, reload, draft }: { list: Parser[] | null; reload: () => void; draft: Draft | null }) {
   const store = useStore();
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: '', app: '', pattern: '', default_currency: 'IDR', sample: '' });
+  const [form, setForm] = useState({ name: '', app: '', pattern: '', default_currency: '', sample: '' });
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [names, setNames] = useState<Record<string, string>>({});
+  const formRef = useRef<HTMLDivElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+
+  // "Crea lettore" da una notifica: modulo già compilato, si scrive solo il nome della carta.
+  useEffect(() => {
+    if (!draft) return;
+    setForm({ name: '', app: draft.app, pattern: draft.pattern, default_currency: '', sample: draft.sample });
+    setResult(draft.pattern ? null : 'Ledgy non riesce a proporre un modello per questa notifica: scrivilo a mano.');
+    setError(null);
+    setOpen(true);
+    setTimeout(() => { formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); nameRef.current?.focus(); }, 50);
+  }, [draft]);
+  const rename = async (p: Parser) => {
+    const name = names[p.id]?.trim();
+    if (!name || name === p.name) return;
+    await api(`/capture/parsers/${p.id}`, { method: 'PUT', json: { name } });
+    store.toast(`Ora la carta si chiama ${name}`);
+    reload();
+    await store.refresh();
+  };
 
   const test = async () => {
     setError(null);
     try {
       const r = await api<{ parsed: { amount: number; currency: string; merchant: string | null } | null }>('/capture/parsers/test', { method: 'POST', json: { ...form, text: form.sample } });
-      setResult(r.parsed ? `Importo ${r.parsed.amount} ${r.parsed.currency}, merchant “${r.parsed.merchant ?? '—'}”` : 'Il modello non trova nulla in questo testo.');
+      setResult(r.parsed ? `Importo ${r.parsed.amount} ${r.parsed.currency} · negozio “${r.parsed.merchant ?? '—'}”${form.name ? ` · carta ${form.name}` : ''}` : 'Il modello non trova nulla in questo testo.');
     } catch (e) {
       setError((e as Error).message);
     }
@@ -186,8 +212,9 @@ function Parsers({ list, reload }: { list: Parser[] | null; reload: () => void }
   const save = async () => {
     setError(null);
     try {
-      await api('/capture/parsers', { method: 'POST', json: form });
-      store.toast('Lettore salvato');
+      const r = await api<{ applied: number }>('/capture/parsers', { method: 'POST', json: { ...form, default_currency: form.default_currency || null } });
+      store.toast(r.applied ? `Lettore salvato: ${r.applied} ${r.applied === 1 ? 'spesa già arrivata ora porta' : 'spese già arrivate ora portano'} ${form.name}` : 'Lettore salvato');
+      await store.refresh();
       setOpen(false);
       reload();
     } catch (e) {
@@ -204,18 +231,21 @@ function Parsers({ list, reload }: { list: Parser[] | null; reload: () => void }
       <div className="row between"><h2 className="h2">Lettori per banca</h2>{!open && <button className="btn small" onClick={() => setOpen(true)}>Nuovo</button>}</div>
       <p className="muted" style={{ margin: 0, fontSize: 13 }}>Senza lettore Ledgy usa una lettura generica, che riconosce la maggior parte delle notifiche. Un lettore serve per le banche con un formato insolito, e il suo nome compare come carta su ogni spesa che legge.</p>
       {list?.map((p) => (
-        <div key={p.id} className="row" style={{ fontSize: 14 }}>
-          <span className="grow"><b>{p.name}</b> <span className="muted">· {p.app}</span></span>
+        <div key={p.id} className="row" style={{ gap: 6 }}>
+          <input className="input grow" aria-label={`Nome della carta per ${p.app}`} value={names[p.id] ?? p.name} onChange={(e) => setNames({ ...names, [p.id]: e.target.value })} />
+          {names[p.id] !== undefined && names[p.id].trim() && names[p.id].trim() !== p.name
+            ? <button className="btn small primary" onClick={() => rename(p)}>Rinomina</button>
+            : <span className="muted" style={{ fontSize: 13, maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.app}</span>}
           <button className="btn small" onClick={() => remove(p)}>Elimina</button>
         </div>
       ))}
       {open && (
-        <div className="stack" style={{ gap: 8 }}>
-          <label className="field"><span>Nome della carta o banca</span><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Es. Xplace, Jago" /></label>
-          <label className="field"><span>App (nome pacchetto o nome)</span><input className="input" value={form.app} onChange={(e) => setForm({ ...form, app: e.target.value })} placeholder="com.jago.digitalBanking" /></label>
+        <div className="stack" style={{ gap: 8 }} ref={formRef}>
+          <label className="field"><span>Nome della carta o banca</span><input ref={nameRef} className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Es. Xplace, Jago" /></label>
+          <label className="field"><span>Titolo della notifica (iPhone) o app (Android)</span><input className="input" value={form.app} onChange={(e) => setForm({ ...form, app: e.target.value })} placeholder="com.jago.digitalBanking" /></label>
           <label className="field"><span>Notifica di esempio</span><textarea className="input" value={form.sample} onChange={(e) => setForm({ ...form, sample: e.target.value })} /></label>
           <label className="field"><span>Modello (regex con i gruppi amount, currency, merchant)</span><input className="input mono" value={form.pattern} onChange={(e) => setForm({ ...form, pattern: e.target.value })} placeholder="Pembayaran (?<amount>[\d.]+) ke (?<merchant>.+?) berhasil" /></label>
-          <label className="field"><span>Valuta se non indicata</span><input className="input" value={form.default_currency} onChange={(e) => setForm({ ...form, default_currency: e.target.value.toUpperCase() })} /></label>
+          <label className="field"><span>Valuta se non indicata (facoltativa)</span><input className="input" value={form.default_currency} placeholder="Es. IDR" onChange={(e) => setForm({ ...form, default_currency: e.target.value.toUpperCase() })} /></label>
           {result && <div className="raw">{result}</div>}
           <ErrorBox error={error} />
           <div className="row" style={{ gap: 8 }}>

@@ -294,9 +294,15 @@ captureAdminApi.post('/parsers', async (c) => {
   const id = newId('prs');
   await c.env.DB
     .prepare('INSERT INTO parsers (id, user_id, name, app, pattern, flags, direction, default_currency, sample, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .bind(id, uid(c), b.name, b.app, b.pattern, b.flags ?? 'i', b.direction ?? 'expense', b.default_currency ?? null, b.sample ?? null, b.enabled === false ? 0 : 1, nowIso())
+    .bind(id, uid(c), b.name.trim(), b.app.trim(), b.pattern, b.flags ?? 'i', b.direction ?? 'expense', b.default_currency ?? null, b.sample ?? null, b.enabled === false ? 0 : 1, nowIso())
     .run();
-  return c.json({ id }, 201);
+  // Le spese già arrivate da quella fonte e senza carta prendono il nome del lettore.
+  const applied = await c.env.DB
+    .prepare(`UPDATE transactions SET card = ? WHERE user_id = ? AND card IS NULL AND capture_id IN (
+                SELECT id FROM captures WHERE user_id = ? AND instr(lower(COALESCE(title, '') || ' ' || COALESCE(app, '')), lower(?)) > 0)`)
+    .bind(b.name.trim(), uid(c), uid(c), b.app.trim())
+    .run();
+  return c.json({ id, applied: applied.meta.changes ?? 0 }, 201);
 });
 
 captureAdminApi.put('/parsers/:id', async (c) => {
@@ -310,6 +316,10 @@ captureAdminApi.put('/parsers/:id', async (c) => {
       b.default_currency !== undefined ? b.default_currency : cur.default_currency, b.sample !== undefined ? b.sample : cur.sample,
       b.enabled === undefined ? cur.enabled : b.enabled ? 1 : 0, c.req.param('id'), uid(c))
     .run();
+  // Lettore rinominato: anche la carta delle spese che portavano il vecchio nome.
+  if (b.name && b.name.trim() !== cur.name) {
+    await c.env.DB.prepare('UPDATE transactions SET card = ? WHERE user_id = ? AND card = ?').bind(b.name.trim(), uid(c), cur.name).run();
+  }
   return c.json({ ok: true });
 });
 

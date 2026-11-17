@@ -114,6 +114,20 @@ await page.click('a[href="#/statistiche/flusso"]');
 await page.waitForSelector('text=Sto spendendo meno di quanto guadagno?');
 check(true, 'apre il dettaglio del flusso di cassa');
 
+// Cattura: lettore creato da una notifica arrivata, già compilato; si scrive solo il nome della carta.
+await page.goto(`${BASE}/#/cattura`);
+await page.click('button:has-text("Crea lettore") >> nth=0');
+await page.waitForSelector('input[placeholder="Es. Xplace, Jago"]');
+check((await page.inputValue('input.mono')).includes('(?<amount>') && (await page.inputValue('textarea.input')).length > 10, 'il lettore da una notifica arriva già compilato');
+await page.fill('input[placeholder="Es. Xplace, Jago"]', 'Carta E2E');
+await page.click('button:text-is("Prova")');
+await page.waitForSelector('.raw:has-text("Importo")');
+check((await page.textContent('.raw:has-text("Importo")')).includes('carta Carta E2E'), 'la prova mostra importo, negozio e carta');
+await page.screenshot({ path: process.env.E2E_SHOT ?? '/dev/null' }).catch(() => {});
+await page.click('button:has-text("Salva lettore")');
+await page.waitForTimeout(800);
+check((await api('/api/capture/parsers')).items.some((p) => p.name === 'Carta E2E'), 'salva il lettore');
+
 // Categorie: un gruppo facoltativo si accende e si spegne.
 await page.goto(`${BASE}/#/categorie`);
 await page.click('button[aria-label="Accendi Animali"]');
