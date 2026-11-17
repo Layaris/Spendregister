@@ -4,11 +4,12 @@ import { cleanMerchantName } from '../shared/notification';
 import { evaluateRules, type Rule, type RuleDefinition, type RuleInput } from '../shared/rules';
 import { getEurRate } from './fx';
 import { normalizePostedAt } from '../shared/time';
-import { bad, body, getTimeZone, newId, notFound, nowIso, parseJson, runBatch, uid, type AppEnv } from './lib';
+import { bad, body, getTimeZone, HttpError, newId, notFound, nowIso, parseJson, runBatch, uid, type AppEnv } from './lib';
 import { seedId } from './seed';
 import { categoryFromKeywords } from '../shared/keywords';
 import { sourceKey } from '../shared/apps';
 import { learnSource } from './cards';
+import { aiCategory, aiMessage } from './ai';
 
 export interface TxRow {
   id: string;
@@ -340,6 +341,22 @@ transactionsApi.put('/:id', async (c) => {
     others = r?.n ?? 0;
   }
   return c.json({ ok: true, others, merchant, source });
+});
+
+/** Categoria chiesta all'AI (Gemini, poi NanoGPT), con una ricerca sul web del negozio. La applica e la conferma. */
+transactionsApi.post('/:id/ai', async (c) => {
+  const userId = uid(c);
+  const row = await c.env.DB.prepare('SELECT * FROM transactions WHERE id = ? AND user_id = ?').bind(c.req.param('id'), userId).first<TxRow>();
+  if (!row) notFound();
+  const cap = row.capture_id ? await c.env.DB.prepare('SELECT title, text FROM captures WHERE id = ?').bind(row.capture_id).first<{ title: string | null; text: string }>() : null;
+  let r;
+  try {
+    r = await aiCategory(c.env, userId, { merchant: row.merchant ?? row.merchant_raw, text: cap ? `${cap.title ?? ''} ${cap.text}` : row.note, amount_eur: row.amount_eur, currency: row.currency, kind: row.amount_eur > 0 ? 'income' : 'expense' });
+  } catch (e) {
+    throw new HttpError(400, aiMessage(e));
+  }
+  if (!r) bad("L'AI non ha trovato una categoria adatta");
+  return c.json(r);
 });
 
 /** Mette la stessa categoria a tutte le spese di un negozio (dopo una correzione). */

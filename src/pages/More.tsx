@@ -5,6 +5,7 @@ import { api } from '../api';
 import { backupToCsv, downloadFile, exportBackup, importBackup, parseBackup, summarize, type Backup } from '../backup';
 import { Icon } from '../icons';
 import { applyTheme, useStore } from '../store';
+import { AiSettings } from './AiSettings';
 import type { Theme } from '../api';
 import { ErrorBox } from '../ui';
 import { CURRENCIES, formatMoney } from '../util';
@@ -54,6 +55,7 @@ export function More({ onAuthChange }: { onAuthChange: () => void }) {
       </div>
       <Accounts />
       <BackupSection />
+      <AiSettings />
       <SettingsSection />
       {!guest && <button className="btn" onClick={logout}>Esci</button>}
       {!guest && <DeleteAccount onDone={onAuthChange} />}

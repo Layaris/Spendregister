@@ -3,7 +3,7 @@
 // creati "a gennaio" (vedi server.ts), per la pulizia notturna.
 import { beforeAll, describe, expect, inject, it } from 'vitest';
 import { suggestPattern } from '../../shared/notification';
-import { OLD, V1_CATEGORIES } from './server';
+import { AI_PORT, OLD, V1_CATEGORIES } from './server';
 
 const BASE = inject('baseUrl');
 const EMAIL = 'anna@example.com';
@@ -1068,6 +1068,75 @@ describe('carte e banche', () => {
     expect((await c.get(`/api/transactions/${r.json.transaction_id}`)).json.card).toBe('Xplace Visa');
     expect((await c.post('/api/cards/rename', { from: 'Revolut', to: '' })).json.changed).toBe(1);
     expect((await c.get(`/api/transactions/${rev}`)).json.card).toBeNull();
+  });
+});
+
+describe('intelligenza artificiale', () => {
+  const c = new Client('10.46.0.1');
+  const own: Record<string, string> = {};
+  let phone = '';
+  const aiStats = async () => (await fetch(`http://127.0.0.1:${AI_PORT}/stats`)).json() as Promise<{ gemini: number; nanogpt: number; geminiSearch: number; nanoOnline: number }>;
+  const waitFor = async (fn: () => Promise<boolean>) => { for (let i = 0; i < 40; i++) { if (await fn()) return true; await new Promise((r) => setTimeout(r, 150)); } return false; };
+  beforeAll(async () => {
+    await c.post('/api/guest');
+    await loadOwn(c, own);
+    phone = await newDevice(c);
+  });
+  it('senza chiavi non chiama nessuno e la spesa resta da rivedere', async () => {
+    const before = await aiStats();
+    const r = await c.post(phone, { title: '💳 Card payment', text: '137,709.00 IDR | Reload Sanctuary Canggu | Card payment | Cashback: +$0.30' });
+    expect(r.json.status).toBe('review');
+    await new Promise((x) => setTimeout(x, 500));
+    expect((await c.get(`/api/transactions/${r.json.transaction_id}`)).json.category_id).toBeNull();
+    expect((await aiStats()).gemini).toBe(before.gemini);
+    expect((await c.post(`/api/transactions/${r.json.transaction_id}/ai`)).json.error).toContain('Manca una chiave');
+  });
+  it('le chiavi si salvano ma non tornano mai all’app', async () => {
+    expect((await c.put('/api/ai', { gemini_key: 'gemini-ok', gemini_model: 'modello-inventato' })).status).toBe(400);
+    expect((await c.put('/api/ai', { gemini_key: 'gemini-ok' })).status).toBe(200);
+    const s = (await c.get('/api/ai')).json;
+    expect(s).toMatchObject({ enabled: true, gemini: '…i-ok', nanogpt: null });
+    expect(JSON.stringify(s)).not.toContain('gemini-ok');
+    expect((await c.post('/api/ai/test')).json).toMatchObject({ ok: true, provider: 'gemini' });
+    expect(JSON.stringify((await c.get('/api/backup/export?table=settings')).json)).not.toContain('gemini-ok');
+  });
+  it('una spesa senza categoria la riceve dall’AI in background, cercando il negozio sul web', async () => {
+    const before = await aiStats();
+    const r = await c.post(phone, { title: '💳 Card payment', text: '150,000.00 IDR | Reload Sanctuary Canggu | Card payment | Cashback: +$0.30' });
+    expect(r.json.needs_ai).toBeUndefined();
+    const ok = await waitFor(async () => (await c.get(`/api/transactions/${r.json.transaction_id}`)).json.category_id === own.cat_care_spa);
+    expect(ok).toBe(true);
+    const t = (await c.get(`/api/transactions/${r.json.transaction_id}`)).json;
+    expect(t.status).toBe('confirmed');
+    expect(t.capture.detail).toContain("categoria dall'AI (gemini)");
+    const after = await aiStats();
+    expect(after.geminiSearch).toBeGreaterThan(before.geminiSearch);
+    // La volta dopo basta lo storico: niente AI.
+    const again = await c.post(phone, { title: '💳 Card payment', text: '90,000.00 IDR | Reload Sanctuary Canggu | Card payment | Cashback: +$0.10' });
+    expect((await c.get(`/api/transactions/${again.json.transaction_id}`)).json.category_id).toBe(own.cat_care_spa);
+    expect((await aiStats()).gemini).toBe(after.gemini);
+  });
+  it('quando Gemini finisce le richieste gratuite passa a NanoGPT (con ricerca) e lo salta per un’ora', async () => {
+    await c.put('/api/ai', { gemini_key: 'gemini-esaurita', nanogpt_key: 'nano-ok' });
+    const first = (await c.get('/api/transactions?status=review')).json.items.find((x: any) => !x.category_id);
+    const before = await aiStats();
+    const r = await c.post(`/api/transactions/${first.id}/ai`);
+    expect(r.json).toMatchObject({ category_id: own.cat_care_spa, provider: 'nanogpt' });
+    const mid = await aiStats();
+    expect(mid.gemini - before.gemini).toBe(1);
+    expect(mid.nanoOnline - before.nanoOnline).toBe(1);
+    expect((await c.get('/api/ai')).json.gemini_paused_until).toBeTruthy();
+    await c.post(`/api/transactions/${first.id}/ai`);
+    expect((await aiStats()).gemini).toBe(mid.gemini); // Gemini in pausa: non lo richiama
+    // Una chiave Gemini nuova toglie la pausa.
+    await c.put('/api/ai', { gemini_key: 'gemini-ok' });
+    expect((await c.get('/api/ai')).json.gemini_paused_until).toBeNull();
+  });
+  it('si spegne e una chiave vuota si toglie; eliminando l’ospite spariscono le chiavi', async () => {
+    await c.put('/api/ai', { enabled: false });
+    expect((await c.post('/api/ai/test')).status).toBe(400);
+    await c.put('/api/ai', { enabled: true, nanogpt_key: '' });
+    expect((await c.get('/api/ai')).json.nanogpt).toBeNull();
   });
 });
 

@@ -14,6 +14,7 @@ export function TxDetail({ id }: { id: string }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [form, setForm] = useState({ merchant: '', note: '', amount: '', labels: '', when: '', card: '' });
   const [picking, setPicking] = useState(false);
+  const [asking, setAsking] = useState(false);
   const cards = useApi<{ items: CardInfo[] }>('/cards');
   const [suggest, setSuggest] = useState<{ merchant: string; others: number; category: string } | null>(null);
 
@@ -50,6 +51,21 @@ export function TxDetail({ id }: { id: string }) {
   const onBlur = (key: 'merchant' | 'note', current: string | null) => () => {
     const v = form[key].trim();
     if (v !== (current ?? '')) save({ [key]: v || null }, key === 'note' ? 'Nota salvata' : 'Salvato');
+  };
+
+  /** Categoria dall'AI (Gemini, poi NanoGPT), che cerca il negozio sul web. */
+  const askAi = async () => {
+    setAsking(true);
+    setErr(null);
+    try {
+      const r = await api<{ category_id: string; reason: string; provider: string }>(`/transactions/${t.id}/ai`, { method: 'POST' });
+      if (r.category_id === t.category_id) store.toast(`L’AI conferma: ${store.catName(r.category_id)} (${r.reason})`);
+      else await save({ category_id: r.category_id }, `${store.catName(r.category_id)}: ${r.reason}`);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setAsking(false);
+    }
   };
 
   const remove = async () => {
@@ -126,6 +142,9 @@ export function TxDetail({ id }: { id: string }) {
           <input className="lrow-input" placeholder="Negozio o persona" value={form.merchant} onChange={(e) => setForm({ ...form, merchant: e.target.value })} onBlur={onBlur('merchant', t.merchant)} />
         </label>
       </div>
+      <button className="btn" style={{ background: 'var(--card)', alignSelf: 'flex-start' }} disabled={asking} onClick={askAi}>
+        <Icon name="sparkle" size={18} />{asking ? 'L’AI sta cercando…' : cat ? 'Chiedi all’AI se è giusta' : 'Chiedi la categoria all’AI'}
+      </button>
       {picking && <CategorySheet value={t.category_id} kind={income ? 'income' : 'expense'} onPick={(v) => { setPicking(false); save({ category_id: v }, 'Categoria salvata'); }} onClose={() => setPicking(false)} />}
 
       <span className="section-title">Dettagli</span>

@@ -6,6 +6,8 @@ export interface Env {
   /** Vecchia password della versione a utente singolo: serve solo a collegare i dati esistenti a un account. */
   /** Solo per i test: tassi fissi, es. "IDR:0.00005,SGD:0.7". */
   FX_FIXED?: string;
+  /** Solo per i test: indirizzi finti delle API dell'AI, JSON {"gemini": "…", "nanogpt": "…"}. */
+  AI_ENDPOINTS?: string;
 }
 
 export async function getSetting(db: D1Database, key: string): Promise<string | null> {

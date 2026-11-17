@@ -1,5 +1,6 @@
 // Avvia il vero Worker (wrangler dev) con un database D1 locale nuovo per ogni esecuzione dei test.
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
+import { createServer, type Server } from 'node:http';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -7,6 +8,7 @@ import { join } from 'node:path';
 import type { TestProject } from 'vitest/node';
 
 const PORT = 8799;
+export const AI_PORT = 8798;
 // Ospiti e account creati "a gennaio", per provare la pulizia notturna (tests/integration/api.test.ts).
 export const OLD = {
   emptyGuestSession: 'sessione-ospite-vuoto',
@@ -22,6 +24,46 @@ export const V1_CATEGORIES: Array<{ id: string; name: string; parent: string | n
   JSON.parse(readFileSync(new URL('./categories-v1.json', import.meta.url), 'utf8'));
 
 let proc: ChildProcess | null = null;
+let ai: Server | null = null;
+
+/**
+ * Gemini e NanoGPT finti. Chiavi: "gemini-ok", "gemini-esaurita" (risponde 429 come a richieste gratuite finite),
+ * "nano-ok". Sceglie la riga dell'elenco delle categorie che contiene "Massaggi e spa" (o la prima).
+ * GET /stats dice quante richieste ha ricevuto ciascuno e se chiedevano la ricerca sul web.
+ */
+function fakeAi(): Server {
+  const stats = { gemini: 0, nanogpt: 0, geminiSearch: 0, nanoOnline: 0 };
+  const pick = (prompt: string) => {
+    if (prompt.includes('{"ok": true}')) return '{"ok": true}';
+    const lines = prompt.split('\n').filter((l) => /^cat_[^:]+: /.test(l));
+    const line = lines.find((l) => l.includes('Massaggi e spa')) ?? lines[0] ?? '';
+    return `Ecco: {"category_id": "${line.split(':')[0]}", "reason": "centro benessere con sauna e bagni di ghiaccio"}`;
+  };
+  return createServer((req, res) => {
+    let data = '';
+    req.on('data', (d) => (data += d));
+    req.on('end', () => {
+      const send = (status: number, obj: unknown) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
+      if (req.url === '/stats') return send(200, stats);
+      const b = data ? JSON.parse(data) : {};
+      if (req.url?.startsWith('/gemini/')) {
+        stats.gemini++;
+        if (b.tools?.[0]?.google_search) stats.geminiSearch++;
+        const key = req.headers['x-goog-api-key'];
+        if (key === 'gemini-esaurita') return send(429, { error: { status: 'RESOURCE_EXHAUSTED' } });
+        if (key !== 'gemini-ok') return send(403, { error: 'chiave' });
+        return send(200, { candidates: [{ content: { parts: [{ text: pick(b.contents[0].parts[0].text) }] } }] });
+      }
+      if (req.url === '/nanogpt') {
+        stats.nanogpt++;
+        if (String(b.model).endsWith(':online')) stats.nanoOnline++;
+        if (req.headers.authorization !== 'Bearer nano-ok') return send(401, { error: 'chiave' });
+        return send(200, { choices: [{ message: { content: pick(b.messages[0].content) } }] });
+      }
+      send(404, {});
+    });
+  }).listen(AI_PORT, '127.0.0.1');
+}
 let dir = '';
 
 export default async function setup(project: TestProject) {
@@ -74,11 +116,12 @@ export default async function setup(project: TestProject) {
       `('tx_v1f_${i}', '${f}', '${c.kind}', 'acc_cash~${f}', ${c.kind === 'income' ? 1000 : -1000}, 'EUR', ${c.kind === 'income' ? 1000 : -1000}, '2026-11-01T10:00:00+08:00', '2026-11-01T02:00:00.000Z', 'Spesa ${i}', '${c.id}~${f}', 'manual', 'confirmed', '${jan}', '${jan}')`).join(', ')};`,
     `INSERT INTO rules (id, user_id, name, enabled, priority, definition, created_at, updated_at) VALUES ('rule_telco~${f}', '${f}', 'Telefono', 1, 22, '{"conditions":[{"field":"merchant","op":"regex","value":"telkomsel"}],"actions":{"category_id":"cat_comm_phone~${f}","nature":"need"}}', '${jan}', '${jan}');`,
   ].join(' ')]);
+  ai = fakeAi();
   // File vuoto: evita che wrangler legga il .dev.vars dello sviluppatore.
   writeFileSync(join(dir, 'none.env'), '');
   proc = spawn('npx', [
     'wrangler', 'dev', '--port', String(PORT), '--ip', '127.0.0.1', '--persist-to', dir, '--env-file', join(dir, 'none.env'),
-    '--test-scheduled', '--var', 'FX_FIXED:IDR:0.00005,SGD:0.7,USD:0.9,AED:0.25',
+    '--test-scheduled', '--var', `AI_ENDPOINTS:${JSON.stringify({ gemini: `http://127.0.0.1:${AI_PORT}/gemini`, nanogpt: `http://127.0.0.1:${AI_PORT}/nanogpt` })}`, '--var', 'FX_FIXED:IDR:0.00005,SGD:0.7,USD:0.9,AED:0.25',
   ], { stdio: 'ignore', env: { ...process.env, CI: '1' }, detached: true });
   const base = `http://127.0.0.1:${PORT}`;
   let ready = false;
@@ -98,6 +141,7 @@ export default async function setup(project: TestProject) {
     if (proc?.pid) {
       try { process.kill(-proc.pid, 'SIGTERM'); } catch { /* già fermo */ }
     }
+    ai?.close();
     rmSync(dir, { recursive: true, force: true });
   };
 }

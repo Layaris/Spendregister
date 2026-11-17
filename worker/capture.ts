@@ -6,6 +6,7 @@ import { cleanMerchantName, parseNotification, parseWithParser, type AiHint, typ
 import { evaluateRules } from '../shared/rules';
 import { normalizePostedAt } from '../shared/time';
 import { bad, body, getTimeZone, HttpError, newId, notFound, nowIso, randomToken, uid, type AppEnv } from './lib';
+import { aiCategorizeLater } from './ai';
 import { learnSource } from './cards';
 import { categoryFromHistory, categoryFromWords, convertToEur, defaultAccountId, insertTransaction, loadRules } from './transactions';
 
@@ -45,6 +46,8 @@ export interface CaptureResult {
   summary?: string;
   /** Solo per le spese da rivedere: il testo della notifica che il comando iPhone mostra. */
   notify?: string;
+  /** Uso interno: categoria mancante, da chiedere all'AI in background (non va al telefono). */
+  needs_ai?: boolean;
 }
 
 /** Dalla notifica al movimento: lettura, cambio, regole, doppioni. */
@@ -164,6 +167,7 @@ export async function processCapture(db: D1Database, userId: string, deviceId: s
     transaction_id: txId,
     summary,
     ...(status === 'review' ? { notify: `Da rivedere: ${summary}` } : {}),
+    ...(!category && !rules.ask ? { needs_ai: true } : {}),
   };
 }
 
@@ -181,7 +185,9 @@ inboundApi.post('/:token', async (c) => {
   if (typeof payload.hint === 'string') {
     try { payload.hint = JSON.parse(payload.hint); } catch { payload.hint = null; }
   }
-  const result = await processCapture(c.env.DB, dev.user_id, dev.id, payload);
+  const { needs_ai, ...result } = await processCapture(c.env.DB, dev.user_id, dev.id, payload);
+  // Categoria mancante: la chiede all'AI dopo aver risposto, così il comando del telefono non aspetta.
+  if (needs_ai && result.transaction_id) c.executionCtx.waitUntil(aiCategorizeLater(c.env, dev.user_id, result.transaction_id));
   return c.json(result);
 });
 

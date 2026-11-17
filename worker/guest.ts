@@ -25,7 +25,7 @@ export function deleteUserStatements(db: D1Database, id: string, andUser = true)
   return [
     db.prepare('DELETE FROM transaction_labels WHERE transaction_id IN (SELECT id FROM transactions WHERE user_id = ?)').bind(id),
     ...DATA_TABLES.map((t) => db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(id)),
-    ...(andUser ? [db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id), db.prepare('DELETE FROM users WHERE id = ?').bind(id)] : []),
+    ...(andUser ? [db.prepare('DELETE FROM ai_settings WHERE user_id = ?').bind(id), db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id), db.prepare('DELETE FROM users WHERE id = ?').bind(id)] : []),
   ];
 }
 
