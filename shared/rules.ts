@@ -34,6 +34,8 @@ export interface RuleDefinition {
   conditions: Condition[];
   actions: RuleActions;
   bands?: Band[];
+  /** Regola predefinita "morbida": vale solo se l'utente non ha già scelto una categoria per quel negozio. */
+  soft?: boolean;
 }
 
 export interface Rule {

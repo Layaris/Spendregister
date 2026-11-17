@@ -118,6 +118,52 @@ export async function categoryFromWords(db: D1Database, userId: string, kind: 'e
   return row?.id ?? null;
 }
 
+export interface Classified {
+  merchant: string | null;
+  category_id: string | null;
+  via: 'regola' | 'storico' | 'regola predefinita' | 'parole chiave' | null;
+  nature: string | null;
+  labels: string[];
+  ask: string[] | null;
+  account_id: string | null;
+  ignore: boolean;
+  review: boolean;
+  matched: string[];
+}
+
+/**
+ * Categoria e dintorni di un movimento, nell'ordine deciso:
+ * 1. regole dell'utente; 2. ultima spesa confermata dello stesso negozio (le correzioni vincono);
+ * 3. regole predefinite "morbide"; 4. parole chiave; l'AI, se serve, viene dopo (in background).
+ */
+export async function classify(db: D1Database, userId: string, input: RuleInput, kind: 'expense' | 'income', extraWords: Array<string | null | undefined> = []): Promise<Classified> {
+  const all = await loadRules(db, userId);
+  const hard = evaluateRules(all.filter((r) => !r.definition.soft), input);
+  const soft = evaluateRules(all.filter((r) => r.definition.soft), { ...input, merchant: hard.merchant ?? input.merchant });
+  const finalMerchant = hard.merchant ?? soft.merchant ?? input.merchant;
+  const out: Classified = {
+    merchant: finalMerchant ?? null, category_id: null, via: null, nature: hard.nature ?? null, labels: [...hard.labels], ask: hard.ask ?? null,
+    account_id: hard.account_id ?? null, ignore: hard.ignore, review: hard.review, matched: [...hard.matched],
+  };
+  if (soft.merchant && !hard.merchant) out.matched.push(...soft.matched.filter((id) => !out.matched.includes(id)));
+  if (hard.category_id) { out.category_id = hard.category_id; out.via = 'regola'; return out; }
+  if (hard.ask) return out;
+  const fromHistory = await categoryFromHistory(db, userId, finalMerchant ?? null);
+  if (fromHistory) { out.category_id = fromHistory; out.via = 'storico'; return out; }
+  if (soft.category_id && !soft.ignore) {
+    out.category_id = soft.category_id;
+    out.via = 'regola predefinita';
+    out.nature = out.nature ?? soft.nature ?? null;
+    out.labels.push(...soft.labels.filter((l) => !out.labels.includes(l)));
+    out.account_id = out.account_id ?? soft.account_id ?? null;
+    out.matched.push(...soft.matched.filter((id) => !out.matched.includes(id)));
+    return out;
+  }
+  const words = await categoryFromWords(db, userId, kind, finalMerchant, input.merchant_raw, ...extraWords);
+  if (words) { out.category_id = words; out.via = 'parole chiave'; }
+  return out;
+}
+
 /** Una categoria o un conto indicato dal browser deve essere dell'account. */
 export async function checkOwned(db: D1Database, table: 'categories' | 'accounts', id: string | null | undefined, userId: string) {
   if (!id) return;
@@ -271,12 +317,10 @@ transactionsApi.post('/', async (c) => {
   let labels = b.labels ?? [];
   const ruleIds: string[] = [];
   if (!category && merchant) {
-    const rules = await loadRules(c.env.DB, userId);
     const conv = await convertToEur(c.env.DB, milli, currency, occurred);
-    const r = evaluateRules(rules, { merchant, merchant_raw: merchantRaw, text: null, app: null, currency, account_id: b.account_id ?? null, amount_eur: (conv?.amount_eur ?? 0) / 1000, occurred_at: occurred, source: 'manual' });
-    category = r.category_id ?? (await categoryFromHistory(c.env.DB, userId, merchant))
-      ?? (r.ask ? null : await categoryFromWords(c.env.DB, userId, type === 'income' ? 'income' : 'expense', merchant, merchantRaw));
-    nature = nature ?? r.nature ?? null;
+    const r = await classify(c.env.DB, userId, { merchant, merchant_raw: merchantRaw, text: null, app: null, currency, account_id: b.account_id ?? null, amount_eur: (conv?.amount_eur ?? 0) / 1000, occurred_at: occurred, source: 'manual' }, type === 'income' ? 'income' : 'expense');
+    category = r.category_id;
+    nature = nature ?? (r.nature as typeof nature) ?? null;
     labels = [...labels, ...r.labels];
     ruleIds.push(...r.matched);
   }

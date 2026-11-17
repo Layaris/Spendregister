@@ -1140,6 +1140,45 @@ describe('intelligenza artificiale', () => {
   });
 });
 
+describe('regole predefinite per chi viaggia', () => {
+  const c = new Client('10.47.0.1');
+  const own: Record<string, string> = {};
+  let phone = '';
+  beforeAll(async () => {
+    await c.post('/api/guest');
+    await loadOwn(c, own);
+    phone = await newDevice(c);
+  });
+  const cap = async (text: string) => (await c.get(`/api/transactions/${(await c.post(phone, { text })).json.transaction_id}`)).json;
+  it('un account nuovo le ha, segnate come morbide', async () => {
+    const rules = (await c.get('/api/rules')).json.items;
+    const uber = rules.find((r: any) => r.name === 'Uber');
+    expect(uber.definition.soft).toBe(true);
+    expect(rules.filter((r: any) => r.definition.soft).length).toBeGreaterThan(25);
+  });
+  it('puliscono i nomi strani e danno la categoria', async () => {
+    expect(await cap('You paid 12.50 USD to UBER *TRIP HELP.UBER.COM')).toMatchObject({ merchant: 'Uber', category_id: own.cat_transport_taxi });
+    expect(await cap('You paid 8.00 USD to UBER *EATS PENDING')).toMatchObject({ merchant: 'Uber Eats', category_id: own.cat_food_delivery });
+    expect(await cap('You paid 9.00 USD to Airalo eSIM')).toMatchObject({ category_id: own.cat_subs_phone });
+    expect(await cap('You paid 45.00 USD to SafetyWing')).toMatchObject({ category_id: own.cat_health_insurance });
+    expect(await cap('Cash withdrawal 1,000,000 IDR at ATM BCA')).toMatchObject({ category_id: own.cat_fin_atm });
+    expect(await cap('You paid 20.00 EUR to AMZN Mktp DE')).toMatchObject({ merchant: 'Amazon', category_id: own.cat_shop_other });
+  });
+  it('la tua correzione su un negozio vince sulla regola predefinita', async () => {
+    const first = await cap('You paid 30.00 USD to UBER *TRIP');
+    await c.put(`/api/transactions/${first.id}`, { category_id: own.cat_travel_activities });
+    expect((await cap('You paid 25.00 USD to UBER *TRIP')).category_id).toBe(own.cat_travel_activities);
+  });
+  it('un account esistente riceve le regole nuove una volta sola', async () => {
+    const v1 = new Client('10.47.0.2');
+    v1.cookie = `ledgy_session=${OLD.v1FullSession}`;
+    const names = (await v1.get('/api/rules')).json.items.map((r: any) => r.name);
+    expect(names).toContain('Uber');
+    expect(names).toContain('Telefono');
+    expect(names.filter((n: string) => n === 'Uber').length).toBe(1);
+  });
+});
+
 describe('pulizia notturna', () => {
   const withSession = (token: string) => { const c = new Client('10.30.0.1'); c.cookie = `ledgy_session=${token}`; return c; };
   const ping = (token: string) => new Client('10.30.0.2').post(`/api/in/${token}/ping`, {});

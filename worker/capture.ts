@@ -3,12 +3,11 @@ import { appLabel, guessAppFromTitle, sourceKey } from '../shared/apps';
 import { isLikelyDuplicate, sha256Hex } from '../shared/dedupe';
 import { formatMoney, roundMilli, toMilli } from '../shared/money';
 import { cleanMerchantName, parseNotification, parseWithParser, type AiHint, type ParserDef } from '../shared/notification';
-import { evaluateRules } from '../shared/rules';
 import { normalizePostedAt } from '../shared/time';
 import { bad, body, getTimeZone, HttpError, newId, notFound, nowIso, randomToken, uid, type AppEnv } from './lib';
 import { aiCategorizeLater } from './ai';
 import { learnSource } from './cards';
-import { categoryFromHistory, categoryFromWords, convertToEur, defaultAccountId, insertTransaction, loadRules } from './transactions';
+import { classify, convertToEur, defaultAccountId, insertTransaction } from './transactions';
 
 interface CapturePayload {
   text?: string;
@@ -103,26 +102,18 @@ export async function processCapture(db: D1Database, userId: string, deviceId: s
   // Ordine: carta scritta dall'utente per questa fonte, poi il nome del lettore per banca, poi il nome dell'app.
   const card = source?.card ?? parsed.bank ?? appLabel(p.app);
 
-  const rules = evaluateRules(await loadRules(db, userId), {
+  const rules = await classify(db, userId, {
     merchant, merchant_raw: merchantRaw, text, app: p.app ?? null, currency: parsed.currency, account_id: null,
     amount_eur: (conv?.amount_eur ?? 0) / 1000, occurred_at: occurred, source: 'capture',
-  });
+  }, parsed.direction, [hint?.category, text]);
   if (rules.ignore) {
     await save('ignored', `Ignorata dalla regola ${rules.matched.join(', ')}`);
     return { status: 'ignored', capture_id: captureId };
   }
 
   const finalMerchant = rules.merchant ?? merchant;
-  let category = rules.category_id ?? null;
-  let categoryVia = category ? 'regola' : null;
-  if (!category && !rules.ask) {
-    category = await categoryFromHistory(db, userId, finalMerchant);
-    if (category) categoryVia = 'storico';
-  }
-  if (!category && !rules.ask) {
-    category = await categoryFromWords(db, userId, parsed.direction, finalMerchant, hint?.category, text);
-    if (category) categoryVia = 'parole chiave';
-  }
+  const category = rules.category_id;
+  const categoryVia = rules.via;
 
   // Doppioni: stessa spesa arrivata da un altro telefono pochi secondi prima.
   const windowStart = new Date(Date.parse(occurred) - 3 * 60_000).toISOString();

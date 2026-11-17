@@ -35,8 +35,12 @@ export function RulesList() {
       <p className="lead">Si applicano in ordine, dall'alto: la prima che sceglie la categoria vince, le etichette si sommano.</p>
       <ErrorBox error={error} />
       {!data ? <Loading /> : (
-        <section className="card">
-          {data.items.map((r) => (
+        [{ title: 'Le tue regole', note: 'Vincono sempre.', items: data.items.filter((r) => !r.definition.soft) },
+          { title: 'Predefinite per chi viaggia', note: 'Valgono finché non correggi tu la categoria di quel negozio.', items: data.items.filter((r) => r.definition.soft) }]
+          .filter((g) => g.items.length).map((g) => (
+        <section key={g.title} className="card">
+          <div className="stack" style={{ gap: 0 }}><span className="h2">{g.title}</span><span className="muted" style={{ fontSize: 13 }}>{g.note}</span></div>
+          {g.items.map((r) => (
             <div key={r.id} className="row" style={{ alignItems: 'flex-start' }}>
               <a href={`#/regole/${r.id}`} className="grow stack" style={{ gap: 2, textDecoration: 'none', color: 'inherit', opacity: r.enabled ? 1 : 0.55 }}>
                 <span style={{ fontWeight: 600 }}>{r.name}</span>
@@ -46,6 +50,7 @@ export function RulesList() {
             </div>
           ))}
         </section>
+          ))
       )}
     </div>
   );
@@ -88,6 +93,7 @@ export function RuleEditor({ id }: { id: string }) {
     conditions: def.conditions.filter((c) => String(c.value).trim() !== '').map((c) => (['lt', 'lte', 'gt', 'gte'].includes(c.op) ? { ...c, value: Number(c.value) } : c)),
     actions: Object.fromEntries(Object.entries(def.actions).filter(([, v]) => v !== '' && v != null && !(Array.isArray(v) && !v.length))) as RuleActions,
     bands: useBands ? bands : undefined,
+    ...(def.soft ? { soft: true } : {}),
   });
 
   // Il server lavora a pagine (limite di CPU di Cloudflare): si richiama finché next non è null.

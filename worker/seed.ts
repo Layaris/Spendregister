@@ -79,7 +79,7 @@ export const TREE: Group[] = [
   { id: 'cat_other', name: 'Altro', color: '#7D8790', icon: 'dots', kind: 'expense', nature: null, children: [] },
 ];
 
-export const CATALOG_VERSION = 2;
+export const CATALOG_VERSION = 3;
 
 /** Categorie della versione 1 (stile Wallet) che non esistono più: dove vanno i loro movimenti. */
 export const RETIRED: Record<string, string> = {
@@ -91,7 +91,24 @@ export const RETIRED: Record<string, string> = {
   cat_invest_savings: 'cat_invest', cat_invest_financial: 'cat_invest',
 };
 
-const PRESETS: Array<{ id: string; name: string; priority: number; definition: RuleDefinition }> = [
+
+/** Regole predefinite "morbide" della versione 3: [id, nome, regex sul negozio, categoria, nome pulito, natura]. */
+function travel(list: Array<[string, string, string, string, string | null, Nat]>) {
+  return list.map(([id, name, regex, cat, rename, nature], i) => ({
+    id, name, priority: 100 + i, since: 3,
+    definition: { soft: true, conditions: [{ field: 'merchant' as const, op: 'regex' as const, value: regex }],
+      actions: { category_id: cat, ...(rename ? { merchant: rename } : {}), ...(nature ? { nature } : {}) } },
+  }));
+}
+/** Solo nome pulito: [id, regex, nome]. */
+function renames(list: Array<[string, string, string]>) {
+  return list.map(([id, regex, name], i) => ({
+    id, name: `Nome pulito: ${name}`, priority: 90 + i, since: 3,
+    definition: { soft: true, conditions: [{ field: 'merchant' as const, op: 'regex' as const, value: regex }], actions: { merchant: name } },
+  }));
+}
+
+const PRESETS: Array<{ id: string; name: string; priority: number; definition: RuleDefinition; since?: number }> = [
   { id: 'rule_grab', name: 'Grab', priority: 10, definition: {
     conditions: [{ field: 'merchant', op: 'contains', value: 'grab' }],
     actions: { merchant: 'Grab' },
@@ -122,6 +139,44 @@ const PRESETS: Array<{ id: string; name: string; priority: number; definition: R
     conditions: [{ field: 'merchant', op: 'regex', value: 'telkomsel|xl ?axiata|indosat|smartfren|by\\.u|tri indonesia' }],
     actions: { category_id: 'cat_subs_phone', nature: 'need' },
   } },
+  // ---- Versione 3: regole predefinite per chi viaggia. "Morbide": la tua correzione su un negozio vince sempre. ----
+  ...travel([
+    ['rule_t_uber_eats', 'Uber Eats', 'uber\\W*eats', 'cat_food_delivery', 'Uber Eats', 'want'],
+    ['rule_t_uber', 'Uber', '\\buber\\b', 'cat_transport_taxi', 'Uber', 'need'],
+    ['rule_t_bolt_food', 'Bolt Food', 'bolt\\W*food', 'cat_food_delivery', 'Bolt Food', 'want'],
+    ['rule_t_bolt', 'Bolt', '\\bbolt\\b', 'cat_transport_taxi', 'Bolt', 'need'],
+    ['rule_t_ride', 'Taxi e app di trasporto', 'careem|lyft|\\bdidi\\b|indrive|cabify|free ?now|blue ?bird|\\bmaxim\\b|xanh ?sm|\\btaxi\\b', 'cat_transport_taxi', null, 'need'],
+    ['rule_t_delivery', 'App di consegna cibo', 'deliveroo|foodpanda|talabat|glovo|\\bwolt\\b|just ?eat|doordash|zomato|swiggy|grab\\W*food|go\\W?food|shopee\\W*food|lineman|rappi|ifood|baemin', 'cat_food_delivery', null, 'want'],
+    ['rule_t_atm', 'Prelievo al bancomat', '\\batm\\b|cash withdrawal|withdrawal|tarik tunai|prelievo|bancomat|retiro|retrait', 'cat_fin_atm', null, 'must'],
+    ['rule_t_fx', 'Cambio valuta', 'money ?changer|currency exchange|western union|moneygram|travelex|cambio valuta', 'cat_fin_atm', null, 'must'],
+    ['rule_t_esim', 'eSIM e SIM da viaggio', 'airalo|holafly|nomad ?esim|ubigi|saily|yesim|\\besim\\b|getmobile', 'cat_subs_phone', null, 'need'],
+    ['rule_t_insurance', 'Assicurazione di viaggio', 'safetywing|genki|world ?nomads|heymondo|allianz travel|axa travel|ekta|insured nomads|battleface', 'cat_health_insurance', null, 'must'],
+    ['rule_t_lodging', 'Alloggi (Airbnb, Booking…)', 'airbnb|booking\\.com|agoda|hostelworld|hotels\\.com|expedia|trip\\.com|traveloka|\\bvrbo\\b|hostel|guesthouse|homestay', 'cat_travel_hotel', null, 'want'],
+    ['rule_t_flights', 'Compagnie aeree', 'ryanair|easyjet|wizz ?air|airasia|\\bscoot\\b|jetstar|vietjet|cebu pacific|lion ?air|batik ?air|citilink|garuda|emirates|qatar airways|turkish airlines|lufthansa|singapore airlines|ita airways|skyscanner|kiwi\\.com', 'cat_transport_flights', null, 'want'],
+    ['rule_t_visa', 'Visti e immigrazione', 'imigrasi|immigration|e-?visa|kitas|kitap|visa on arrival|\\bvoa\\b|\\besta\\b|\\bvfs\\b|embassy|consulate', 'cat_travel_visa', null, 'must'],
+    ['rule_t_ferry', 'Traghetti e fast boat', 'ferry|fast ?boat|speed ?boat|pelni|\\basdp\\b|12go', 'cat_transport_ferry', null, 'need'],
+    ['rule_t_activities', 'Tour ed escursioni', 'klook|getyourguide|viator|tiqets|headout', 'cat_travel_activities', null, 'want'],
+    ['rule_t_cowork', 'Coworking', 'coworking|co-working|wework|regus|outpost|dojo bali|tropical nomad|hubud|\\bb work\\b', 'cat_work_cowork', null, 'need'],
+    ['rule_t_laundry', 'Lavanderia', 'laundry|lavanderia|laundromat|dry clean', 'cat_home_cleaning', null, 'need'],
+    ['rule_t_gym', 'Palestra, yoga, sport', 'anytime fitness|gold.?s gym|crossfit|\\byoga\\b|muay thai|\\bf45\\b|pilates|\\bsurf\\b|diving|padel', 'cat_care_fitness', null, 'want'],
+    ['rule_t_spa', 'Massaggi e spa', 'massage|\\bspa\\b|reflexology|pijat|onsen|hammam|sauna', 'cat_care_spa', null, 'want'],
+    ['rule_t_streaming', 'Streaming', 'netflix|spotify|youtube premium|disney ?\\+|apple music|prime video|\\bhbo\\b|deezer|crunchyroll', 'cat_subs_streaming', null, 'want'],
+    ['rule_t_ai', 'AI e strumenti', 'chatgpt|openai|claude\\.ai|anthropic|cursor|midjourney|perplexity|nano-?gpt|openrouter|elevenlabs', 'cat_work_ai', null, 'need'],
+    ['rule_t_cloud', 'Cloud e app', 'icloud|google one|google storage|dropbox|onedrive|1password|nordvpn|expressvpn|proton', 'cat_subs_cloud', null, 'want'],
+    ['rule_t_dating', 'App di incontri', 'tinder|bumble|hinge|grindr|badoo|okcupid|happn|feeld', 'cat_subs_dating', null, 'want'],
+    ['rule_t_market', 'Negozi online', 'amazon|amzn|shopee|tokopedia|lazada|aliexpress|\\btemu\\b|shein|ebay|zalando', 'cat_shop_other', null, 'want'],
+    ['rule_t_pharmacy', 'Farmacia', 'pharmacy|farmacia|apotek|guardian|watsons|boots|kimia farma', 'cat_health_pharmacy', null, 'need'],
+    ['rule_t_minimarket', 'Minimarket e convenience', '7-?eleven|family ?mart|lawson|circle ?k|ministop|\\bspar\\b', 'cat_food_groceries', null, 'need'],
+  ]),
+  // Nomi puliti per gli addebiti con sigle strane (solo il nome, la categoria la decidono le altre regole).
+  ...renames([
+    ['rule_n_amazon', 'amzn|amazon\\s*(mktp|marketplace|\\.com|eu|digital|prime)', 'Amazon'],
+    ['rule_n_youtube', 'google\\s*\\*\\s*youtube|youtubepremium', 'YouTube'],
+    ['rule_n_apple', 'apple\\.com/bill|apple\\.com\\s*bill|itunes', 'Apple'],
+    ['rule_n_google', 'google\\s*\\*\\s*(?!youtube)', 'Google'],
+    ['rule_n_netflix', 'netflix\\.com', 'Netflix'],
+    ['rule_n_paypal', '^paypal\\s*\\*', 'PayPal'],
+  ]),
 ];
 
 /** Id delle voci iniziali: con il suffisso dell'account (cat_food~usr_…), unici in tutto il database. */
@@ -174,10 +229,23 @@ export async function seedUser(db: D1Database, userId: string): Promise<void> {
 export async function upgradeCatalog(db: D1Database, userId: string): Promise<void> {
   const row = await db.prepare('SELECT catalog_version AS v FROM users WHERE id = ?').bind(userId).first<{ v: number }>();
   if (!row || row.v >= CATALOG_VERSION) return;
+  const stmts: D1PreparedStatement[] = [];
+  if (row.v < 2) await upgradeTo2(db, userId, stmts);
+  // Versione 3: le regole predefinite per chi viaggia (solo quelle nuove: le vecchie tolte dall'utente non tornano).
+  const now = nowIso();
+  for (const r of PRESETS.filter((p) => (p.since ?? 1) === 3)) {
+    stmts.push(db.prepare('INSERT OR IGNORE INTO rules (id, user_id, name, enabled, priority, definition, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?)')
+      .bind(seedId(r.id, userId), userId, r.name, r.priority, JSON.stringify(remap(r.definition, userId)), now, now));
+  }
+  stmts.push(db.prepare('UPDATE users SET catalog_version = ? WHERE id = ?').bind(CATALOG_VERSION, userId));
+  await runBatch(db, stmts);
+}
+
+/** Aggiornamento 1 → 2 delle categorie (vedi upgradeCatalog). */
+async function upgradeTo2(db: D1Database, userId: string, stmts: D1PreparedStatement[]): Promise<void> {
   const existing = new Map((await db.prepare('SELECT id, name FROM categories WHERE user_id = ?').bind(userId).all<{ id: string; name: string }>()).results
     .map((r) => [r.id, r.name]));
   const sid = (base: string) => seedId(base, userId);
-  const stmts: D1PreparedStatement[] = [];
   let pos = 0;
   for (const p of TREE) {
     const off = p.optional ? 1 : 0;
@@ -211,6 +279,4 @@ export async function upgradeCatalog(db: D1Database, userId: string): Promise<vo
   // Prima le sottocategorie, poi i gruppi.
   for (const [from] of moves.filter(([f]) => f.split('_').length > 2)) stmts.push(db.prepare('DELETE FROM categories WHERE id = ?').bind(sid(from)));
   for (const [from] of moves.filter(([f]) => f.split('_').length <= 2)) stmts.push(db.prepare('DELETE FROM categories WHERE id = ?').bind(sid(from)));
-  stmts.push(db.prepare('UPDATE users SET catalog_version = ? WHERE id = ?').bind(CATALOG_VERSION, userId));
-  await runBatch(db, stmts);
 }
