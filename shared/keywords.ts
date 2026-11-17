@@ -1,3 +1,5 @@
+import { BRANDS } from './brands';
+
 // Categoria dalle parole del negozio o della notifica, in molte lingue e con le marche più diffuse nel mondo.
 // Serve quando nessuna regola e nessuna spesa passata dello stesso negozio indicano la categoria.
 // Le chiavi sono gli id di base delle categorie predefinite (worker/seed.ts): ogni account li ha con il suo suffisso.
@@ -82,7 +84,7 @@ const K: Record<string, string[]> = {
   cat_subs_phone: ['telkomsel', 'xl axiata', 'indosat', 'smartfren', 'by.u', 'tri indonesia', 'im3', 'axis', 'vodafone', 'tim ', 'wind tre', 'iliad', 'ho. mobile', 'kena mobile', 'movistar', 'verizon', 't-mobile', 'at&t', 'globe', 'smart communications', 'dtac', 'truemove', 'singtel', 'starhub', 'etisalat', 'airalo', 'holafly', 'esim', 'pulsa', 'paket data', 'ricarica telefonica', 'top up pulsa', 'prepaid'],
   cat_health_pharmacy: ['pharmacy', 'farmacia', 'apotek', 'apotik', 'kimia farma', 'guardian', 'watsons', 'boots', 'walgreens', 'cvs', 'pharmacie', 'apotheke', 'drugstore', 'mercury drug', '药店', '薬局', 'ร้านขายยา', 'صيدلية'],
   cat_health_doctor: ['clinic', 'clinica', 'klinik', 'hospital', 'ospedale', 'rumah sakit', 'doctor', 'dottore', 'medico', 'dokter', 'siloam', 'bimc', 'kasih ibu', 'laboratorio', 'lab test', 'prodia', 'ambulatorio', 'médecin', 'arzt', 'hôpital', 'krankenhaus'],
-  cat_health_dentist: ['dentist', 'dentista', 'dental', 'dokter gigi', 'odontoiatr', 'dentiste', 'zahnarzt', 'orthodont'],
+  cat_health_dentist: ['dentist', 'dentista', 'dental', 'dokter gigi', 'odontoiatra', 'odontoiatria', 'dentiste', 'zahnarzt', 'orthodontist', 'orthodontics', 'ortodonzia', 'ortodontista'],
   cat_health_optician: ['optician', 'ottico', 'optik', 'optical', 'occhiali', 'glasses', 'lenses', 'lenti a contatto', 'specsavers', 'salmoiraghi', 'grandvision'],
   cat_health_insurance: ['health insurance', 'assicurazione sanitaria', 'allianz care', 'cigna', 'bupa', 'safetywing', 'genki', 'axa health', 'bpjs'],
   cat_care_hair: ['barber', 'barbiere', 'barbershop', 'parrucchiere', 'hair salon', 'salon', 'hairdresser', 'potong rambut', 'coiffeur', 'friseur', 'peluquería', 'peluqueria'],
@@ -92,7 +94,7 @@ const K: Record<string, string[]> = {
   cat_fun_events: ['cinema', 'cinéma', 'kino', 'cine', 'cgv', 'xxi', 'cinepolis', 'imax', 'ticketmaster', 'ticketone', 'eventbrite', 'dice.fm', 'concert', 'concerto', 'festival', 'theatre', 'teatro', 'museum', 'museo', 'stadium'],
   cat_fun_activities: ['tour', 'excursion', 'escursione', 'klook', 'getyourguide', 'viator', 'tiqets', 'waterpark', 'theme park', 'snorkeling', 'rafting', 'zoo', 'aquarium', 'bowling'],
   cat_fun_going_out: ['beach club', 'night out', 'karaoke', 'billiard', 'biliardo'],
-  cat_fun_games: ['casino', 'lottery', 'lotteria', 'scommess', 'arcade', 'timezone'],
+  cat_fun_games: ['casino', 'lottery', 'lotteria', 'scommesse', 'scommessa', 'arcade', 'timezone'],
   cat_travel_hotel: ['hotel', 'hostel', 'ostello', 'resort', 'villa', 'airbnb', 'booking.com', 'agoda', 'traveloka', 'expedia hotel', 'hotels.com', 'trip.com', 'guesthouse', 'homestay', 'motel', 'b&b', 'bed and breakfast', 'albergo', 'penginapan', 'ホテル', '酒店', 'โรงแรม', 'فندق'],
   cat_travel_visa: ['kitas', 'kitap', 'imigrasi', 'immigration', 'evisa', 'e-visa', 'esta', 'passport', 'passaporto', 'paspor', 'embassy', 'ambasciata', 'consulate', 'vfs'],
   cat_edu_courses: ['udemy', 'coursera', 'skillshare', 'masterclass', 'duolingo', 'babbel', 'italki', 'preply', 'course', 'corso', 'kursus', 'curso', 'workshop', 'academy', 'bootcamp'],
@@ -124,42 +126,68 @@ const K: Record<string, string[]> = {
   cat_income_sales: ['vinted', 'subito.it', 'depop', 'marketplace sale', 'ebay sale', 'venduto', 'penjualan'],
 };
 
-/** Prima le categorie più specifiche: una notifica "Grab Food" deve finire in Delivery, non in Taxi. */
+// Più nomi senza pesare: invece di una espressione regolare per categoria, una tabella frase → categoria.
+// Il testo si divide in parole e si cercano le frasi di 1–6 parole che iniziano e finiscono su una parola:
+// il costo dipende dalla lunghezza del testo, non da quante voci ci sono (migliaia vanno bene).
+for (const [id, words] of Object.entries(BRANDS)) K[id] = [...(K[id] ?? []), ...words];
+
+/** Prima le categorie più specifiche: a parità di lunghezza vince quella che viene prima. */
 const ORDER = Object.keys(K);
 
-const strip = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
-const LATIN = /^[\p{Script=Latin}\d\s.&'+/-]+$/u;
-const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const strip = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/\s+/g, ' ');
+const OTHER_SCRIPT = /[^\p{Script=Latin}\P{L}]/u; // una lettera non latina (cinese, thai, arabo…)
+const EDGE = /^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu;
+const TOKEN = /[\p{L}\p{N}]+/gu;
 
-const PATTERNS: Array<[string, RegExp]> = ORDER.map((id) => {
-  const latin = K[id].filter((w) => LATIN.test(w)).map((w) => escape(strip(w.trim())));
-  const other = K[id].filter((w) => !LATIN.test(w)).map((w) => escape(strip(w)));
-  const parts = [
-    ...(latin.length ? [`(?<![\\p{L}\\d])(?:${latin.join('|')})(?![\\p{L}\\d])`] : []),
-    ...(other.length ? [`(?:${other.join('|')})`] : []),
-  ];
-  return [id, new RegExp(parts.join('|'), 'u')];
-});
+interface Table { phrases: Map<string, string>; other: Array<[string, string]>; maxWords: number }
+const build = (income: boolean): Table => {
+  const t: Table = { phrases: new Map(), other: [], maxWords: 1 };
+  for (const id of ORDER) {
+    if (id.startsWith('cat_income') !== income) continue;
+    for (const raw of K[id]) {
+      const w = strip(raw).trim().replace(EDGE, '');
+      if (!w) continue;
+      if (OTHER_SCRIPT.test(w)) { if (!t.other.some(([x]) => x === w)) t.other.push([w, id]); continue; }
+      if (t.phrases.has(w)) continue; // la stessa voce in due categorie: vale la prima
+      t.phrases.set(w, id);
+      t.maxWords = Math.max(t.maxWords, w.match(TOKEN)?.length ?? 1);
+    }
+  }
+  return t;
+};
+const TABLES = { expense: build(false), income: build(true) };
+
+function bestIn(t: Table, text: string): string | null {
+  const s = strip(text);
+  const tokens = [...s.matchAll(TOKEN)].map((m) => [m.index!, m.index! + m[0].length] as const);
+  let best: string | null = null;
+  let len = 0;
+  for (let i = 0; i < tokens.length; i++) {
+    for (let j = i; j < Math.min(tokens.length, i + t.maxWords); j++) {
+      const phrase = s.slice(tokens[i][0], tokens[j][1]);
+      if (phrase.length <= len) continue;
+      const id = t.phrases.get(phrase);
+      if (id) { best = id; len = phrase.length; }
+    }
+  }
+  for (const [w, id] of t.other) if (w.length > len && s.includes(w)) { best = id; len = w.length; }
+  return best;
+}
 
 /**
  * Categoria (id di base) dalle parole: prima nel nome del negozio, poi nella categoria letta dal telefono,
- * infine nel testo della notifica. Vince la parola più lunga ("amazon prime" batte "amazon").
+ * infine nel testo della notifica. Vince la frase più lunga ("amazon prime" batte "amazon").
  * `kind` limita alle categorie di spesa o di entrata. `null` se nessuna parola è riconosciuta.
  */
 export function categoryFromKeywords(kind: 'expense' | 'income', ...texts: Array<string | null | undefined>): string | null {
   for (const t of texts) {
     if (!t) continue;
-    const s = strip(t);
-    let best: string | null = null;
-    let len = 0;
-    for (const [id, re] of PATTERNS) {
-      if (id.startsWith('cat_income') !== (kind === 'income')) continue;
-      const m = re.exec(s);
-      if (m && m[0].length > len) { best = id; len = m[0].length; }
-    }
+    const best = bestIn(TABLES[kind], t);
     if (best) return best;
   }
   return null;
 }
 
 export const KEYWORD_CATEGORIES = ORDER;
+/** Quante voci conosce (per i test e per curiosità). */
+export const KEYWORD_COUNT = TABLES.expense.phrases.size + TABLES.expense.other.length + TABLES.income.phrases.size + TABLES.income.other.length;

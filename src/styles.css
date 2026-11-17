@@ -217,3 +217,8 @@ textarea.input { min-height: 90px; resize: vertical; }
 .pad button.star[aria-pressed='true'] { color: #d99a00; }
 @media (prefers-reduced-motion: no-preference) { .pad button:active { transform: scale(0.96); } }
 .seg.nature button { white-space: nowrap; font-size: 14px; padding: 8px 4px; }
+
+.rules-group > summary::-webkit-details-marker { display: none; }
+.rules-group .rules-chevron { transition: transform .15s; color: var(--muted); }
+.rules-group[open] .rules-chevron { transform: rotate(90deg); }
+.rules-group:not([open]) { gap: 0; }

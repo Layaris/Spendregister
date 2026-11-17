@@ -1,4 +1,4 @@
-import { categoryFromKeywords } from '../shared/keywords';
+import { categoryFromKeywords, KEYWORD_COUNT } from '../shared/keywords';
 import { describe, expect, it } from 'vitest';
 import { amountAppearsInText, formatMoney, parseAmount, roundMilli, toMilli } from '../shared/money';
 import { cleanMerchantName, parseFromHint, parseGeneric, parseNotification, parseWithParser, suggestPattern } from '../shared/notification';
@@ -199,6 +199,37 @@ describe('categoria dalle parole chiave, in più lingue', () => {
     ['Barbershop', 'cat_care_hair'], ['Anytime Fitness', 'cat_care_fitness'], ['Telkomsel', 'cat_subs_phone'], ['Cloudflare', 'cat_work_hosting'],
   ];
   for (const [text, id] of cases) it(`${text} → ${id}`, () => expect(categoryFromKeywords('expense', text)).toBe(id));
+  // Elenco grande (negozi e marche di Bali, Sud-Est asiatico, Italia, Europa…): resta veloce.
+  const more: Array<[string, string]> = [
+    ['MIE GACOAN DENPASAR', 'cat_food_fastfood'], ['Pepito Express Canggu', 'cat_food_groceries'], ['Frestive Seminyak', 'cat_food_groceries'],
+    ['Finns Beach Club', 'cat_fun_going_out'], ['Potato Head Beach Club', 'cat_fun_going_out'], ['Waterbom Bali', 'cat_fun_activities'],
+    ['Highlands Coffee', 'cat_food_bar'], ['Phuc Long', 'cat_food_bar'], ['Jollibee Makati', 'cat_food_fastfood'], ['Lulu Hypermarket', 'cat_food_groceries'],
+    ['Salik Dubai', 'cat_vehicle_parking'], ['DEWA', 'cat_home_energy'], ['Esselunga', 'cat_food_groceries'], ['Trenitalia', 'cat_transport_train'],
+    ['Frecciarossa 9541', 'cat_transport_train'], ['Autostrade per l\'Italia', 'cat_vehicle_parking'], ['Gili Getaway', 'cat_transport_ferry'],
+    ['Mercury Drug', 'cat_health_pharmacy'], ['Bumrungrad International', 'cat_health_doctor'], ['Owndays', 'cat_health_optician'],
+    ['Johnny Andrean', 'cat_care_hair'], ['Jari Menari', 'cat_care_spa'], ['The Yoga Barn', 'cat_care_fitness'], ['Olive Young', 'cat_care_cosmetics'],
+    ['Cinema XXI', 'cat_fun_events'], ['Bet365', 'cat_fun_games'], ['Marriott Bonvoy', 'cat_travel_hotel'], ['VFS Global', 'cat_travel_visa'],
+    ['Cambly', 'cat_edu_courses'], ['Periplus', 'cat_edu_books'], ['Cursor', 'cat_work_ai'], ['Lovable', 'cat_work_ai'], ['Figma', 'cat_work_software'],
+    ['Hetzner Online', 'cat_work_hosting'], ['Outpost Canggu', 'cat_work_cowork'], ['Google Ads', 'cat_work_professional'], ['Commercialista Rossi', 'cat_work_professional'],
+    ['Imposta di bollo', 'cat_fin_fees'], ['Central Kuta Money Exchange', 'cat_fin_atm'], ['Modello F24', 'cat_fin_taxes'], ['Atome', 'cat_fin_loans'],
+    ['Bitpanda', 'cat_invest'], ['Interflora', 'cat_gifts_gifts'], ['Dana Punia', 'cat_gifts_religious'], ['Petco', 'cat_pets_food'],
+    ['Lazada', 'cat_shop_other'], ['Uniqlo', 'cat_shop_clothes'], ['IKEA', 'cat_shop_home'], ['Thomann', 'cat_shop_hobby'], ['Sharaf DG', 'cat_shop_electronics'],
+    ['Max.com', 'cat_subs_streaming'], ['Telkomsel', 'cat_subs_phone'], ['Airalo', 'cat_subs_phone'], ['NordVPN', 'cat_subs_cloud'],
+    ['Pertamina SPBU 54.801.12', 'cat_vehicle_fuel'], ['Bali Bike Rental', 'cat_vehicle_rent'], ['Genki Sushi', 'cat_food_restaurant'], ['Genki', 'cat_health_insurance'],
+    ['Pullman Bali Legian Beach', 'cat_travel_hotel'], ['Amazon Kindle', 'cat_edu_books'], ['Buy Me a Coffee', 'cat_gifts_charity'], ['火锅店', 'cat_food_restaurant'],
+  ];
+  for (const [text, id] of more) it(`${text} → ${id}`, () => expect(categoryFromKeywords('expense', text)).toBe(id));
+  it('molte voci, nessun rallentamento', () => {
+    expect(KEYWORD_COUNT).toBeGreaterThan(4000);
+    const text = 'You paid 52,900.00 IDR to SOME UNKNOWN MERCHANT NAME PT ABC at Jl. Raya Canggu No. 12 with card ****1234 via Apple Pay. Cashback +$0.12';
+    const t0 = performance.now();
+    for (let i = 0; i < 1000; i++) categoryFromKeywords('expense', 'Unknown merchant', null, text);
+    expect((performance.now() - t0) / 1000).toBeLessThan(0.5); // meno di mezzo millisecondo a notifica
+  });
+  it('le parole comuni nel testo della notifica non decidono', () => {
+    for (const t of ['Payment with your Gold card', 'Top up 100 EUR', 'Paid with Apple Pay on iPhone', 'Total 50 premium', 'Transaksi aman', 'Carta di debito Mastercard'])
+      expect(categoryFromKeywords('expense', t), t).toBeNull();
+  });
   it('non scatta su parole comuni o sulle carte Visa', () => {
     expect(categoryFromKeywords('expense', 'Visa ****1234 total 50 fine')).toBeNull();
     expect(categoryFromKeywords('expense', 'Air')).toBeNull();

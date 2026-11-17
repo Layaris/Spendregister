@@ -39,11 +39,15 @@ export function RulesList() {
       <p className="lead">Si applicano in ordine, dall'alto: la prima che sceglie la categoria vince, le etichette si sommano.</p>
       <ErrorBox error={error} />
       {!data ? <Loading /> : (
-        [{ title: 'Le tue regole', note: 'Vincono sempre.', items: data.items.filter((r) => !r.definition.soft) },
-          { title: 'Predefinite per chi viaggia', note: 'Valgono finché non correggi tu la categoria di quel negozio.', items: data.items.filter((r) => r.definition.soft) }]
+        [{ title: 'Le tue regole', note: 'Vincono sempre.', items: data.items.filter((r) => !r.definition.soft), closed: false },
+          { title: 'Predefinite per chi viaggia', note: 'Valgono finché non correggi tu la categoria di quel negozio.', items: data.items.filter((r) => r.definition.soft && !onlyName(r)), closed: false },
+          { title: 'Nomi puliti', note: 'Solo il nome: “STARBUCKS 1234 CANGGU” diventa “Starbucks”. Oltre a queste, migliaia di negozi e marche si riconoscono da soli.', items: data.items.filter((r) => r.definition.soft && onlyName(r)), closed: true }]
           .filter((g) => g.items.length).map((g) => (
-        <section key={g.title} className="card">
-          <div className="stack" style={{ gap: 0 }}><span className="h2">{g.title}</span><span className="muted" style={{ fontSize: 13 }}>{g.note}</span></div>
+        <details key={g.title} className="card rules-group" open={!g.closed}>
+          <summary className="row between" style={{ cursor: 'pointer', listStyle: 'none' }}>
+            <span className="stack grow" style={{ gap: 0 }}><span className="h2">{g.title} <span className="muted" style={{ fontWeight: 400, fontSize: 15 }}>· {g.items.length}</span></span><span className="muted" style={{ fontSize: 13 }}>{g.note}</span></span>
+            <span className="rules-chevron" aria-hidden="true"><Icon name="next" size={18} /></span>
+          </summary>
           {g.items.map((r) => (
             <div key={r.id} className="row" style={{ alignItems: 'flex-start' }}>
               <a href={`#/regole/${r.id}`} className="grow stack" style={{ gap: 2, textDecoration: 'none', color: 'inherit', opacity: r.enabled ? 1 : 0.55 }}>
@@ -53,12 +57,15 @@ export function RulesList() {
               <Toggle on={r.enabled} label={`Regola ${r.name} attiva`} onChange={() => toggle(r)} />
             </div>
           ))}
-        </section>
+        </details>
           ))
       )}
     </div>
   );
 }
+
+/** Regola predefinita che cambia solo il nome del negozio. */
+const onlyName = (r: { definition: RuleDefinition }) => !r.definition.actions.category_id && !r.definition.bands?.length && !r.definition.actions.ask?.length;
 
 export function Toggle({ on, onChange, label }: { on: boolean; onChange: () => void; label: string }) {
   return (

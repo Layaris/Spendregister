@@ -17,6 +17,7 @@ export const OLD = {
   registeredPhone: 'telefono-account-registrato',
   v1Session: 'sessione-account-categorie-v1',
   v1FullSession: 'sessione-account-tutte-le-categorie-v1',
+  v3Session: 'sessione-account-catalogo-v3',
 };
 
 /** Tutte le categorie predefinite della versione 1, come le aveva chi si è registrato prima dell'aggiornamento. */
@@ -92,6 +93,8 @@ export default async function setup(project: TestProject) {
     user('usr_con_dati', null), session(OLD.fullGuestSession, 'usr_con_dati'), tx('tx_ospite_vecchio', 'usr_con_dati'),
     user('usr_abbandonato', null), device('dev_abbandonato', OLD.abandonedGuestPhone, 'usr_abbandonato'), tx('tx_abbandonato', 'usr_abbandonato'),
     user('usr_registrato', 'vecchio@example.com'), device('dev_registrato', OLD.registeredPhone, 'usr_registrato'),
+    // Account alla versione 3 delle categorie che aveva tolto la regola predefinita "Uber": non deve tornare.
+    user('usr_v3', 'v3@example.com'), session(OLD.v3Session, 'usr_v3'), "UPDATE users SET catalog_version = 3 WHERE id = 'usr_v3';",
     // Account con le categorie della versione 1 (stile Wallet), una personale sotto un gruppo ritirato e una regola.
     user('usr_v1', 'v1@example.com'), session(OLD.v1Session, 'usr_v1'),
     "INSERT INTO categories (id, user_id, name, parent_id, kind, position) VALUES ('cat_life~usr_v1', 'usr_v1', 'Vita e intrattenimento', NULL, 'expense', 0),"

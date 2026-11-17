@@ -1185,6 +1185,27 @@ describe('regole predefinite per chi viaggia', () => {
     expect(names).toContain('Uber');
     expect(names).toContain('Telefono');
     expect(names.filter((n: string) => n === 'Uber').length).toBe(1);
+    expect(names).toContain('Nome pulito: Starbucks'); // anche quelle della versione 4
+  });
+  it('dalla versione 3 alla 4 arrivano solo le regole nuove (quelle tolte non tornano)', async () => {
+    const v3 = new Client('10.47.0.3');
+    v3.cookie = `ledgy_session=${OLD.v3Session}`;
+    await v3.get('/api/bootstrap');
+    const names = (await v3.get('/api/rules')).json.items.map((r: any) => r.name);
+    expect(names).toContain('Nome pulito: Starbucks');
+    expect(names).toContain('Beach club di Bali');
+    expect(names).not.toContain('Uber');
+    await v3.get('/api/bootstrap');
+    expect((await v3.get('/api/rules')).json.items.length).toBe(names.length);
+  });
+  it('versione 4: nomi puliti delle catene e categorie giuste per le spese tipiche', async () => {
+    expect(await cap('You paid 85,000.00 IDR to STARBUCKS 1234 CANGGU')).toMatchObject({ merchant: 'Starbucks', category_id: own.cat_food_bar });
+    expect(await cap('You paid 9.99 EUR to AMAZON PRIME*AB12CD')).toMatchObject({ merchant: 'Amazon Prime', category_id: own.cat_subs_shopping });
+    expect(await cap('You paid 1,250,000.00 IDR to FINNS BEACH CLUB')).toMatchObject({ category_id: own.cat_fun_going_out });
+    expect(await cap('You paid 48,000.00 IDR to MIE GACOAN DENPASAR')).toMatchObject({ merchant: 'Mie Gacoan', category_id: own.cat_food_fastfood });
+    expect(await cap('You paid 150,000.00 IDR to SPBU PERTAMINA 54.801')).toMatchObject({ category_id: own.cat_vehicle_fuel });
+    expect(await cap('You paid 230,000.00 IDR to Waterbom Bali')).toMatchObject({ category_id: own.cat_fun_activities });
+    expect(await cap('You paid 6.50 EUR to Esselunga Milano')).toMatchObject({ merchant: 'Esselunga', category_id: own.cat_food_groceries });
   });
 });
 

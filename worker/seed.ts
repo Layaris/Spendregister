@@ -79,7 +79,7 @@ export const TREE: Group[] = [
   { id: 'cat_other', name: 'Altro', color: '#7D8790', icon: 'dots', kind: 'expense', nature: null, children: [] },
 ];
 
-export const CATALOG_VERSION = 3;
+export const CATALOG_VERSION = 4;
 
 /** Categorie della versione 1 (stile Wallet) che non esistono più: dove vanno i loro movimenti. */
 export const RETIRED: Record<string, string> = {
@@ -93,17 +93,17 @@ export const RETIRED: Record<string, string> = {
 
 
 /** Regole predefinite "morbide" della versione 3: [id, nome, regex sul negozio, categoria, nome pulito, natura]. */
-function travel(list: Array<[string, string, string, string, string | null, Nat]>) {
+function travel(list: Array<[string, string, string, string, string | null, Nat]>, base = 100, since = 3) {
   return list.map(([id, name, regex, cat, rename, nature], i) => ({
-    id, name, priority: 100 + i, since: 3,
+    id, name, priority: base + i, since,
     definition: { soft: true, conditions: [{ field: 'merchant' as const, op: 'regex' as const, value: regex }],
       actions: { category_id: cat, ...(rename ? { merchant: rename } : {}), ...(nature ? { nature } : {}) } },
   }));
 }
 /** Solo nome pulito: [id, regex, nome]. */
-function renames(list: Array<[string, string, string]>) {
+function renames(list: Array<[string, string, string]>, base = 90, since = 3) {
   return list.map(([id, regex, name], i) => ({
-    id, name: `Nome pulito: ${name}`, priority: 90 + i, since: 3,
+    id, name: `Nome pulito: ${name}`, priority: base + i, since,
     definition: { soft: true, conditions: [{ field: 'merchant' as const, op: 'regex' as const, value: regex }], actions: { merchant: name } },
   }));
 }
@@ -177,6 +177,99 @@ const PRESETS: Array<{ id: string; name: string; priority: number; definition: R
     ['rule_n_netflix', 'netflix\\.com', 'Netflix'],
     ['rule_n_paypal', '^paypal\\s*\\*', 'PayPal'],
   ]),
+  // ---- Versione 4: più regole. Prima quelle che correggono casi dove le parole chiave sbaglierebbero
+  // (vengono prima delle regole di viaggio), poi i nomi puliti delle catene (STARBUCKS 1234 CANGGU → Starbucks),
+  // così "Dove spendi di più" e lo storico raggruppano bene. Le parole chiave (shared/brands.ts) fanno il resto. ----
+  ...travel([
+    ['rule_v4_prime', 'Amazon Prime (abbonamento)', 'amazon\\s*prime|amzn\\s*prime|prime\\s*member', 'cat_subs_shopping', 'Amazon Prime', 'want'],
+    ['rule_v4_prime_video', 'Prime Video', 'prime\\s*video|primevideo', 'cat_subs_streaming', 'Prime Video', 'want'],
+    ['rule_v4_kindle', 'Kindle e libri digitali', 'kindle|amazon\\s*digital|audible', 'cat_edu_books', null, 'want'],
+    ['rule_v4_aws', 'Amazon Web Services', '\\baws\\b|amazon\\s*web\\s*services', 'cat_work_hosting', 'AWS', 'need'],
+    ['rule_v4_uber_one', 'Uber One (abbonamento)', 'uber\\s*one', 'cat_subs_shopping', 'Uber One', 'want'],
+    ['rule_v4_grab_unlimited', 'GrabUnlimited (abbonamento)', 'grab\\s*unlimited', 'cat_subs_shopping', 'GrabUnlimited', 'want'],
+    ['rule_v4_google_workspace', 'Google Workspace', 'google\\s*\\*?\\s*(gsuite|workspace)|g\\s*suite', 'cat_work_software', 'Google Workspace', 'need'],
+    ['rule_v4_google_cloud', 'Google Cloud', 'google\\s*\\*?\\s*cloud|\\bgcp\\b', 'cat_work_hosting', 'Google Cloud', 'need'],
+    ['rule_v4_google_one', 'Google One', 'google\\s*\\*?\\s*(one|storage)', 'cat_subs_cloud', 'Google One', 'want'],
+    ['rule_v4_apple_icloud', 'iCloud', 'icloud', 'cat_subs_cloud', 'iCloud', 'want'],
+    ['rule_v4_microsoft', 'Microsoft 365', 'microsoft\\s*365|office\\s*365|msft\\s*\\*', 'cat_subs_cloud', 'Microsoft 365', 'want'],
+    ['rule_v4_adobe', 'Adobe', 'adobe', 'cat_work_software', 'Adobe', 'need'],
+    ['rule_v4_spotify', 'Spotify', 'spotify', 'cat_subs_streaming', 'Spotify', 'want'],
+    ['rule_v4_disney', 'Disney+', 'disney\\s*(\\+|plus)|disneyplus', 'cat_subs_streaming', 'Disney+', 'want'],
+    ['rule_v4_github', 'GitHub', 'github', 'cat_work_software', 'GitHub', 'need'],
+    ['rule_v4_cloudflare', 'Cloudflare', 'cloudflare', 'cat_work_hosting', 'Cloudflare', 'need'],
+    ['rule_v4_genki_sushi', 'Genki Sushi (ristorante)', 'genki\\s*sushi', 'cat_food_restaurant', 'Genki Sushi', 'want'],
+    ['rule_v4_pullman', 'Hotel Pullman', 'pullman\\s*(hotel|bali|jakarta|bangkok|legian|nusa)', 'cat_travel_hotel', null, 'want'],
+    ['rule_v4_tourist_levy', 'Tassa turistica di Bali', 'love\\s*bali|tourism\\s*levy|pungutan\\s*wisata', 'cat_travel_visa', 'Tassa turistica di Bali', 'must'],
+    ['rule_v4_pln', 'Elettricità (token PLN)', 'token\\s*pln|pln\\s*(prabayar|pascabayar|mobile)', 'cat_home_energy', 'PLN', 'must'],
+    ['rule_v4_pulsa', 'Credito telefonico', 'pulsa|paket\\s*data|kuota', 'cat_subs_phone', null, 'need'],
+    ['rule_v4_galon', 'Acqua in boccioni', 'galon|isi\\s*ulang\\s*air|water\\s*refill', 'cat_home_water', null, 'need'],
+    ['rule_v4_banjar', 'Banjar e sicurezza', 'iuran|banjar|keamanan', 'cat_home_condo', null, 'must'],
+    ['rule_v4_beach_club', 'Beach club di Bali', 'finns|potato\\s*head|atlas\\s*beach|la\\s*brisa|savaya|single\\s*fin|ku\\s*de\\s*ta|mrs\\s*sippy|cafe\\s*del\\s*mar|sundays\\s*beach|tropicola|el\\s*kabron|beach\\s*club', 'cat_fun_going_out', null, 'want'],
+    ['rule_v4_scooter', 'Noleggio scooter', 'sewa\\s*motor|scooter\\s*(rental|hire)|bike\\s*rental|rental\\s*motor', 'cat_vehicle_rent', null, 'need'],
+    ['rule_v4_fuel', 'Benzina (Pertamina, Shell…)', 'pertamina|spbu|pertalite|pertamax|\\bshell\\b|\\bbp\\b|vivo\\s*energy', 'cat_vehicle_fuel', null, 'need'],
+    ['rule_v4_hospital', 'Ospedali e cliniche di Bali', 'bimc|siloam|kasih\\s*ibu|prima\\s*medika|bali\\s*royal|bros\\s*hospital|unicare|bali\\s*911|ari\\s*canti', 'cat_health_doctor', null, 'need'],
+    ['rule_v4_visa_agent', 'Agenti per il visto', 'visa\\s*(agent|service|extension)|agen\\s*visa|perpanjang(an)?\\s*visa|imigrasi', 'cat_travel_visa', null, 'must'],
+    ['rule_v4_tax_it', 'Tasse italiane', '\\bf24\\b|pagopa|agenzia\\s*(delle\\s*)?entrate|\\binps\\b|imposta\\s*di\\s*bollo', 'cat_fin_taxes', null, 'must'],
+    ['rule_v4_bank_fee', 'Commissioni bancarie', 'foreign\\s*transaction\\s*fee|fx\\s*fee|transfer\\s*fee|biaya\\s*(admin|transfer|kartu)|annual\\s*fee|card\\s*fee', 'cat_fin_fees', null, 'must'],
+  ], 60, 4),
+  ...renames([
+    ['rule_n4_starbucks', '\\bstarbucks\\b', 'Starbucks'],
+    ['rule_n4_mcdonalds', 'mc\\s*donald|\\bmcd\\b', "McDonald's"],
+    ['rule_n4_kfc', '\\bkfc\\b|kentucky\\s*fried', 'KFC'],
+    ['rule_n4_burger_king', 'burger\\s*king', 'Burger King'],
+    ['rule_n4_pizza_hut', 'pizza\\s*hut', 'Pizza Hut'],
+    ['rule_n4_dominos', "domino'?s", "Domino's"],
+    ['rule_n4_subway', 'subway\\s*(sandwich|restaurant|\\d)', 'Subway'],
+    ['rule_n4_circle_k', 'circle\\s*k', 'Circle K'],
+    ['rule_n4_7eleven', '7\\s*-?\\s*eleven|seven\\s*eleven', '7-Eleven'],
+    ['rule_n4_indomaret', 'indomaret', 'Indomaret'],
+    ['rule_n4_alfamart', 'alfamart', 'Alfamart'],
+    ['rule_n4_alfamidi', 'alfamidi', 'Alfamidi'],
+    ['rule_n4_familymart', 'family\\s*mart', 'FamilyMart'],
+    ['rule_n4_lawson', 'lawson', 'Lawson'],
+    ['rule_n4_pepito', 'pepito', 'Pepito'],
+    ['rule_n4_coco_mart', 'coco\\s*mart', 'Coco Mart'],
+    ['rule_n4_frestive', 'frestive', 'Frestive'],
+    ['rule_n4_grand_lucky', 'grand\\s*lucky', 'Grand Lucky'],
+    ['rule_n4_carrefour', 'carrefour', 'Carrefour'],
+    ['rule_n4_lidl', '\\blidl\\b', 'Lidl'],
+    ['rule_n4_esselunga', 'esselunga', 'Esselunga'],
+    ['rule_n4_conad', '\\bconad\\b', 'Conad'],
+    ['rule_n4_guardian', '(?<!the\\s)\\bguardian\\b(?!\\s*(news|media|angel))', 'Guardian'],
+    ['rule_n4_watsons', 'watsons', 'Watsons'],
+    ['rule_n4_kimia_farma', 'kimia\\s*farma', 'Kimia Farma'],
+    ['rule_n4_k24', 'apotek\\s*k-?24|\\bk-?24\\b', 'Apotek K-24'],
+    ['rule_n4_uniqlo', 'uniqlo', 'Uniqlo'],
+    ['rule_n4_zara', '\\bzara\\b(?!\\s*home)', 'Zara'],
+    ['rule_n4_hm', '\\bh\\s*&\\s*m\\b|hennes', 'H&M'],
+    ['rule_n4_ikea', '\\bikea\\b', 'IKEA'],
+    ['rule_n4_decathlon', 'decathlon', 'Decathlon'],
+    ['rule_n4_miniso', 'miniso', 'Miniso'],
+    ['rule_n4_ace', 'ace\\s*hardware', 'ACE Hardware'],
+    ['rule_n4_mixue', 'mixue', 'Mixue'],
+    ['rule_n4_janji_jiwa', 'janji\\s*jiwa', 'Kopi Janji Jiwa'],
+    ['rule_n4_kopi_kenangan', 'kopi\\s*kenangan', 'Kopi Kenangan'],
+    ['rule_n4_fore', 'fore\\s*coffee', 'Fore Coffee'],
+    ['rule_n4_jco', '\\bj\\.?\\s*co\\b', 'J.CO'],
+    ['rule_n4_gacoan', 'gacoan', 'Mie Gacoan'],
+    ['rule_n4_revolver', 'revolver\\s*(espresso|coffee)?', 'Revolver'],
+    ['rule_n4_milk_madu', 'milk\\s*(&|and)\\s*madu', 'Milk & Madu'],
+    ['rule_n4_bluebird', 'blue\\s*bird', 'Blue Bird'],
+    ['rule_n4_traveloka', 'traveloka', 'Traveloka'],
+    ['rule_n4_tiket', 'tiket\\.?com', 'tiket.com'],
+    ['rule_n4_agoda', 'agoda', 'Agoda'],
+    ['rule_n4_booking', 'booking\\.com', 'Booking.com'],
+    ['rule_n4_airbnb', 'airbnb', 'Airbnb'],
+    ['rule_n4_klook', 'klook', 'Klook'],
+    ['rule_n4_steam', 'steam\\s*(games|powered|purchase|store)|steampowered|^steam$', 'Steam'],
+    ['rule_n4_playstation', 'playstation|sony\\s*interactive|\\bpsn\\b', 'PlayStation'],
+    ['rule_n4_openai', 'openai|chatgpt', 'ChatGPT'],
+    ['rule_n4_claude', 'claude\\.ai|anthropic', 'Claude'],
+    ['rule_n4_facebook_ads', 'facebk|meta\\s*ads|facebook\\s*ads', 'Meta Ads'],
+    ['rule_n4_shopee', 'shopee(?!\\s*food)', 'Shopee'],
+    ['rule_n4_tokopedia', 'tokopedia', 'Tokopedia'],
+    ['rule_n4_lazada', 'lazada', 'Lazada'],
+  ], 70, 4),
 ];
 
 /** Id delle voci iniziali: con il suffisso dell'account (cat_food~usr_…), unici in tutto il database. */
@@ -231,9 +324,9 @@ export async function upgradeCatalog(db: D1Database, userId: string): Promise<vo
   if (!row || row.v >= CATALOG_VERSION) return;
   const stmts: D1PreparedStatement[] = [];
   if (row.v < 2) await upgradeTo2(db, userId, stmts);
-  // Versione 3: le regole predefinite per chi viaggia (solo quelle nuove: le vecchie tolte dall'utente non tornano).
+  // Dalla versione 3: le regole predefinite nuove (solo quelle della versione che manca: le vecchie tolte dall'utente non tornano).
   const now = nowIso();
-  for (const r of PRESETS.filter((p) => (p.since ?? 1) === 3)) {
+  for (const r of PRESETS.filter((p) => (p.since ?? 1) >= 3 && (p.since ?? 1) > row.v)) {
     stmts.push(db.prepare('INSERT OR IGNORE INTO rules (id, user_id, name, enabled, priority, definition, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?)')
       .bind(seedId(r.id, userId), userId, r.name, r.priority, JSON.stringify(remap(r.definition, userId)), now, now));
   }
