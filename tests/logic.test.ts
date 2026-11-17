@@ -217,6 +217,11 @@ describe('entrate e spese', () => {
     expect(p).toMatchObject({ amount: 16200, currency: 'IDR', direction: 'expense' });
     expect(p?.merchant).toContain('Grab');
   });
+  it('anche la seconda notifica reale (52,900 IDR, cashback 0.12) è una spesa e non un rimborso', () => {
+    const p = parseNotification({ title: 'Card payment', text: '52,900.00 IDR | Grab* A-A3D4M24GXEQSAV | Card payment | Cashback: +$0.12' }, []);
+    expect(p).toMatchObject({ amount: 52900, currency: 'IDR', direction: 'expense' });
+    expect(categoryFromKeywords('expense', p?.merchant, '52,900.00 IDR | Grab* A-A3D4M24GXEQSAV | Card payment | Cashback: +$0.12')).toBe('cat_transport_taxi');
+  });
   it('un cashback da solo è un’entrata, un rimborso anche dentro un pagamento', () => {
     expect(parseNotification({ text: 'Cashback 2.50 USD credited' }, [])?.direction).toBe('income');
     expect(parseNotification({ text: 'Refund of card payment 12 EUR from Zara' }, [])?.direction).toBe('income');

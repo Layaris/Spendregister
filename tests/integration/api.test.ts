@@ -971,6 +971,13 @@ describe('carta o banca e conti in altre valute', () => {
     expect((await c.put(`/api/accounts/${own.acc_cash}`, { currency: 'EURO' })).status).toBe(400);
     expect((await c.put(`/api/accounts/${own.acc_cash}`, { name: '  ' })).status).toBe(400);
   });
+  it('un’entrata registrata per errore diventa una spesa, con il segno giusto e senza la categoria di entrata', async () => {
+    const t = (await c.post('/api/transactions', { type: 'income', amount: 52900, currency: 'IDR', merchant: 'Grab', category_id: own.cat_income_refund })).json.id;
+    expect((await c.put(`/api/transactions/${t}`, { type: 'expense', category_id: null })).status).toBe(200);
+    const after = (await c.get(`/api/transactions/${t}`)).json;
+    expect(after).toMatchObject({ type: 'expense', amount: -52900000, category_id: null });
+    expect(after.amount_eur).toBeLessThan(0);
+  });
   it('le carte riconosciute finiscono nel backup', async () => {
     const rows = (await c.get('/api/backup/export?table=capture_sources')).json.rows;
     expect(rows).toEqual([expect.objectContaining({ key: 'card payment', card: 'Carta cripto', account_id: wise })]);

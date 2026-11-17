@@ -129,6 +129,19 @@ export function TxDetail({ id }: { id: string }) {
 
       <span className="section-title">Dettagli</span>
       <div className="list">
+        <div className="lrow" style={{ cursor: 'default', padding: '10px 12px' }}>
+          <div className="seg grow" role="group" aria-label="Spesa o entrata">
+            {(['expense', 'income'] as const).map((k) => (
+              <button key={k} aria-pressed={(k === 'income') === income}
+                onClick={() => {
+                  if ((k === 'income') === income) return;
+                  // Una categoria di spesa non vale per un'entrata (e viceversa): si toglie e Ledgy la ripropone.
+                  const keep = cat && cat.kind === k;
+                  save({ type: k, ...(keep ? {} : { category_id: null }) }, k === 'income' ? 'Ora è un’entrata' : 'Ora è una spesa');
+                }}>{k === 'income' ? 'Entrata' : 'Spesa'}</button>
+            ))}
+          </div>
+        </div>
         <label className="lrow">
           <span className="lrow-ic"><Icon name="income" size={18} /></span>
           <span className="lrow-label">Importo</span>
