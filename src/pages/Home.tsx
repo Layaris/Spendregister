@@ -5,14 +5,15 @@ import { setPeriod, usePeriodSpec } from '../period';
 import { PeriodSheet, periodArrows } from '../PeriodSheet';
 import { useApi, useStore } from '../store';
 import { CategoryIcon, TxRow } from '../ui';
-import { eur, formatDayShort, formatMoney, monthPeriod, pct, periodOf } from '../util';
+import { eur, formatDayShort, formatMoney, localDay, monthPeriod, pct, periodOf } from '../util';
+import { BudgetBar, type BudgetView } from './Budget';
 
 /** Schede della Home: si accendono, si spengono e si riordinano (Personalizza). */
 export const HOME_WIDGETS: Array<[string, string]> = [
-  ['hero', 'Speso, saldo e previsione'], ['review', 'Da rivedere'], ['accounts', 'Conti'],
+  ['hero', 'Speso, saldo e previsione'], ['budget', 'Budget del mese'], ['review', 'Da rivedere'], ['accounts', 'Conti'],
   ['cashflow', 'Entrate e uscite'], ['balance', 'Andamento del saldo'], ['top', 'Spese principali'], ['cards', 'Spesa per carta'], ['recent', 'Ultimi movimenti'],
 ];
-export const DEFAULT_HOME = ['hero', 'review', 'accounts', 'cashflow', 'top', 'cards', 'recent'];
+export const DEFAULT_HOME = ['hero', 'budget', 'review', 'accounts', 'cashflow', 'top', 'cards', 'recent'];
 
 const CURRENT_LABEL: Record<string, string> = {
   day: 'Speso oggi', week: 'Speso questa settimana', month: 'Speso questo mese', year: 'Speso quest’anno', ytd: 'Speso da inizio anno', custom: 'Speso nel periodo',
@@ -31,6 +32,7 @@ export function Home() {
   const balance = useApi<{ series: Array<{ day: string; balance: number }> }>(on('balance') ? '/stats/balance?days=30' : null, [store.review_count]);
   // Saldo di tutti i conti: la somma dei saldi mostrati in "Conti", ciascuno al cambio di oggi.
   const total = store.accounts.reduce((sum, a) => sum + (a.balance_eur ?? 0), 0);
+  const budget = useApi<BudgetView>(on('budget') ? `/budgets?today=${localDay()}` : null, [store.review_count]);
   const recent = useApi<{ items: Tx[] }>('/transactions?limit=5', [store.review_count]);
   const review = useApi<{ items: Tx[] }>('/transactions?status=review&limit=1', [store.review_count]);
 
@@ -85,6 +87,32 @@ export function Home() {
           )}
         </div>
       </section>
+    ),
+    budget: !budget.data ? null : !budget.data.total ? (
+      <a href="#/budget" className="card" style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: '14px 16px', textDecoration: 'none', color: 'inherit' }}>
+        <span className="lrow-ic" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}><Icon name="wallet" size={18} /></span>
+        <span className="grow stack" style={{ gap: 2 }}><b>Imposta un budget mensile</b><span className="muted" style={{ fontSize: 13 }}>Un tetto per il mese e, se vuoi, per alcune categorie</span></span>
+        <Icon name="next" size={18} />
+      </a>
+    ) : (
+      <a href="#/budget" className="card" style={{ textDecoration: 'none', color: 'inherit', gap: 10 }}>
+        <div className="row between">
+          <h2 className="h2">Budget del mese</h2>
+          <span className="num money" style={{ fontWeight: 700, color: budget.data.total.left < 0 ? 'var(--neg)' : 'var(--accent)' }}>
+            {budget.data.total.left < 0 ? `${eur(-budget.data.total.left)} oltre` : `${eur(budget.data.total.left)} liberi`}
+          </span>
+        </div>
+        <BudgetBar spent={budget.data.total.spent} amount={budget.data.total.amount} dayPct={(budget.data.days.elapsed / budget.data.days.total) * 100} />
+        <span className="muted" style={{ fontSize: 13 }}>
+          {eur(budget.data.total.spent)} di {eur(budget.data.total.amount)}{budget.data.total.left > 0 ? ` · ${eur(budget.data.total.per_day)} al giorno` : ''}
+        </span>
+        {budget.data.categories.slice(0, 3).map((c) => (
+          <div key={c.category_id} className="stack" style={{ gap: 5 }}>
+            <span className="row between" style={{ fontSize: 14 }}><span>{store.catName(c.category_id)}</span><span className="num money"><b style={{ color: c.left < 0 ? 'var(--neg)' : undefined }}>{eur(c.spent)}</b> <span className="muted">di {eur(c.amount)}</span></span></span>
+            <BudgetBar spent={c.spent} amount={c.amount} height={6} />
+          </div>
+        ))}
+      </a>
     ),
     review: store.review_count > 0 && firstReview ? (
       <section className="card warn">

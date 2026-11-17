@@ -1395,6 +1395,33 @@ describe('import da Wallet (API ufficiale)', () => {
   });
 });
 
+describe('budget', () => {
+  const c = new Client('10.53.0.1');
+  const own: Record<string, string> = {};
+  beforeAll(async () => { await c.post('/api/guest'); await loadOwn(c, own); });
+  it('il totale è il tetto: lo sforamento di una categoria si toglie dal resto', async () => {
+    expect((await c.get('/api/budgets?today=2026-11-17')).json).toMatchObject({ total: null, categories: [] });
+    await c.put('/api/budgets', { category_id: '*', amount: 1_000_000 });
+    await c.put('/api/budgets', { category_id: own.cat_food, amount: 300_000 });
+    expect((await c.put('/api/budgets', { category_id: own.cat_income_salary, amount: 5 })).status).toBe(400);
+    const add = (amount: number, category_id: string, when = '2026-11-10T12:00:00+08:00') => c.post('/api/transactions', { amount, currency: 'EUR', merchant: 'x', category_id, occurred_at: when });
+    await add(200, own.cat_food_restaurant);
+    await add(150, own.cat_food_groceries);
+    await add(100, own.cat_transport_taxi);
+    await add(999, own.cat_transport_taxi, '2026-10-10T12:00:00+08:00'); // mese prima: non conta
+    const v = (await c.get('/api/budgets?month=2026-11&today=2026-11-17')).json;
+    expect(v.total).toMatchObject({ amount: 1_000_000, spent: 450_000, left: 550_000, per_day: Math.floor(550_000 / 14) });
+    expect(v.categories).toEqual([{ category_id: own.cat_food, amount: 300_000, spent: 350_000, left: -50_000, pct: 117 }]);
+    // Resto: 700 di budget, 100 spesi fuori dal cibo, 50 di sforamento del cibo → 550.
+    expect(v.rest).toEqual({ amount: 700_000, spent: 100_000, left: 550_000 });
+    // Nel backup e tolto con importo vuoto.
+    const rows = (await c.get('/api/backup/export?table=budgets')).json.rows;
+    expect(rows.map((r: any) => [r.category_id, r.amount]).sort()).toEqual([['*', 1_000_000], [own.cat_food, 300_000]].sort());
+    await c.put('/api/budgets', { category_id: own.cat_food, amount: null });
+    expect((await c.get('/api/budgets?month=2026-11&today=2026-11-17')).json.categories).toEqual([]);
+  });
+});
+
 describe('pulizia notturna', () => {
   const withSession = (token: string) => { const c = new Client('10.30.0.1'); c.cookie = `ledgy_session=${token}`; return c; };
   const ping = (token: string) => new Client('10.30.0.2').post(`/api/in/${token}/ping`, {});

@@ -1,7 +1,7 @@
 // Backup locali: il file si compone e si legge qui nel browser, il server lavora a pagine.
 import { api } from './api';
 
-export const TABLE_ORDER = ['settings', 'accounts', 'categories', 'labels', 'rules', 'parsers', 'devices', 'transactions', 'transaction_labels', 'captures', 'favorites', 'capture_sources'] as const;
+export const TABLE_ORDER = ['settings', 'accounts', 'categories', 'labels', 'rules', 'parsers', 'devices', 'transactions', 'transaction_labels', 'captures', 'favorites', 'capture_sources', 'budgets', 'trips', 'trip_items', 'recurring'] as const;
 type Row = Record<string, unknown>;
 
 export interface Backup {
@@ -15,7 +15,7 @@ export type Progress = (label: string) => void;
 
 const TABLE_LABEL: Record<string, string> = {
   settings: 'impostazioni', accounts: 'conti', categories: 'categorie', labels: 'etichette', rules: 'regole', parsers: 'lettori',
-  devices: 'telefoni', transactions: 'movimenti', transaction_labels: 'etichette dei movimenti', captures: 'notifiche ricevute', favorites: 'preferiti', capture_sources: 'carte riconosciute',
+  devices: 'telefoni', transactions: 'movimenti', transaction_labels: 'etichette dei movimenti', captures: 'notifiche ricevute', favorites: 'preferiti', capture_sources: 'carte riconosciute', budgets: 'budget', trips: 'viaggi', trip_items: 'movimenti dei viaggi', recurring: 'spese ricorrenti',
 };
 
 export async function exportBackup(onProgress: Progress = () => {}): Promise<Backup> {

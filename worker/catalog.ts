@@ -363,7 +363,7 @@ catalogApi.get('/settings', async (c) => {
 /** Valute in cui si possono vedere totali e saldi (Impostazioni). */
 export const DISPLAY_CURRENCIES = ['EUR', 'USD', 'AED', 'PHP', 'IDR', 'SGD', 'CNY', 'THB'];
 /** Schede possibili della Home (src/pages/Home.tsx). */
-export const HOME_WIDGETS = ['hero', 'review', 'accounts', 'cashflow', 'balance', 'top', 'cards', 'recent'];
+export const HOME_WIDGETS = ['hero', 'budget', 'review', 'accounts', 'cashflow', 'balance', 'top', 'cards', 'recent'];
 
 catalogApi.put('/settings', async (c) => {
   const b = await body<{ timezone?: string; display_currency?: string; theme?: string; home_layout?: string[] | null }>(c);

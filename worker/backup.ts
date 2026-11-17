@@ -27,9 +27,15 @@ export const TABLES: Record<string, string[]> = {
   captures: ['id', 'device_id', 'received_at', 'posted_at', 'app', 'title', 'text', 'hint', 'hash', 'status', 'detail', 'transaction_id'],
   favorites: ['id', 'name', 'type', 'amount', 'currency', 'merchant', 'category_id', 'account_id', 'note', 'position', 'created_at'],
   capture_sources: ['key', 'card', 'account_id', 'updated_at'],
+  budgets: ['category_id', 'amount', 'updated_at'],
+  trips: ['id', 'name', 'place', 'start_date', 'end_date', 'created_at'],
+  trip_items: ['trip_id', 'transaction_id', 'mode'],
+  recurring: ['id', 'merchant', 'category_id', 'amount_eur', 'period', 'status', 'last_date', 'created_at', 'updated_at'],
 };
+/** Tabelle dei dati dell'account, nell'ordine in cui si cancellano (prima chi usa le altre). */
+export const ACCOUNT_DATA = ['trip_items', 'trips', 'recurring', 'budgets', 'capture_sources', 'favorites', 'captures', 'transactions', 'rules', 'parsers', 'devices', 'labels', 'categories', 'accounts'];
 export const TABLE_ORDER = Object.keys(TABLES);
-const OWNED = ['accounts', 'categories', 'labels', 'rules', 'parsers', 'devices', 'transactions', 'captures', 'favorites'] as const;
+const OWNED = ['accounts', 'categories', 'labels', 'rules', 'parsers', 'devices', 'transactions', 'captures', 'favorites', 'trips', 'recurring'] as const;
 type Owned = (typeof OWNED)[number];
 
 type Row = Record<string, unknown>;
@@ -44,12 +50,13 @@ backupApi.get('/export', async (c) => {
   if (!cols) bad('Tabella sconosciuta');
   const u = uid(c);
   if (table === 'settings') {
-    const s = await c.env.DB.prepare('SELECT timezone, display_currency, theme, home_layout FROM users WHERE id = ?').bind(u).first<{ timezone: string; display_currency: string; theme: string; home_layout: string | null }>();
+    const s = await c.env.DB.prepare('SELECT timezone, display_currency, theme, home_layout, features FROM users WHERE id = ?').bind(u).first<{ timezone: string; display_currency: string; theme: string; home_layout: string | null; features: string | null }>();
     // Chiavi e scelte dell'AI: nel backup, così passano a un altro account o a un'installazione nuova (scelta del proprietario).
     const ai = await c.env.DB.prepare('SELECT enabled, gemini_key, nanogpt_key, gemini_model, nanogpt_model FROM ai_settings WHERE user_id = ?').bind(u).first();
     return c.json({ rows: [
       ...(ai ? [{ key: 'ai', value: JSON.stringify(ai) }] : []),
       { key: 'timezone', value: s?.timezone ?? 'Asia/Makassar' }, { key: 'display_currency', value: s?.display_currency ?? 'EUR' }, { key: 'theme', value: s?.theme ?? 'light' }, { key: 'home_layout', value: s?.home_layout ?? null },
+      { key: 'features', value: s?.features ?? null },
     ], next: null });
   }
   const after = Number(c.req.query('after')) || 0;
@@ -74,7 +81,7 @@ backupApi.post('/import/begin', async (c) => {
     const u = uid(c);
     await db.batch([
       db.prepare('DELETE FROM transaction_labels WHERE transaction_id IN (SELECT id FROM transactions WHERE user_id = ?)').bind(u),
-      ...['capture_sources', 'favorites', 'captures', 'transactions', 'rules', 'parsers', 'devices', 'labels', 'categories', 'accounts'].map((t) => db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(u)),
+      ...ACCOUNT_DATA.map((t) => db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(u)),
     ]);
   }
   return c.json({ ok: true });
@@ -195,6 +202,10 @@ backupApi.post('/import/chunk', async (c) => {
       if (typeof home === 'string') {
         try { if (Array.isArray(JSON.parse(home))) await db.prepare('UPDATE users SET home_layout = ? WHERE id = ?').bind(home, u).run(); } catch { /* ignora */ }
       }
+      const features = get('features');
+      if (typeof features === 'string') {
+        try { const f = JSON.parse(features); if (f && typeof f === 'object' && !Array.isArray(f)) await db.prepare('UPDATE users SET features = ? WHERE id = ?').bind(JSON.stringify(f), u).run(); } catch { /* ignora */ }
+      }
     }
     return c.json({ inserted: merge ? 0 : rows.length, skipped: merge ? rows.length : 0 });
   }
@@ -260,6 +271,36 @@ backupApi.post('/import/chunk', async (c) => {
     const cat = await catTr(rows.map((r) => r.category_id));
     const acc = await accTr(rows.map((r) => r.account_id));
     out = rows.map((r) => ({ ...r, id: id(r.id), category_id: cat(r.category_id), account_id: acc(r.account_id), created_at: r.created_at ?? nowIso() }));
+  } else if (table === 'budgets') {
+    const cat = await catTr(rows.map((r) => (r.category_id === '*' ? null : r.category_id)));
+    const cats = new Set((await db.prepare('SELECT id FROM categories WHERE user_id = ?').bind(u).all<{ id: string }>()).results.map((x) => x.id));
+    out = rows.map((r) => ({ ...r, category_id: r.category_id === '*' ? '*' : cat(r.category_id), updated_at: r.updated_at ?? nowIso() }))
+      .filter((r) => r.category_id === '*' || cats.has(String(r.category_id)));
+  } else if (table === 'trips') {
+    const id = await translator(db, 'trips', rows.map((r) => r.id), u);
+    out = rows.map((r) => ({ ...r, id: id(r.id), created_at: r.created_at ?? nowIso() }));
+  } else if (table === 'recurring') {
+    const id = await translator(db, 'recurring', rows.map((r) => r.id), u);
+    const cat = await catTr(rows.map((r) => r.category_id));
+    const cats = new Set((await db.prepare('SELECT id FROM categories WHERE user_id = ?').bind(u).all<{ id: string }>()).results.map((x) => x.id));
+    out = rows.map((r) => {
+      const cid = cat(r.category_id);
+      return { ...r, id: id(r.id), category_id: cid && cats.has(cid) ? cid : null, created_at: r.created_at ?? nowIso(), updated_at: r.updated_at ?? nowIso() };
+    });
+  } else if (table === 'trip_items') {
+    // Solo se viaggio e movimento esistono e sono dell'account.
+    const trip = await translator(db, 'trips', rows.map((r) => r.trip_id), u);
+    const txId = await translator(db, 'transactions', rows.map((r) => r.transaction_id), u);
+    const stmts = rows.map((r) => {
+      const t = trip(r.trip_id);
+      const x = txId(r.transaction_id);
+      return db.prepare(
+        "INSERT OR IGNORE INTO trip_items (user_id, trip_id, transaction_id, mode) SELECT ?, ?, ?, ? WHERE ? IN ('in', 'out') AND EXISTS (SELECT 1 FROM trips WHERE id = ? AND user_id = ?) AND EXISTS (SELECT 1 FROM transactions WHERE id = ? AND user_id = ?)",
+      ).bind(u, t, x, r.mode, r.mode, t, u, x, u);
+    });
+    let inserted = 0;
+    for (let i = 0; i < stmts.length; i += 50) for (const res of await db.batch(stmts.slice(i, i + 50))) inserted += res.meta.changes ?? 0;
+    return c.json({ inserted, skipped: rows.length - inserted });
   } else if (table === 'capture_sources') {
     const acc = await accTr(rows.map((r) => r.account_id));
     out = rows.map((r) => ({ ...r, account_id: acc(r.account_id), updated_at: r.updated_at ?? nowIso() }));

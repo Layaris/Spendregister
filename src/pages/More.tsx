@@ -17,6 +17,7 @@ const DISPLAY_CURRENCIES: Array<[string, string]> = [
 
 const LINKS: Array<[string, string, string, string]> = [
   ['#/rivedere', 'inbox', 'Da rivedere', 'Movimenti catturati che aspettano una scelta'],
+  ['#/budget', 'wallet', 'Budget', 'Tetto del mese e budget per categoria'],
   ['#/cattura', 'bolt', 'Cattura automatica', 'Telefoni collegati, notifiche ricevute, lettori'],
   ['#/carte', 'card', 'Carte e banche', 'Con quale carta paghi, quanto per carta'],
   ['#/importa-wallet', 'download', 'Importa da Wallet', 'Movimenti, conti, categorie ed etichette da Wallet by BudgetBakers'],

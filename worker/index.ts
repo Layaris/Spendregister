@@ -13,6 +13,7 @@ import { body, HttpError, type AppEnv, type Env } from './lib';
 import { statsApi } from './stats';
 import { transactionsApi } from './transactions';
 import { walletApi } from './wallet';
+import { budgetsApi } from './budgets';
 
 const app = new Hono<AppEnv>();
 
@@ -89,6 +90,7 @@ priv.post('/account/wipe-transactions', async (c) => {
   await db.batch([
     db.prepare('DELETE FROM transaction_labels WHERE transaction_id IN (SELECT id FROM transactions WHERE user_id = ?)').bind(u),
     db.prepare('DELETE FROM captures WHERE user_id = ?').bind(u),
+    db.prepare('DELETE FROM trip_items WHERE user_id = ?').bind(u),
     db.prepare('DELETE FROM transactions WHERE user_id = ?').bind(u),
     db.prepare('UPDATE devices SET last_capture_at = NULL WHERE user_id = ?').bind(u),
   ]);
@@ -107,6 +109,7 @@ priv.route('/cards', cardsApi);
 priv.route('/ai', aiApi);
 priv.route('/backup', backupApi);
 priv.route('/import/wallet', walletApi);
+priv.route('/budgets', budgetsApi);
 app.route('/api', priv);
 
 app.all('/api/*', (c) => c.json({ error: 'Percorso non trovato' }, 404));
@@ -129,7 +132,7 @@ export default {
       (u.created_at < ?1 AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.id))
       OR (u.created_at < ?2 AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.user_id = u.id)
           AND NOT EXISTS (SELECT 1 FROM devices d WHERE d.user_id = u.id AND d.revoked_at IS NULL)))`;
-    const tables = ['ai_settings', 'capture_sources', 'favorites', 'captures', 'transactions', 'rules', 'parsers', 'devices', 'labels', 'categories', 'accounts', 'sessions'];
+    const tables = ['ai_settings', 'trip_items', 'trips', 'recurring', 'budgets', 'capture_sources', 'favorites', 'captures', 'transactions', 'rules', 'parsers', 'devices', 'labels', 'categories', 'accounts', 'sessions'];
     await env.DB.batch([
       env.DB.prepare(`DELETE FROM transaction_labels WHERE transaction_id IN (SELECT id FROM transactions WHERE user_id IN (${doomed}))`).bind(day, week),
       ...tables.map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE user_id IN (${doomed})`).bind(day, week)),
