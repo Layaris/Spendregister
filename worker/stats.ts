@@ -18,8 +18,8 @@ statsApi.get('/', async (c) => {
   if (!from || !to) bad('Servono from e to');
   const db = c.env.DB;
   const u = uid(c);
-  const base = "user_id = ? AND deleted_at IS NULL AND duplicate_of IS NULL AND type <> 'transfer' AND substr(occurred_at, 1, 10) >= ? AND substr(occurred_at, 1, 10) < ?";
-  const tBase = "t.user_id = ? AND t.deleted_at IS NULL AND t.duplicate_of IS NULL AND t.type <> 'transfer' AND substr(t.occurred_at, 1, 10) >= ? AND substr(t.occurred_at, 1, 10) < ?";
+  const base = "user_id = ? AND deleted_at IS NULL AND duplicate_of IS NULL AND type <> 'transfer' AND occurred_at >= ? AND occurred_at < ?";
+  const tBase = "t.user_id = ? AND t.deleted_at IS NULL AND t.duplicate_of IS NULL AND t.type <> 'transfer' AND t.occurred_at >= ? AND t.occurred_at < ?";
   const [prevFrom, prevTo] = shiftPeriod(from, to);
 
   const [totals, prev, byCategory, byNature, byMerchant, daily, bySub, incomeByCategory, byCard] = await Promise.all([
@@ -97,10 +97,10 @@ statsApi.get('/balance', async (c) => {
     const rate = await getEurRate(db, a.currency, new Date().toISOString().slice(0, 10));
     initial += rate ? Math.round(a.initial_balance * rate.eurPerUnit) : 0;
   }
-  const before = await db.prepare('SELECT COALESCE(SUM(amount_eur), 0) AS v FROM transactions WHERE user_id = ? AND deleted_at IS NULL AND duplicate_of IS NULL AND substr(occurred_at, 1, 10) < ?')
+  const before = await db.prepare('SELECT COALESCE(SUM(amount_eur), 0) AS v FROM transactions WHERE user_id = ? AND deleted_at IS NULL AND duplicate_of IS NULL AND occurred_at < ?')
     .bind(u, start).first<{ v: number }>();
   const { results } = await db
-    .prepare('SELECT substr(occurred_at, 1, 10) AS day, SUM(amount_eur) AS delta FROM transactions WHERE user_id = ? AND deleted_at IS NULL AND duplicate_of IS NULL AND substr(occurred_at, 1, 10) >= ? GROUP BY day ORDER BY day')
+    .prepare('SELECT substr(occurred_at, 1, 10) AS day, SUM(amount_eur) AS delta FROM transactions WHERE user_id = ? AND deleted_at IS NULL AND duplicate_of IS NULL AND occurred_at >= ? GROUP BY day ORDER BY day')
     .bind(u, start).all<{ day: string; delta: number }>();
   const deltas = new Map(results.map((r) => [r.day, r.delta]));
   let running = initial + (before?.v ?? 0);

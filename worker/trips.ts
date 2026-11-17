@@ -8,7 +8,7 @@ export const tripsApi = new Hono<AppEnv>();
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Condizione SQL "il movimento t fa parte del viaggio ?" (4 parametri: id del viaggio ripetuto). */
-export const IN_TRIP = `((substr(t.occurred_at, 1, 10) BETWEEN (SELECT start_date FROM trips WHERE id = ?1 AND user_id = t.user_id) AND (SELECT end_date FROM trips WHERE id = ?1 AND user_id = t.user_id)
+export const IN_TRIP = `((t.occurred_at >= (SELECT start_date FROM trips WHERE id = ?1 AND user_id = t.user_id) AND t.occurred_at < (SELECT date(end_date, '+1 day') FROM trips WHERE id = ?1 AND user_id = t.user_id)
   AND t.id NOT IN (SELECT transaction_id FROM trip_items WHERE trip_id = ?1 AND mode = 'out'))
   OR t.id IN (SELECT transaction_id FROM trip_items WHERE trip_id = ?1 AND mode = 'in' AND user_id = t.user_id))`;
 const BASE = "t.user_id = ?2 AND t.deleted_at IS NULL AND t.duplicate_of IS NULL";
@@ -75,7 +75,7 @@ tripsApi.get('/:id', async (c) => {
     db.prepare(`SELECT t.currency, -SUM(t.amount) AS amount, -SUM(t.amount_eur) AS eur FROM transactions t WHERE ${where} AND t.type = 'expense'
         GROUP BY t.currency ORDER BY eur DESC`).bind(id, u).all<{ currency: string; amount: number; eur: number }>(),
     db.prepare(`SELECT COALESCE(-SUM(t.amount_eur), 0) AS spent FROM transactions t WHERE ${BASE} AND t.type = 'expense'
-        AND substr(t.occurred_at, 1, 10) >= ?3 AND substr(t.occurred_at, 1, 10) < ?4 AND NOT ${IN_TRIP}`).bind(id, u, before, trip.start_date).first<{ spent: number }>(),
+        AND t.occurred_at >= ?3 AND t.occurred_at < ?4 AND NOT ${IN_TRIP}`).bind(id, u, before, trip.start_date).first<{ spent: number }>(),
   ]);
   const spent = tot?.spent ?? 0;
   return c.json({

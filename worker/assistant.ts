@@ -27,12 +27,12 @@ async function contextFor(db: D1Database, u: string, today: string, cur: string)
   const [months, cats, merchants, recent, accounts, recurring, trips, budget] = await Promise.all([
     db.prepare(`SELECT substr(t.occurred_at, 1, 7) AS m, SUM(CASE WHEN t.type = 'expense' THEN -t.amount_eur ELSE 0 END) AS spent,
         SUM(CASE WHEN t.type = 'income' THEN t.amount_eur ELSE 0 END) AS income FROM transactions t
-      WHERE ${LIVE} AND t.type <> 'transfer' AND substr(t.occurred_at, 1, 10) >= ?2 GROUP BY m ORDER BY m`).bind(u, shift(today, -365)).all<{ m: string; spent: number; income: number }>(),
+      WHERE ${LIVE} AND t.type <> 'transfer' AND t.occurred_at >= ?2 GROUP BY m ORDER BY m`).bind(u, shift(today, -365)).all<{ m: string; spent: number; income: number }>(),
     db.prepare(`SELECT substr(t.occurred_at, 1, 7) AS m, COALESCE(p.name || ' › ', '') || COALESCE(c.name, 'Senza categoria') AS cat, -SUM(t.amount_eur) AS total, COUNT(*) AS n
       FROM transactions t LEFT JOIN categories c ON c.id = t.category_id LEFT JOIN categories p ON p.id = c.parent_id
-      WHERE ${LIVE} AND t.type = 'expense' AND substr(t.occurred_at, 1, 7) IN (?2, ?3) GROUP BY m, cat ORDER BY m DESC, total DESC`).bind(u, month, prevMonth).all<{ m: string; cat: string; total: number; n: number }>(),
+      WHERE ${LIVE} AND t.type = 'expense' AND t.occurred_at >= ?3 || '-01' AND t.occurred_at < date(?2 || '-01', '+1 month') GROUP BY m, cat ORDER BY m DESC, total DESC`).bind(u, month, prevMonth).all<{ m: string; cat: string; total: number; n: number }>(),
     db.prepare(`SELECT t.merchant, -SUM(t.amount_eur) AS total, COUNT(*) AS n FROM transactions t
-      WHERE ${LIVE} AND t.type = 'expense' AND t.merchant IS NOT NULL AND substr(t.occurred_at, 1, 10) >= ?2 GROUP BY lower(t.merchant) ORDER BY total DESC LIMIT 15`).bind(u, shift(today, -90)).all<{ merchant: string; total: number; n: number }>(),
+      WHERE ${LIVE} AND t.type = 'expense' AND t.merchant IS NOT NULL AND t.occurred_at >= ?2 GROUP BY lower(t.merchant) ORDER BY total DESC LIMIT 15`).bind(u, shift(today, -90)).all<{ merchant: string; total: number; n: number }>(),
     db.prepare(`SELECT substr(t.occurred_at, 1, 10) AS day, t.type, t.merchant, t.amount, t.currency, t.amount_eur, c.name AS cat, t.card FROM transactions t
       LEFT JOIN categories c ON c.id = t.category_id WHERE ${LIVE} ORDER BY t.occurred_utc DESC LIMIT 30`).bind(u).all<{ day: string; type: string; merchant: string | null; amount: number; currency: string; amount_eur: number; cat: string | null; card: string | null }>(),
     db.prepare(`SELECT a.name, a.currency, a.initial_balance + COALESCE((SELECT SUM(t.amount) FROM transactions t WHERE t.account_id = a.id AND t.deleted_at IS NULL AND t.duplicate_of IS NULL AND t.currency = a.currency), 0) AS balance
@@ -70,7 +70,7 @@ async function categoryLines(db: D1Database, u: string) {
 
 /** Valuta più usata negli ultimi 30 giorni (per "50k" senza valuta). */
 async function usualCurrency(db: D1Database, u: string, today: string, fallback: string) {
-  const r = await db.prepare(`SELECT t.currency FROM transactions t WHERE ${LIVE} AND substr(t.occurred_at, 1, 10) >= ?2 GROUP BY t.currency ORDER BY COUNT(*) DESC LIMIT 1`)
+  const r = await db.prepare(`SELECT t.currency FROM transactions t WHERE ${LIVE} AND t.occurred_at >= ?2 GROUP BY t.currency ORDER BY COUNT(*) DESC LIMIT 1`)
     .bind(u, shift(today, -30)).first<{ currency: string }>();
   return r?.currency ?? fallback;
 }

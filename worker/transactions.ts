@@ -255,8 +255,8 @@ transactionsApi.get('/', async (c) => {
   const where = ['t.user_id = ?', 't.deleted_at IS NULL'];
   const args: unknown[] = [uid(c)];
   // from/to sono date locali (YYYY-MM-DD), to escluso.
-  if (q.from) { where.push('substr(t.occurred_at, 1, 10) >= ?'); args.push(q.from); }
-  if (q.to) { where.push('substr(t.occurred_at, 1, 10) < ?'); args.push(q.to); }
+  if (q.from) { where.push('t.occurred_at >= ?'); args.push(q.from); }
+  if (q.to) { where.push('t.occurred_at < ?'); args.push(q.to); }
   if (q.status) { where.push('t.status = ?'); args.push(q.status); }
   if (q.account) { where.push('t.account_id = ?'); args.push(q.account); }
   if (q.category) { where.push('(t.category_id = ? OR t.category_id IN (SELECT id FROM categories WHERE parent_id = ? AND user_id = ?))'); args.push(q.category, q.category, uid(c)); }
@@ -273,7 +273,7 @@ transactionsApi.get('/', async (c) => {
   if (q.max && Number.isFinite(Number(q.max))) { where.push('abs(t.amount_eur) <= ?'); args.push(Number(q.max)); }
   if (q.trip) {
     // Viaggio: movimenti nelle sue date, più quelli aggiunti a mano, meno quelli tolti.
-    where.push(`((substr(t.occurred_at, 1, 10) BETWEEN (SELECT start_date FROM trips WHERE id = ? AND user_id = t.user_id) AND (SELECT end_date FROM trips WHERE id = ? AND user_id = t.user_id)
+    where.push(`((t.occurred_at >= (SELECT start_date FROM trips WHERE id = ? AND user_id = t.user_id) AND t.occurred_at < (SELECT date(end_date, '+1 day') FROM trips WHERE id = ? AND user_id = t.user_id)
       AND t.id NOT IN (SELECT transaction_id FROM trip_items WHERE trip_id = ? AND mode = 'out'))
       OR t.id IN (SELECT transaction_id FROM trip_items WHERE trip_id = ? AND mode = 'in' AND user_id = t.user_id))`);
     args.push(q.trip, q.trip, q.trip, q.trip);

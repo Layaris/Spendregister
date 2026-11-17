@@ -31,11 +31,11 @@ export async function budgetView(db: D1Database, u: string, month: string, today
     db.prepare(`SELECT b.category_id, b.amount,
         CASE WHEN b.category_id = '*' THEN 0 ELSE COALESCE((SELECT -SUM(t.amount_eur) FROM transactions t
           WHERE t.user_id = b.user_id AND t.deleted_at IS NULL AND t.duplicate_of IS NULL AND t.type = 'expense'
-            AND substr(t.occurred_at, 1, 10) >= ? AND substr(t.occurred_at, 1, 10) < ?
+            AND t.occurred_at >= ? AND t.occurred_at < ?
             AND (t.category_id = b.category_id OR t.category_id IN (SELECT id FROM categories WHERE parent_id = b.category_id AND user_id = b.user_id))), 0) END AS spent
       FROM budgets b WHERE b.user_id = ?`).bind(from, to, u).all<{ category_id: string; amount: number; spent: number }>(),
     db.prepare(`SELECT COALESCE(-SUM(amount_eur), 0) AS spent FROM transactions WHERE user_id = ? AND deleted_at IS NULL AND duplicate_of IS NULL
-      AND type = 'expense' AND substr(occurred_at, 1, 10) >= ? AND substr(occurred_at, 1, 10) < ?`).bind(u, from, to).first<{ spent: number }>(),
+      AND type = 'expense' AND occurred_at >= ? AND occurred_at < ?`).bind(u, from, to).first<{ spent: number }>(),
   ]);
   const spent = Math.max(0, spentRow?.spent ?? 0);
   const totalRow = rows.results.find((r) => r.category_id === '*');
