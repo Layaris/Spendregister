@@ -19,6 +19,7 @@ const LINKS: Array<[string, string, string, string]> = [
   ['#/rivedere', 'inbox', 'Da rivedere', 'Movimenti catturati che aspettano una scelta'],
   ['#/cattura', 'bolt', 'Cattura automatica', 'Telefoni collegati, notifiche ricevute, lettori'],
   ['#/carte', 'card', 'Carte e banche', 'Con quale carta paghi, quanto per carta'],
+  ['#/importa-wallet', 'download', 'Importa da Wallet', 'Movimenti, conti, categorie ed etichette da Wallet by BudgetBakers'],
   ['#/regole', 'rules', 'Regole', 'Categoria in base a merchant, importo, ora'],
   ['#/assistente', 'sparkle', 'Assistente AI', 'Domande sulle spese, scontrini, screenshot'],
 ];

@@ -1,5 +1,6 @@
 // Avvia il vero Worker (wrangler dev) con un database D1 locale nuovo per ogni esecuzione dei test.
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
+import { walletFake } from './wallet-fake';
 import { createServer, type Server } from 'node:http';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -46,6 +47,7 @@ function fakeAi(): Server {
     req.on('end', () => {
       const send = (status: number, obj: unknown) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
       if (req.url === '/stats') return send(200, stats);
+      if (req.url?.startsWith('/wallet/')) return walletFake(req, res);
       const b = data ? JSON.parse(data) : {};
       if (req.url?.startsWith('/gemini/')) {
         stats.gemini++;
@@ -124,7 +126,7 @@ export default async function setup(project: TestProject) {
   writeFileSync(join(dir, 'none.env'), '');
   proc = spawn('npx', [
     'wrangler', 'dev', '--port', String(PORT), '--ip', '127.0.0.1', '--persist-to', dir, '--env-file', join(dir, 'none.env'),
-    '--test-scheduled', '--var', `AI_ENDPOINTS:${JSON.stringify({ gemini: `http://127.0.0.1:${AI_PORT}/gemini`, nanogpt: `http://127.0.0.1:${AI_PORT}/nanogpt` })}`, '--var', 'FX_FIXED:IDR:0.00005,SGD:0.7,USD:0.9,AED:0.25',
+    '--test-scheduled', '--var', `AI_ENDPOINTS:${JSON.stringify({ gemini: `http://127.0.0.1:${AI_PORT}/gemini`, nanogpt: `http://127.0.0.1:${AI_PORT}/nanogpt` })}`, '--var', 'FX_FIXED:IDR:0.00005,SGD:0.7,USD:0.9,AED:0.25', '--var', `WALLET_API:http://127.0.0.1:${AI_PORT}/wallet/v1/api`,
   ], { stdio: 'ignore', env: { ...process.env, CI: '1' }, detached: true });
   const base = `http://127.0.0.1:${PORT}`;
   let ready = false;

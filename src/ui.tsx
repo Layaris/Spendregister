@@ -27,10 +27,12 @@ export function TxRow({ t }: { t: Tx }) {
   const foreign = t.currency !== 'EUR';
   return (
     <a href={`#/m/${t.id}`} className="txrow">
-      <CategoryIcon id={t.category_id} />
+      {t.type === 'transfer'
+        ? <div className="ic" style={{ width: 40, height: 40, background: 'var(--blue-soft)', color: 'var(--blue-ink)' }}><Icon name="transfer" size={22} /></div>
+        : <CategoryIcon id={t.category_id} />}
       <div className="grow stack" style={{ gap: 3 }}>
-        <span style={{ fontWeight: 600 }}>{t.merchant ?? t.note ?? catName(t.category_id)}</span>
-        <span className="muted" style={{ fontSize: 13 }}>{catName(t.category_id)}</span>
+        <span style={{ fontWeight: 600 }}>{t.merchant ?? t.note ?? (t.type === 'transfer' ? (t.amount > 0 ? 'Trasferimento in entrata' : 'Trasferimento in uscita') : catName(t.category_id))}</span>
+        <span className="muted" style={{ fontSize: 13 }}>{t.type === 'transfer' ? 'Trasferimento tra conti' : catName(t.category_id)}</span>
         {t.status === 'review' ? (
           <span className="chip warn">Da rivedere</span>
         ) : t.source === 'capture' ? (

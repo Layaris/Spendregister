@@ -8,6 +8,8 @@ export interface Env {
   FX_FIXED?: string;
   /** Solo per i test: indirizzi finti delle API dell'AI, JSON {"gemini": "…", "nanogpt": "…"}. */
   AI_ENDPOINTS?: string;
+  /** Solo per i test: indirizzo finto dell'API di Wallet (es. http://127.0.0.1:8798/wallet/v1/api). */
+  WALLET_API?: string;
 }
 
 export async function getSetting(db: D1Database, key: string): Promise<string | null> {

@@ -12,6 +12,7 @@ import { configureFixedRates } from './fx';
 import { body, HttpError, type AppEnv, type Env } from './lib';
 import { statsApi } from './stats';
 import { transactionsApi } from './transactions';
+import { walletApi } from './wallet';
 
 const app = new Hono<AppEnv>();
 
@@ -105,6 +106,7 @@ priv.route('/capture', captureAdminApi);
 priv.route('/cards', cardsApi);
 priv.route('/ai', aiApi);
 priv.route('/backup', backupApi);
+priv.route('/import/wallet', walletApi);
 app.route('/api', priv);
 
 app.all('/api/*', (c) => c.json({ error: 'Percorso non trovato' }, 404));

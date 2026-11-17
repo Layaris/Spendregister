@@ -224,11 +224,13 @@ async function defaultNature(db: D1Database, categoryId: string | null | undefin
 async function withLabels(db: D1Database, rows: TxRow[]) {
   if (!rows.length) return [];
   const ids = rows.map((r) => r.id);
-  const placeholders = ids.map(() => '?').join(',');
-  const { results } = await db
-    .prepare(`SELECT tl.transaction_id, l.name FROM transaction_labels tl JOIN labels l ON l.id = tl.label_id WHERE tl.transaction_id IN (${placeholders})`)
-    .bind(...ids)
-    .all<{ transaction_id: string; name: string }>();
+  // D1 accetta al massimo 100 valori per richiesta: a gruppi di 90.
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += 90) chunks.push(ids.slice(i, i + 90));
+  const results = (await Promise.all(chunks.map((part) => db
+    .prepare(`SELECT tl.transaction_id, l.name FROM transaction_labels tl JOIN labels l ON l.id = tl.label_id WHERE tl.transaction_id IN (${part.map(() => '?').join(',')})`)
+    .bind(...part)
+    .all<{ transaction_id: string; name: string }>()))).flatMap((r) => r.results);
   const map = new Map<string, string[]>();
   for (const r of results) map.set(r.transaction_id, [...(map.get(r.transaction_id) ?? []), r.name]);
   return rows.map((r) => ({

@@ -48,7 +48,7 @@ export function Movements({ category }: { category?: string }) {
       <div className="row" style={{ gap: 8 }}>
         <label className="grow" style={{ position: 'relative' }}>
           <span style={{ position: 'absolute', left: -9999 }}>Cerca</span>
-          <input className="input" type="search" placeholder="Cerca merchant o nota" value={q} onChange={(e) => setQ(e.target.value)} />
+          <input className="input" type="search" placeholder="Cerca negozio o nota" value={q} onChange={(e) => setQ(e.target.value)} />
         </label>
         {store.review_count > 0 && <a className="btn" href="#/rivedere">Da rivedere · {store.review_count}</a>}
       </div>

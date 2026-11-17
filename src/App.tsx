@@ -13,6 +13,7 @@ import { Review } from './pages/Review';
 import { RuleEditor, RulesList } from './pages/Rules';
 import { Stats } from './pages/Stats';
 import { TxDetail } from './pages/TxDetail';
+import { WalletImport } from './pages/WalletImport';
 import { go, useRoute } from './router';
 import { StoreProvider, useStore } from './store';
 
@@ -80,6 +81,7 @@ function Shell({ onAuthChange }: { onAuthChange: () => void }) {
     case 'cattura': content = <Capture />; break;
     case 'categorie': content = <Categories />; break;
     case 'carte': content = <Cards />; break;
+    case 'importa-wallet': content = <WalletImport />; break;
     case 'assistente': content = <ComingSoon title="Assistente AI" text="La chat sulle tue spese, la lettura di scontrini e screenshot e l'inserimento a voce arrivano con il prossimo aggiornamento, con Gemini o NanoGPT." />; break;
     case 'altro': content = <More onAuthChange={onAuthChange} />; break;
     case 'account': content = <Login key={a ?? ''} initial={a === 'crea' ? 'register' : 'login'} onDone={onAuthChange} />; break;

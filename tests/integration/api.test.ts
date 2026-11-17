@@ -1312,6 +1312,89 @@ describe('saldo di tutti i conti', () => {
   });
 });
 
+describe('import da Wallet (API ufficiale)', () => {
+  const c = new Client('10.52.0.1');
+  const own: Record<string, string> = {};
+  type Prep = { total: number; first: string; ledgy: { count: number }; accounts: any[]; categories: any[]; labels: string[] };
+  let prep: Prep;
+  const run = async (client: Client, token: string, accounts: Record<string, string>, categories: Record<string, string>, before?: string) => {
+    const sum = { imported: 0, already: 0, skipped: 0, waits: 0 };
+    let offset: number | null = 0;
+    while (offset != null) {
+      const r: any = (await client.post('/api/import/wallet/page', { token, offset, accounts, categories, before })).json;
+      if (r.retry_after) { sum.waits++; await new Promise((ok) => setTimeout(ok, 50)); continue; }
+      sum.imported += r.imported; sum.already += r.already; sum.skipped += r.skipped;
+      offset = r.next;
+    }
+    return sum;
+  };
+  const catMap = (p: Prep) => Object.fromEntries(p.categories.map((x) => [x.id, x.suggest]));
+  beforeAll(async () => {
+    await c.post('/api/guest');
+    await loadOwn(c, own);
+  });
+  it('controlla la chiave senza salvarla', async () => {
+    expect((await c.post('/api/import/wallet/prepare', { token: 'sbagliata-123' })).json.error).toContain('non è valida');
+    expect((await c.post('/api/import/wallet/prepare', { token: 'wallet-sync' })).status).toBe(503);
+    expect((await c.post('/api/import/wallet/prepare', {})).status).toBe(400);
+  });
+  it('legge conti, categorie ed etichette e propone dove metterli', async () => {
+    const raw = await c.post('/api/import/wallet/prepare', { token: 'wallet-ok' });
+    if (raw.status !== 200) throw new Error(JSON.stringify(raw));
+    prep = raw.json;
+    expect(prep.total).toBe(249); // tutta la storia, non solo gli ultimi 3 mesi
+    expect(prep.first).toBe('2024-01-01');
+    expect(prep.accounts.map((a) => [a.name, a.currency, a.suggest])).toEqual([['Revolut EUR', 'EUR', 'new'], ['Contanti IDR', 'IDR', 'new']]);
+    const s = catMap(prep);
+    expect(s['wc-groc']).toBe(own.cat_food_groceries);
+    expect(s['wc-rest']).toBe(own.cat_food_restaurant);
+    expect(s['wc-gift']).toBe(own.cat_shop_other); // Regali è spento: si usa la scelta successiva
+    expect(s['wc-wage']).toBe(own.cat_income_salary);
+    expect(s['wc-warung']).toBe(own.cat_food_restaurant);
+    expect(s['wc-strana']).toBe(own.cat_transport);
+    expect(prep.labels).toEqual(['Viaggio Bangkok']);
+  });
+  it('importa tutto una volta sola, con cambi, trasferimenti, etichette e saldi come in Wallet', async () => {
+    const start = (await c.post('/api/import/wallet/start', { accounts: prep.accounts.map((a) => ({ ...a, target: a.suggest })), labels: prep.labels })).json;
+    if (!start.accounts) throw new Error('start ' + JSON.stringify(start));
+    const first = await c.post('/api/import/wallet/page', { token: 'wallet-ok', offset: 0, accounts: start.accounts, categories: catMap(prep) });
+    if (first.status !== 200) throw new Error('page ' + JSON.stringify(first));
+    const sum = await run(c, 'wallet-ok', start.accounts, catMap(prep));
+    sum.imported += first.json.imported; sum.already -= first.json.imported;
+    expect(sum).toMatchObject({ imported: 248, already: 0, skipped: 1 }); // quello annullato non entra
+    const items = (await c.get('/api/transactions?limit=500')).json.items as any[];
+    const by = (m: string) => items.find((t) => t.merchant === m);
+    expect(by('Warung Made')).toMatchObject({ amount: -150_000_000, currency: 'IDR', amount_eur: -8700, category_id: own.cat_food_restaurant,
+      account_id: start.accounts['wa-cash'], note: 'pranzo', occurred_at: '2026-10-05T12:30:00+08:00', source: 'wallet' });
+    expect(by('Cliente SRL')).toMatchObject({ type: 'income', amount: 2_500_000, category_id: own.cat_income_salary });
+    expect(by('Som Tam Nua')).toMatchObject({ labels: ['Viaggio Bangkok'], place: 'Siam Square' });
+    const transfers = items.filter((t) => t.type === 'transfer');
+    expect(transfers.map((t) => t.transfer_group)).toEqual(['wt-1', 'wt-1']);
+    expect(items.some((t) => t.amount === -999_000)).toBe(false);
+    // Di nuovo: niente doppioni.
+    expect(await run(c, 'wallet-ok', start.accounts, catMap(prep))).toMatchObject({ imported: 0, already: 248 });
+    expect((await c.post('/api/import/wallet/finish', { token: 'wallet-ok', align: start.accounts })).json.aligned).toBe(2);
+    const accs = (await c.get('/api/bootstrap')).json.accounts as any[];
+    expect(accs.find((a) => a.id === start.accounts['wa-revolut']).balance).toBe(1_234_500);
+    expect(accs.find((a) => a.id === start.accounts['wa-cash']).balance).toBe(500_000_000);
+    // I trasferimenti non sono spese.
+    const st = (await c.get('/api/stats?from=2026-10-06&to=2026-10-07')).json;
+    expect(st.spent).toBe(0);
+    // Un secondo giro di "start" ritrova gli stessi conti invece di crearne di nuovi.
+    const again = (await c.post('/api/import/wallet/start', { accounts: prep.accounts.map((a) => ({ ...a, target: 'new' })), labels: prep.labels })).json;
+    expect(again.accounts).toEqual(start.accounts);
+  });
+  it('può fermarsi a una data (per non sovrapporsi a Ledgy) e aspetta se Wallet chiede una pausa', async () => {
+    const d = new Client('10.52.0.2');
+    await d.post('/api/guest');
+    const p = (await d.post('/api/import/wallet/prepare', { token: 'wallet-lento' })).json;
+    const start = (await d.post('/api/import/wallet/start', { accounts: p.accounts.map((a: any) => ({ ...a, target: a.suggest })), labels: [] })).json;
+    const sum = await run(d, 'wallet-lento', start.accounts, catMap(p), '2025-01-01');
+    expect(sum.imported).toBe(122);
+    expect(sum.waits).toBe(1);
+  });
+});
+
 describe('pulizia notturna', () => {
   const withSession = (token: string) => { const c = new Client('10.30.0.1'); c.cookie = `ledgy_session=${token}`; return c; };
   const ping = (token: string) => new Client('10.30.0.2').post(`/api/in/${token}/ping`, {});
