@@ -24,7 +24,7 @@ catalogApi.get('/bootstrap', async (c) => {
     db.prepare(`SELECT a.id, a.currency, a.initial_balance,
                   COALESCE(SUM(CASE WHEN t.currency = a.currency THEN t.amount ELSE NULL END), 0) AS same_cur,
                   COALESCE(SUM(CASE WHEN t.currency <> a.currency THEN t.amount_eur ELSE NULL END), 0) AS other_eur
-                FROM accounts a LEFT JOIN transactions t ON t.account_id = a.id AND t.deleted_at IS NULL AND t.duplicate_of IS NULL
+                FROM accounts a LEFT JOIN account_totals t ON t.user_id = a.user_id AND t.account_id = a.id
                 WHERE a.user_id = ?
                 GROUP BY a.id`).bind(u).all<{ id: string; currency: string; initial_balance: number; same_cur: number; other_eur: number }>(),
     accountInfo(db, u),
@@ -69,8 +69,8 @@ catalogApi.post('/accounts', async (c) => {
 /** Saldo di un conto nella sua valuta: iniziale + movimenti nella stessa valuta + gli altri (in euro) al cambio di oggi. */
 export async function accountBalance(db: D1Database, accountId: string, userId: string): Promise<{ currency: string; balance: number; initial: number } | null> {
   const a = await db.prepare(`SELECT a.currency, a.initial_balance,
-      COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = a.id AND deleted_at IS NULL AND duplicate_of IS NULL AND currency = a.currency), 0) AS same_cur,
-      COALESCE((SELECT SUM(amount_eur) FROM transactions WHERE account_id = a.id AND deleted_at IS NULL AND duplicate_of IS NULL AND currency <> a.currency), 0) AS other_eur
+      COALESCE((SELECT SUM(amount) FROM account_totals WHERE user_id = a.user_id AND account_id = a.id AND currency = a.currency), 0) AS same_cur,
+      COALESCE((SELECT SUM(amount_eur) FROM account_totals WHERE user_id = a.user_id AND account_id = a.id AND currency <> a.currency), 0) AS other_eur
     FROM accounts a WHERE a.id = ? AND a.user_id = ?`).bind(accountId, userId).first<{ currency: string; initial_balance: number; same_cur: number; other_eur: number }>();
   if (!a) return null;
   let other = 0;

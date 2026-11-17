@@ -191,9 +191,11 @@ export async function aiCategory(env: Env, userId: string, tx: { merchant: strin
  */
 export async function aiCategorizeLater(env: Env, userId: string, txId: string): Promise<void> {
   const db = env.DB;
-  const t = await db.prepare('SELECT id, merchant, merchant_raw, amount_eur, currency, category_id, review_reason, review_choices, duplicate_of, capture_id FROM transactions WHERE id = ? AND user_id = ?')
-    .bind(txId, userId).first<{ id: string; merchant: string | null; merchant_raw: string | null; amount_eur: number; currency: string; category_id: string | null; review_reason: string | null; review_choices: string | null; duplicate_of: string | null; capture_id: string | null }>();
-  if (!t || t.category_id || t.review_choices) return;
+  const t = await db.prepare('SELECT id, merchant, merchant_raw, amount_eur, currency, category_id, review_reason, review_choices, duplicate_of, capture_id, ai_tries FROM transactions WHERE id = ? AND user_id = ?')
+    .bind(txId, userId).first<{ id: string; merchant: string | null; merchant_raw: string | null; amount_eur: number; currency: string; category_id: string | null; review_reason: string | null; review_choices: string | null; duplicate_of: string | null; capture_id: string | null; ai_tries: number }>();
+  if (!t || t.category_id || t.review_choices || t.ai_tries > 0) return;
+  // Un solo tentativo per movimento (scelta del proprietario): se l'AI non risponde, resta "da rivedere".
+  await db.prepare('UPDATE transactions SET ai_tries = ai_tries + 1 WHERE id = ? AND user_id = ?').bind(txId, userId).run();
   const cap = t.capture_id ? await db.prepare('SELECT title, text FROM captures WHERE id = ?').bind(t.capture_id).first<{ title: string | null; text: string }>() : null;
   let r: AiCategory | null = null;
   try {

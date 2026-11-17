@@ -10,6 +10,8 @@ export interface Env {
   AI_ENDPOINTS?: string;
   /** Solo per i test: indirizzo finto dell'API di Wallet (es. http://127.0.0.1:8798/wallet/v1/api). */
   WALLET_API?: string;
+  /** Solo per le prove: conta le righe lette da D1 (intestazione x-d1-rows). */
+  D1_ROWS?: string;
 }
 
 export async function getSetting(db: D1Database, key: string): Promise<string | null> {

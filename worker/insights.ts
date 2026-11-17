@@ -61,8 +61,8 @@ insightsApi.get('/', async (c) => {
         GROUP BY r.id`).bind(u, shift(today, -7), shift(today, -365)).all<{ id: string; merchant: string; amount: number; avg: number | null; n: number }>(),
       // Possibili doppioni: stesso importo e negozio a meno di un'ora di distanza, negli ultimi 14 giorni.
       // Si leggono solo i movimenti di quei giorni e si confrontano qui (un join sulla tabella intera leggeva tutto lo storico).
-      db.prepare(`SELECT t.id, t.merchant, t.amount, t.currency, t.type, t.amount_eur, t.occurred_utc FROM transactions t
-          WHERE ${LIVE} AND t.type <> 'transfer' AND t.occurred_at >= ?2 ORDER BY t.occurred_utc LIMIT 2000`).bind(u, shift(today, -15))
+      db.prepare(`SELECT t.id, t.merchant, t.amount, t.currency, t.type, t.amount_eur, t.occurred_utc FROM transactions t INDEXED BY tx_user_occurred
+          WHERE ${LIVE} AND t.type <> 'transfer' AND t.occurred_at >= ?2 LIMIT 2000`).bind(u, shift(today, -15))
         .all<{ id: string; merchant: string | null; amount: number; currency: string; type: string; amount_eur: number; occurred_utc: string }>(),
       // Commissioni bancarie del mese, per carta.
       db.prepare(`SELECT COALESCE(t.card, '') AS card, -SUM(t.amount_eur) AS total FROM transactions t

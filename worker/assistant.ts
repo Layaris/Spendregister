@@ -35,7 +35,7 @@ async function contextFor(db: D1Database, u: string, today: string, cur: string)
       WHERE ${LIVE} AND t.type = 'expense' AND t.merchant IS NOT NULL AND t.occurred_at >= ?2 GROUP BY lower(t.merchant) ORDER BY total DESC LIMIT 15`).bind(u, shift(today, -90)).all<{ merchant: string; total: number; n: number }>(),
     db.prepare(`SELECT substr(t.occurred_at, 1, 10) AS day, t.type, t.merchant, t.amount, t.currency, t.amount_eur, c.name AS cat, t.card FROM transactions t
       LEFT JOIN categories c ON c.id = t.category_id WHERE ${LIVE} ORDER BY t.occurred_utc DESC LIMIT 30`).bind(u).all<{ day: string; type: string; merchant: string | null; amount: number; currency: string; amount_eur: number; cat: string | null; card: string | null }>(),
-    db.prepare(`SELECT a.name, a.currency, a.initial_balance + COALESCE((SELECT SUM(t.amount) FROM transactions t WHERE t.account_id = a.id AND t.deleted_at IS NULL AND t.duplicate_of IS NULL AND t.currency = a.currency), 0) AS balance
+    db.prepare(`SELECT a.name, a.currency, a.initial_balance + COALESCE((SELECT t.amount FROM account_totals t WHERE t.user_id = a.user_id AND t.account_id = a.id AND t.currency = a.currency), 0) AS balance
       FROM accounts a WHERE a.user_id = ?1 AND a.archived = 0`).bind(u).all<{ name: string; currency: string; balance: number }>(),
     db.prepare("SELECT merchant, amount_eur, period, every FROM recurring WHERE user_id = ? AND status = 'confirmed'").bind(u).all<{ merchant: string; amount_eur: number; period: 'week' | 'month' | 'year'; every: number }>(),
     db.prepare('SELECT name, place, start_date, end_date FROM trips WHERE user_id = ? ORDER BY start_date DESC LIMIT 10').bind(u).all(),

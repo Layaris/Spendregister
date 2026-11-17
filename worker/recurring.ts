@@ -16,19 +16,19 @@ recurringApi.get('/', async (c) => {
   const [saved, rows, mine] = await Promise.all([
     db.prepare('SELECT id, merchant, category_id, amount_eur, period, every, status, last_date FROM recurring WHERE user_id = ?').bind(u)
       .all<{ id: string; merchant: string; category_id: string | null; amount_eur: number; period: Period; every: number; status: string; last_date: string | null }>(),
-    // Solo i negozi con almeno 3 spese: il resto non può essere ricorrente.
+    // Un solo passaggio sul periodo; i negozi con una spesa sola si scartano qui sotto.
     db.prepare(`SELECT merchant, substr(occurred_at, 1, 10) AS day, amount_eur, category_id FROM transactions
       WHERE user_id = ?1 AND deleted_at IS NULL AND duplicate_of IS NULL AND type = 'expense' AND merchant IS NOT NULL AND occurred_at >= ?2
-        AND lower(merchant) IN (SELECT lower(merchant) FROM transactions WHERE user_id = ?1 AND deleted_at IS NULL AND type = 'expense' AND merchant IS NOT NULL
-          AND occurred_at >= ?2 GROUP BY lower(merchant) HAVING COUNT(*) >= 2)
       ORDER BY occurred_at`).bind(u, since).all<Occurrence>(),
     // L'ultima spesa di ogni ricorrente confermata (anche se segnata a mano da una spesa sola).
-    db.prepare(`SELECT merchant, substr(occurred_at, 1, 10) AS day, amount_eur, category_id FROM transactions
+    db.prepare(`SELECT merchant, substr(occurred_at, 1, 10) AS day, amount_eur, category_id FROM transactions INDEXED BY tx_user_merchant
       WHERE user_id = ?1 AND deleted_at IS NULL AND type = 'expense' AND merchant COLLATE NOCASE IN (SELECT merchant FROM recurring WHERE user_id = ?1 AND status = 'confirmed')
       ORDER BY occurred_at`).bind(u).all<Occurrence>(),
   ]);
   const known = new Set(saved.results.map((r) => r.merchant.trim().toLowerCase()));
-  const suggestions = detectRecurring(rows.results, today, known);
+  const seen = new Map<string, number>();
+  for (const r of rows.results) seen.set(r.merchant.toLowerCase(), (seen.get(r.merchant.toLowerCase()) ?? 0) + 1);
+  const suggestions = detectRecurring(rows.results.filter((r) => (seen.get(r.merchant.toLowerCase()) ?? 0) >= 2), today, known);
   // Le confermate: ultima volta, prossima, in ritardo, prezzo cambiato.
   const last = new Map<string, Occurrence>();
   for (const r of mine.results) last.set(r.merchant.trim().toLowerCase(), r);

@@ -1635,16 +1635,17 @@ describe('AI: il caso della spesa CK Bedugul (17 novembre)', () => {
     expect((await c.post('/api/ai/test')).status).toBe(400);
     expect((await c.get('/api/ai')).json.last_error).toBe('nanogpt invalid_key (HTTP 401)');
   });
-  it('se l’AI non riesce, ogni ora riprova sulle spese rimaste senza categoria', async () => {
-    const { c, own, phone } = await make('10.59.0.4');
+  it('l’AI prova una volta sola: se non riesce la spesa resta da rivedere e il cron non la richiama', async () => {
+    const { c, phone } = await make('10.59.0.4');
     await c.put('/api/ai', { gemini_key: 'gemini-esaurita' });
     const t = await tx(c, phone, { title: '💳 Card payment', text: '💳 Card payment\n\n120,000.00 IDR | PT KARYA MULIA ABADI | Card payment' });
     await settle();
     expect((await c.get(`/api/transactions/${t.id}`)).json.category_id).toBeNull();
+    // Non c'è più nessun controllo orario: anche con una chiave che funziona, nessuno la richiede all'AI.
     await c.put('/api/ai', { gemini_key: 'gemini-ok' });
-    expect((await fetch(`${BASE}/__scheduled?cron=23+*+*+*+*`)).status).toBe(200);
     await settle();
-    expect((await c.get(`/api/transactions/${t.id}`)).json.category_id).toBe(own.cat_care_spa);
+    expect((await c.get(`/api/transactions/${t.id}`)).json.category_id).toBeNull();
+    expect((await c.get(`/api/transactions/${t.id}`)).json.status).toBe('review');
   });
 });
 

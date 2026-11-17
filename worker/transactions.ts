@@ -281,14 +281,16 @@ transactionsApi.get('/', async (c) => {
   const limit = Math.min(Number(q.limit) || 100, 500);
   const offset = Number(q.offset) || 0;
   const sql = where.join(' AND ');
+  // Con una data d'inizio si legge solo quel periodo (senza, l'ordine per data porterebbe a scorrere dal più recente in giù).
+  const by = q.from ? ' INDEXED BY tx_user_occurred' : '';
   const [{ results }, sum] = await Promise.all([
-    c.env.DB.prepare(`SELECT t.* FROM transactions t WHERE ${sql} ORDER BY t.occurred_utc DESC, t.created_at DESC LIMIT ? OFFSET ?`).bind(...args, limit, offset).all<TxRow>(),
+    c.env.DB.prepare(`SELECT t.* FROM transactions t${by} WHERE ${sql} ORDER BY t.occurred_utc DESC, t.created_at DESC LIMIT ? OFFSET ?`).bind(...args, limit, offset).all<TxRow>(),
     // Totali di tutto il filtro (non solo della pagina), solo alla prima pagina se richiesti.
     q.sum && !offset
       ? c.env.DB.prepare(`SELECT COUNT(*) AS count,
           COALESCE(-SUM(CASE WHEN t.type = 'expense' AND t.duplicate_of IS NULL THEN t.amount_eur END), 0) AS spent,
           COALESCE(SUM(CASE WHEN t.type = 'income' AND t.duplicate_of IS NULL THEN t.amount_eur END), 0) AS income
-        FROM transactions t WHERE ${sql}`).bind(...args).first<{ count: number; spent: number; income: number }>()
+        FROM transactions t${by} WHERE ${sql}`).bind(...args).first<{ count: number; spent: number; income: number }>()
       : Promise.resolve(null),
   ]);
   return c.json({ items: await withLabels(c.env.DB, results), limit, offset, ...(sum ? { summary: sum } : {}) });
