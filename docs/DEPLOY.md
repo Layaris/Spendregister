@@ -36,6 +36,17 @@ curl https://ledgy.<sottodominio>.workers.dev/api/health   # deve rispondere {"o
 
 Se è il primo Worker dell'account, Cloudflare chiede di scegliere il sottodominio `workers.dev`: va accettato.
 
+## Pubblicazione automatica (GitHub Actions)
+
+`.github/workflows/pubblica.yml`: a ogni push sul branch `claude/friendly-johnson-c89c0f` (escluse le sole modifiche a `docs/` e ai file `.md`) esegue typecheck e tutti i test; se passano mostra il punto di ripristino del database, applica le migrazioni mancanti, pubblica e controlla `/api/health` e `/api/me`. Si può avviare anche a mano da Actions → Pubblica → Run workflow. Senza i segreti la pubblicazione viene saltata con un avviso.
+
+Segreti da inserire una volta in GitHub → repository Spendregister → Settings → Secrets and variables → Actions → New repository secret:
+
+- `CLOUDFLARE_API_TOKEN`: token creato in Cloudflare → My Profile → API Tokens → Create Custom Token, con i permessi Account → Workers Scripts → Edit, Account → D1 → Edit, Account → Account Settings → Read, solo sul proprio account.
+- `CLOUDFLARE_ACCOUNT_ID`: l'Account ID mostrato nella pagina del Worker `ledgy`.
+
+La procedura a mano qui sotto resta valida come alternativa.
+
 ## Aggiornamento e verifica (da usare ogni volta)
 
 Funziona qualunque sia lo stato di partenza: allinea il codice, applica le migrazioni mancanti, pubblica e controlla.
