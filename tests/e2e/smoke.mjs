@@ -247,6 +247,26 @@ await page.click("button:has-text(\"Aggiungi all'account\")");
 await page.click('[role=alertdialog] button:has-text("Conferma")');
 await page.waitForSelector('.tabbar');
 check((await me()).email === EMAIL && (await api('/api/transactions?limit=500')).items.length === before + 1, "rientra e aggiunge la spesa fatta da ospite");
+
+// Home: il riquadro in alto ha speso del mese, saldo totale e altre due cifre.
+await page.goto(`${BASE}/#/`);
+await page.waitForSelector('.hero .metric b:not(:has-text("…"))');
+check(await page.locator('.hero .metric').count() === 3 && await page.isVisible('.hero >> text=Saldo totale'), 'la Home mostra speso, saldo totale e altre metriche in un riquadro');
+
+// Svuota il bilancio: chiede conferma, toglie solo i movimenti, tiene conti, categorie e impostazioni.
+const accountsBefore = (await api('/api/bootstrap')).accounts.length;
+await page.goto(`${BASE}/#/altro`);
+await page.click('button:has-text("Svuota il bilancio")');
+await page.waitForSelector('[role=alertdialog] >> text=Sei sicuro');
+await page.click('[role=alertdialog] button:has-text("Annulla")');
+check((await api('/api/transactions?limit=500')).items.length === before + 1, '"Annulla" non cancella niente');
+await page.click('button:has-text("Svuota il bilancio")');
+await page.click('[role=alertdialog] button:has-text("Sì, svuota")');
+await page.waitForSelector('text=Bilancio svuotato');
+const boot = await api('/api/bootstrap');
+check((await api('/api/transactions?limit=500')).items.length === 0 && boot.accounts.length === accountsBefore && boot.categories.length > 10 && (await me()).email === EMAIL,
+  'svuota il bilancio: movimenti cancellati, conti, categorie e account restano');
+
 await page.goto(`${BASE}/#/altro`);
 await page.click('button:has-text("Elimina account")');
 await page.fill('input[aria-label="Password per eliminare l\'account"]', PASSWORD);

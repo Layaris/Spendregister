@@ -1098,7 +1098,16 @@ describe('intelligenza artificiale', () => {
     expect(s).toMatchObject({ enabled: true, gemini: '…i-ok', nanogpt: null });
     expect(JSON.stringify(s)).not.toContain('gemini-ok');
     expect((await c.post('/api/ai/test')).json).toMatchObject({ ok: true, provider: 'gemini' });
-    expect(JSON.stringify((await c.get('/api/backup/export?table=settings')).json)).not.toContain('gemini-ok');
+    // Le chiavi sono nel backup (scelta del proprietario): passano a un'altra installazione o account.
+    const rows = (await c.get('/api/backup/export?table=settings')).json.rows;
+    expect(JSON.stringify(rows)).toContain('gemini-ok');
+    const d = new Client('10.46.0.9');
+    await d.post('/api/guest');
+    await d.put('/api/ai', { nanogpt_key: 'nano-mia' });
+    await d.post('/api/backup/import/chunk', { mode: 'merge', table: 'settings', rows, maps: {} });
+    expect((await d.get('/api/ai')).json).toMatchObject({ gemini: '…i-ok', nanogpt: '…-mia' }); // "aggiungi": riempie solo ciò che manca
+    await d.post('/api/backup/import/chunk', { mode: 'replace', table: 'settings', rows, maps: {} });
+    expect((await d.get('/api/ai')).json).toMatchObject({ gemini: '…i-ok', nanogpt: '…-mia' });
   });
   it('una spesa senza categoria la riceve dall’AI in background, cercando il negozio sul web', async () => {
     const before = await aiStats();
@@ -1196,6 +1205,72 @@ describe('Home personalizzabile', () => {
     expect((await d.get('/api/bootstrap')).json.settings.home_layout).toEqual(['hero', 'cashflow', 'recent']);
     await c.put('/api/settings', { home_layout: null });
     expect((await c.get('/api/bootstrap')).json.settings.home_layout).toBeNull();
+  });
+});
+
+describe('svuota bilancio', () => {
+  const c = new Client('10.49.0.1');
+  const other = new Client('10.49.0.2');
+  const own: Record<string, string> = {};
+  let phone = '';
+  beforeAll(async () => {
+    await c.post('/api/guest');
+    await other.post('/api/guest');
+    await loadOwn(c, own);
+    phone = await newDevice(c);
+    // Un po' di tutto: movimenti, etichette, carta imparata, lettore, preferito, regola, categoria, conto, chiave AI, impostazioni.
+    const cap = await c.post(phone, { title: '💳 Card payment', text: '52,900.00 IDR | Grab* A-1 | Card payment | Cashback: +$0.12' });
+    await c.post(`/api/capture/captures/${cap.json.capture_id}/card`, { card: 'Xplace' });
+    await c.post('/api/transactions', { amount: 5, currency: 'EUR', merchant: 'Caffè', labels: ['Viaggio'] });
+    await c.post('/api/transactions', { type: 'income', amount: 900, currency: 'EUR', merchant: 'Stipendio' });
+    await c.post('/api/capture/parsers', { name: 'Xplace', app: 'Card payment', pattern: '(?<amount>[\\d.,]+) (?<currency>[A-Z]{3})' });
+    await c.post('/api/favorites', { name: 'Caffè', amount: 3, currency: 'EUR' });
+    await c.post('/api/rules', { name: 'Mia', definition: { conditions: [{ field: 'merchant', op: 'contains', value: 'xyz' }], actions: { category_id: own.cat_food_bar } } });
+    await c.post('/api/categories', { name: 'Mia categoria', kind: 'expense' });
+    await c.post('/api/accounts', { name: 'Revolut', currency: 'EUR', initial_balance: 100 });
+    await c.put('/api/ai', { gemini_key: 'gemini-ok' });
+    await c.put('/api/settings', { display_currency: 'USD', home_layout: ['hero', 'cashflow'] });
+    await other.post('/api/transactions', { amount: 7, currency: 'EUR', merchant: 'Di un altro' });
+  });
+  it('senza conferma non fa nulla', async () => {
+    expect((await c.post('/api/account/wipe-transactions', {})).status).toBe(400);
+    expect((await c.get('/api/transactions')).json.items.length).toBe(3);
+  });
+  it('cancella solo i movimenti e le notifiche, tiene tutte le impostazioni', async () => {
+    const r = await c.post('/api/account/wipe-transactions', { confirm: 'SVUOTA' });
+    expect(r.json).toMatchObject({ ok: true, deleted: 3 });
+    expect((await c.get('/api/transactions')).json.items).toEqual([]);
+    expect((await c.get('/api/capture/captures')).json.items).toEqual([]);
+    const b = (await c.get('/api/bootstrap')).json;
+    expect(b.review_count).toBe(0);
+    expect(b.categories.some((x: any) => x.name === 'Mia categoria')).toBe(true);
+    expect(b.accounts.map((a: any) => a.name).sort()).toEqual(['Contanti', 'Revolut']);
+    expect(b.accounts.find((a: any) => a.name === 'Revolut').balance).toBe(100000);
+    expect(b.labels.map((l: any) => l.name)).toContain('Viaggio');
+    expect(b.settings).toMatchObject({ display_currency: 'USD', home_layout: ['hero', 'cashflow'] });
+    expect((await c.get('/api/rules')).json.items.some((x: any) => x.name === 'Mia')).toBe(true);
+    expect((await c.get('/api/capture/parsers')).json.items.length).toBe(1);
+    expect((await c.get('/api/favorites')).json.items.length).toBe(1);
+    expect((await c.get('/api/ai')).json.gemini).toBe('…i-ok');
+    expect((await c.get('/api/capture/devices')).json.items.length).toBe(1);
+    // Le spese di un altro account non si toccano.
+    expect((await other.get('/api/transactions')).json.items.length).toBe(1);
+  });
+  it('dopo lo svuotamento il telefono e la carta imparata funzionano ancora', async () => {
+    const r = await c.post(phone, { title: '💳 Card payment', text: '16,200.00 IDR | Grab* A-2 | Card payment | Cashback: +$0.04' });
+    expect((await c.get(`/api/transactions/${r.json.transaction_id}`)).json).toMatchObject({ card: 'Xplace', type: 'expense' });
+  });
+});
+
+describe('chiavi AI tra ospite e account', () => {
+  it('entrando in un account senza chiavi, quelle messe da ospite passano all’account', async () => {
+    const acc = new Client('10.50.0.1');
+    await acc.post('/api/register', { email: 'ai@example.com', password: 'password-ai-123' });
+    const g = new Client('10.50.0.2');
+    await g.post('/api/guest');
+    await g.put('/api/ai', { gemini_key: 'gemini-ok' });
+    expect((await g.post('/api/login', { email: 'ai@example.com', password: 'password-ai-123' })).status).toBe(200);
+    expect((await g.get('/api/ai')).json.gemini).toBe('…i-ok');
   });
 });
 

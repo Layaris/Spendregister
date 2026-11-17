@@ -75,6 +75,24 @@ priv.put('/password', async (c) => {
   await changePassword(c, b.current ?? '', b.next ?? '');
   return c.json({ ok: true });
 });
+/**
+ * Svuota il bilancio: cancella solo movimenti, loro etichette e notifiche ricevute. Restano categorie, regole,
+ * conti, carte imparate, lettori, telefoni collegati, preferiti, impostazioni e chiavi AI (per reimportare da Wallet).
+ */
+priv.post('/account/wipe-transactions', async (c) => {
+  const b = await body<{ confirm?: string }>(c);
+  if (b.confirm !== 'SVUOTA') return c.json({ error: 'Conferma mancante' }, 400);
+  const db = c.env.DB;
+  const u = c.get('userId');
+  const n = await db.prepare('SELECT COUNT(*) AS n FROM transactions WHERE user_id = ?').bind(u).first<{ n: number }>();
+  await db.batch([
+    db.prepare('DELETE FROM transaction_labels WHERE transaction_id IN (SELECT id FROM transactions WHERE user_id = ?)').bind(u),
+    db.prepare('DELETE FROM captures WHERE user_id = ?').bind(u),
+    db.prepare('DELETE FROM transactions WHERE user_id = ?').bind(u),
+    db.prepare('UPDATE devices SET last_capture_at = NULL WHERE user_id = ?').bind(u),
+  ]);
+  return c.json({ ok: true, deleted: n?.n ?? 0 });
+});
 priv.post('/account/delete', async (c) => {
   const b = await body<{ password?: string }>(c);
   await deleteAccount(c, b.password ?? '');

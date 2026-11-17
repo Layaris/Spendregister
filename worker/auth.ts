@@ -4,7 +4,7 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { MiddlewareHandler } from 'hono';
 import { sha256Hex } from '../shared/dedupe';
 import { HttpError, newId, nowIso, randomToken, type AppContext, type AppEnv } from './lib';
-import { adoptGuest, deleteUserStatements, hasData, localData, type LocalData, type LoginChoice, type RegisterChoice } from './guest';
+import { adoptGuest, aiCopy, deleteUserStatements, hasData, localData, type LocalData, type LoginChoice, type RegisterChoice } from './guest';
 import { runBatch } from './lib';
 import { seedUser } from './seed';
 
@@ -200,8 +200,8 @@ export async function register(c: AppContext, emailIn: unknown, password: string
   const res = await db.prepare('INSERT OR IGNORE INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)').bind(id, email, hash, nowIso()).run();
   if (!res.meta.changes) throw new HttpError(409, 'Esiste già un account con questa email');
   await signup.run();
-  if (guest) await runBatch(db, deleteUserStatements(db, guest));
   await seedUser(db, id);
+  if (guest) await runBatch(db, [aiCopy(db, guest, id), ...deleteUserStatements(db, guest)]);
   await startSession(c, id);
 }
 
@@ -211,7 +211,7 @@ async function settleGuest(c: AppContext, accountId: string, choice: LoginChoice
   if (!guest || guest === accountId) return;
   const local = await localData(c.env.DB, guest);
   if (!hasData(local)) {
-    if (apply) await runBatch(c.env.DB, deleteUserStatements(c.env.DB, guest));
+    if (apply) await runBatch(c.env.DB, [aiCopy(c.env.DB, guest, accountId), ...deleteUserStatements(c.env.DB, guest)]);
     return;
   }
   if (!choice) throw new ChoiceNeeded('login', local);

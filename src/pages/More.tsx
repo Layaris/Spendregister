@@ -4,7 +4,7 @@ import { TIMEZONES } from '../../shared/time';
 import { api } from '../api';
 import { backupToCsv, downloadFile, exportBackup, importBackup, parseBackup, summarize, type Backup } from '../backup';
 import { Icon } from '../icons';
-import { applyTheme, useStore } from '../store';
+import { applyTheme, useApi, useStore } from '../store';
 import { AiSettings } from './AiSettings';
 import type { Theme } from '../api';
 import { ErrorBox } from '../ui';
@@ -55,6 +55,7 @@ export function More({ onAuthChange }: { onAuthChange: () => void }) {
       </div>
       <Accounts />
       <BackupSection />
+      <WipeBalance />
       <AiSettings />
       <SettingsSection />
       {!guest && <button className="btn" onClick={logout}>Esci</button>}
@@ -202,6 +203,70 @@ function Accounts() {
   );
 }
 
+/** Svuota il bilancio: via spese, entrate e notifiche ricevute; restano tutte le impostazioni. Con conferma. */
+function WipeBalance() {
+  const store = useStore();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const count = useApi<{ items: unknown[] }>(open ? '/transactions?limit=500' : null);
+  const backupFirst = async () => {
+    setBusy(true);
+    try {
+      const b = await exportBackup(() => {});
+      downloadFile(`ledgy-backup-prima-di-svuotare-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(b), 'application/json');
+      setSaved(true);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const wipe = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api<{ deleted: number }>('/account/wipe-transactions', { method: 'POST', json: { confirm: 'SVUOTA' } });
+      setOpen(false);
+      await store.refresh();
+      store.toast(`Bilancio svuotato: ${r.deleted} movimenti cancellati. Impostazioni intatte.`);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const n = count.data?.items.length;
+  return (
+    <>
+      <button className="btn" style={{ color: 'var(--danger)' }} onClick={() => { setOpen(true); setSaved(false); setError(null); }}>
+        <Icon name="trash" size={18} />Svuota il bilancio
+      </button>
+      {open && (
+        <div className="modal-backdrop" onClick={() => !busy && setOpen(false)}>
+          <div className="modal card" role="alertdialog" aria-modal="true" aria-labelledby="wipe-title" onClick={(e) => e.stopPropagation()}>
+            <h2 className="h2" id="wipe-title">Sei sicuro di voler svuotare il bilancio?</h2>
+            <p style={{ margin: 0 }}>
+              Cancello per sempre <b>{n == null ? 'tutte le' : n >= 500 ? 'oltre 500' : n} spese ed entrate</b> e l’elenco delle notifiche ricevute.
+            </p>
+            <p className="muted" style={{ margin: 0, fontSize: 14 }}>
+              Restano: conti e saldi iniziali, categorie, regole, carte e banche, lettori, telefoni collegati, preferiti, impostazioni e chiavi dell’AI.
+              Serve per ripartire pulito, per esempio prima di importare i dati di Wallet.
+            </p>
+            <button className="btn" disabled={busy} onClick={backupFirst}><Icon name="download" size={18} />{saved ? 'Backup scaricato ✓' : 'Esporta prima un backup'}</button>
+            <ErrorBox error={error} />
+            <div className="row" style={{ gap: 8 }}>
+              <button className="btn grow" disabled={busy} onClick={() => setOpen(false)}>Annulla</button>
+              <button className="btn grow" disabled={busy} style={{ background: 'var(--danger)', color: '#fff' }} onClick={wipe}>{busy ? 'Un momento…' : 'Sì, svuota'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function BackupSection() {
   const store = useStore();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -245,7 +310,7 @@ function BackupSection() {
   return (
     <section className="card">
       <h2 className="h2">Backup</h2>
-      <p className="muted" style={{ margin: 0, fontSize: 14 }}>Il backup contiene i dati del tuo account: movimenti, conti, categorie, etichette, regole, lettori, telefoni collegati e notifiche ricevute. Non contiene la password né il codice di recupero.</p>
+      <p className="muted" style={{ margin: 0, fontSize: 14 }}>Il backup contiene i dati del tuo account: movimenti, conti, categorie, etichette, regole, lettori, telefoni collegati, notifiche ricevute, impostazioni e chiavi dell’AI. Non contiene la password né il codice di recupero.</p>
       <div className="row" style={{ gap: 8 }}>
         <button className="btn grow" disabled={busy} onClick={() => doExport('json')}><Icon name="download" size={18} />Esporta backup</button>
         <button className="btn grow" disabled={busy} onClick={() => doExport('csv')}>Esporta CSV</button>

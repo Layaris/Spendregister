@@ -45,7 +45,10 @@ backupApi.get('/export', async (c) => {
   const u = uid(c);
   if (table === 'settings') {
     const s = await c.env.DB.prepare('SELECT timezone, display_currency, theme, home_layout FROM users WHERE id = ?').bind(u).first<{ timezone: string; display_currency: string; theme: string; home_layout: string | null }>();
+    // Chiavi e scelte dell'AI: nel backup, così passano a un altro account o a un'installazione nuova (scelta del proprietario).
+    const ai = await c.env.DB.prepare('SELECT enabled, gemini_key, nanogpt_key, gemini_model, nanogpt_model FROM ai_settings WHERE user_id = ?').bind(u).first();
     return c.json({ rows: [
+      ...(ai ? [{ key: 'ai', value: JSON.stringify(ai) }] : []),
       { key: 'timezone', value: s?.timezone ?? 'Asia/Makassar' }, { key: 'display_currency', value: s?.display_currency ?? 'EUR' }, { key: 'theme', value: s?.theme ?? 'light' }, { key: 'home_layout', value: s?.home_layout ?? null },
     ], next: null });
   }
@@ -162,6 +165,24 @@ backupApi.post('/import/chunk', async (c) => {
   const rows = table === 'categories' ? [...b.rows].sort((x, y) => (x.parent_id ? 1 : 0) - (y.parent_id ? 1 : 0)) : b.rows;
 
   if (table === 'settings') {
+    // AI: in "sostituisci" vince il backup; in "aggiungi" riempie solo ciò che manca.
+    const aiRow = rows.find((r) => r.key === 'ai')?.value;
+    if (typeof aiRow === 'string') {
+      try {
+        const a = JSON.parse(aiRow) as { enabled?: number; gemini_key?: string | null; nanogpt_key?: string | null; gemini_model?: string | null; nanogpt_model?: string | null };
+        const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 300) : null);
+        await db.prepare(`INSERT INTO ai_settings (user_id, enabled, gemini_key, nanogpt_key, gemini_model, nanogpt_model, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+                          ON CONFLICT (user_id) DO UPDATE SET
+                            enabled = CASE WHEN ? THEN excluded.enabled ELSE ai_settings.enabled END,
+                            gemini_key = CASE WHEN ? THEN COALESCE(excluded.gemini_key, ai_settings.gemini_key) ELSE COALESCE(ai_settings.gemini_key, excluded.gemini_key) END,
+                            nanogpt_key = CASE WHEN ? THEN COALESCE(excluded.nanogpt_key, ai_settings.nanogpt_key) ELSE COALESCE(ai_settings.nanogpt_key, excluded.nanogpt_key) END,
+                            gemini_model = COALESCE(CASE WHEN ? THEN excluded.gemini_model ELSE ai_settings.gemini_model END, ai_settings.gemini_model, excluded.gemini_model),
+                            nanogpt_model = COALESCE(CASE WHEN ? THEN excluded.nanogpt_model ELSE ai_settings.nanogpt_model END, ai_settings.nanogpt_model, excluded.nanogpt_model),
+                            gemini_paused_until = NULL, updated_at = excluded.updated_at`)
+          .bind(u, a.enabled === 0 ? 0 : 1, str(a.gemini_key), str(a.nanogpt_key), str(a.gemini_model), str(a.nanogpt_model), nowIso(), !merge, !merge, !merge, !merge, !merge)
+          .run();
+      } catch { /* riga illeggibile: si ignora */ }
+    }
     if (!merge) {
       const get = (k: string) => rows.find((r) => r.key === k)?.value;
       const tz = get('timezone');

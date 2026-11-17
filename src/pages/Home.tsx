@@ -9,7 +9,7 @@ interface Device { id: string; name: string; last_seen_at: string | null; last_c
 
 /** Schede della Home: si accendono, si spengono e si riordinano (Personalizza). */
 export const HOME_WIDGETS: Array<[string, string]> = [
-  ['hero', 'Speso nel mese'], ['review', 'Da rivedere'], ['capture', 'Stato della cattura'], ['accounts', 'Conti'],
+  ['hero', 'Speso nel mese e saldo'], ['review', 'Da rivedere'], ['capture', 'Stato della cattura'], ['accounts', 'Conti'],
   ['cashflow', 'Entrate e uscite'], ['balance', 'Andamento del saldo'], ['top', 'Spese principali'], ['cards', 'Spesa per carta'], ['recent', 'Ultimi movimenti'],
 ];
 export const DEFAULT_HOME = ['hero', 'review', 'capture', 'accounts', 'cashflow', 'top', 'cards', 'recent'];
@@ -23,6 +23,8 @@ export function Home() {
   const period = monthPeriod(offset);
   const stats = useApi<Stats>(`/stats?from=${period.from}&to=${period.to}`, [store.review_count]);
   const balance = useApi<{ series: Array<{ day: string; balance: number }> }>(on('balance') ? '/stats/balance?days=30' : null, [store.review_count]);
+  const now = useApi<{ series: Array<{ day: string; balance: number }> }>(on('hero') ? '/stats/balance?days=1' : null, [store.review_count]);
+  const total = now.data?.series.at(-1)?.balance ?? null;
   const recent = useApi<{ items: Tx[] }>('/transactions?limit=5', [store.review_count]);
   const review = useApi<{ items: Tx[] }>('/transactions?status=review&limit=1', [store.review_count]);
   const devices = useApi<{ items: Device[] }>('/capture/devices');
@@ -43,16 +45,34 @@ export function Home() {
 
   const widgets: Record<string, ReactNode> = {
     hero: (
-      <div className="stack" style={{ gap: 8, padding: '0 4px' }}>
-        <span className="label">Speso {monthName}</span>
+      <section className="card hero">
+        <div className="row between">
+          <span className="label">Speso {monthName}</span>
+          {diff != null && <span className={`chip ${diff > 0 ? 'warn' : 'ok'}`} title="Rispetto allo stesso periodo del mese prima">{diff > 0 ? '+' : ''}{diff}% sul mese prima</span>}
+        </div>
         <span className="hero-amount num money">{s ? eur(s.spent) : '…'}</span>
-        {s && (
-          <div className="row wrap" style={{ gap: 8 }}>
-            {offset === 0 && daysLeft > 0 && <span className="chip ok" style={{ fontSize: 13, padding: '5px 10px' }}>Previsione fine mese {eur(s.forecast)}</span>}
-            {diff != null && <span className="chip" style={{ fontSize: 13, padding: '5px 10px', background: 'var(--card)' }}>{diff > 0 ? '+' : ''}{diff}% rispetto al mese prima</span>}
+        <div className="metrics">
+          <div className="metric" title="Somma dei conti, in valuta di visualizzazione">
+            <span>Saldo totale</span>
+            <b className={`num money ${total != null && total < 0 ? 'neg' : ''}`}>{total != null ? eur(total) : '…'}</b>
           </div>
-        )}
-      </div>
+          <div className="metric">
+            <span>Al giorno</span>
+            <b className="num money">{s ? eur(s.days.elapsed ? Math.round(s.spent / s.days.elapsed) : 0) : '…'}</b>
+          </div>
+          {offset === 0 && daysLeft > 0 ? (
+            <div className="metric">
+              <span>Previsione</span>
+              <b className="num money">{s ? eur(s.forecast) : '…'}</b>
+            </div>
+          ) : (
+            <div className="metric">
+              <span>Entrate</span>
+              <b className="num money pos">{s ? eur(s.income) : '…'}</b>
+            </div>
+          )}
+        </div>
+      </section>
     ),
     capture: (
       <a href="#/cattura" className="card" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, padding: '12px 14px', textDecoration: 'none', color: 'inherit' }}>

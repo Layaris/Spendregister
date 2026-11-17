@@ -93,7 +93,7 @@ export function AiSettings() {
           <button className="btn" disabled={busy || (!s.gemini && !s.nanogpt)} onClick={test}>{busy ? 'Prova in corso…' : 'Prova le chiavi'}</button>
         </div>
       </div>
-      <span className="muted" style={{ fontSize: 13, padding: '0 6px' }}>Le chiavi restano sul server di Ledgy nel tuo account: l’app non le rilegge e non finiscono nei backup.</span>
+      <span className="muted" style={{ fontSize: 13, padding: '0 6px' }}>Le chiavi restano nel tuo account sul server di Ledgy: valgono su tutti i dispositivi in cui entri e sono nel backup, così passano anche a un account nuovo. L’app non le mostra mai per intero: tieni il file di backup al sicuro.</span>
     </section>
   );
 }

@@ -29,6 +29,12 @@ export function deleteUserStatements(db: D1Database, id: string, andUser = true)
   ];
 }
 
+/** Copia le impostazioni dell'AI dall'ospite all'account, se l'account non le ha (sono configurazione, non dati: passano sempre). */
+export function aiCopy(db: D1Database, from: string, to: string) {
+  return db.prepare(`INSERT OR IGNORE INTO ai_settings (user_id, enabled, gemini_key, nanogpt_key, gemini_model, nanogpt_model, updated_at)
+                     SELECT ?, enabled, gemini_key, nanogpt_key, gemini_model, nanogpt_model, updated_at FROM ai_settings WHERE user_id = ?`).bind(to, from);
+}
+
 /** I dati iniziali hanno l'id con il suffisso dell'account: cat_food~usr_a ↔ cat_food~usr_b. */
 function swap(id: string, from: string, to: string): string {
   return id.endsWith(`~${from}`) ? `${id.slice(0, -from.length - 1)}~${to}` : id;
@@ -46,12 +52,13 @@ interface RuleRow { id: string; definition: string }
  * I telefoni collegati dall'ospite passano all'account e continuano a funzionare.
  */
 export async function adoptGuest(db: D1Database, g: string, a: string, mode: LoginChoice): Promise<void> {
-  if (mode === 'account') return runBatch(db, deleteUserStatements(db, g));
+  if (mode === 'account') return runBatch(db, [aiCopy(db, g, a), ...deleteUserStatements(db, g)]);
   const move = (t: string) => db.prepare(`UPDATE ${t} SET user_id = ? WHERE user_id = ?`).bind(a, g);
   if (mode === 'replace') {
     return runBatch(db, [
       ...deleteUserStatements(db, a, false),
       ...DATA_TABLES.slice().reverse().map(move), // prima conti e categorie, poi chi li usa
+      aiCopy(db, g, a),
       ...deleteUserStatements(db, g),
     ]);
   }
@@ -129,6 +136,8 @@ export async function adoptGuest(db: D1Database, g: string, a: string, mode: Log
   // Un movimento con lo stesso id esterno (es. importato due volte da Wallet) resta all'ospite e si cancella.
   stmts.push(db.prepare('UPDATE OR IGNORE transactions SET user_id = ? WHERE user_id = ?').bind(a, g));
   for (const t of ['devices', 'parsers', 'captures']) stmts.push(move(t));
+  // Chiavi dell'AI: passano all'account solo se l'account non ne ha già.
+  stmts.push(aiCopy(db, g, a));
   // Preferiti: con categorie e conti tradotti come i movimenti.
   for (const [from, to] of catMap) stmts.push(db.prepare('UPDATE favorites SET category_id = ? WHERE user_id = ? AND category_id = ?').bind(to, g, from));
   for (const [from, to] of accMap) stmts.push(db.prepare('UPDATE favorites SET account_id = ? WHERE user_id = ? AND account_id = ?').bind(to, g, from));
