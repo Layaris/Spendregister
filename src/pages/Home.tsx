@@ -7,13 +7,14 @@ import { useApi, useStore } from '../store';
 import { CategoryIcon, TxRow } from '../ui';
 import { eur, formatDayShort, formatMoney, localDay, monthPeriod, pct, periodOf } from '../util';
 import { BudgetBar, type BudgetView } from './Budget';
+import { SuggestionCard, useRecurring } from './Recurring';
 
 /** Schede della Home: si accendono, si spengono e si riordinano (Personalizza). */
 export const HOME_WIDGETS: Array<[string, string]> = [
-  ['hero', 'Speso, saldo e previsione'], ['budget', 'Budget del mese'], ['review', 'Da rivedere'], ['accounts', 'Conti'],
+  ['hero', 'Speso, saldo e previsione'], ['budget', 'Budget del mese'], ['review', 'Da rivedere'], ['recurring', 'Spese ricorrenti in arrivo'], ['accounts', 'Conti'],
   ['cashflow', 'Entrate e uscite'], ['balance', 'Andamento del saldo'], ['top', 'Spese principali'], ['cards', 'Spesa per carta'], ['recent', 'Ultimi movimenti'],
 ];
-export const DEFAULT_HOME = ['hero', 'budget', 'review', 'accounts', 'cashflow', 'top', 'cards', 'recent'];
+export const DEFAULT_HOME = ['hero', 'budget', 'review', 'recurring', 'accounts', 'cashflow', 'top', 'cards', 'recent'];
 
 const CURRENT_LABEL: Record<string, string> = {
   day: 'Speso oggi', week: 'Speso questa settimana', month: 'Speso questo mese', year: 'Speso quest’anno', ytd: 'Speso da inizio anno', custom: 'Speso nel periodo',
@@ -33,6 +34,7 @@ export function Home() {
   // Saldo di tutti i conti: la somma dei saldi mostrati in "Conti", ciascuno al cambio di oggi.
   const total = store.accounts.reduce((sum, a) => sum + (a.balance_eur ?? 0), 0);
   const budget = useApi<BudgetView>(on('budget') ? `/budgets?today=${localDay()}` : null, [store.review_count]);
+  const recurring = useRecurring(on('recurring'));
   const recent = useApi<{ items: Tx[] }>('/transactions?limit=5', [store.review_count]);
   const review = useApi<{ items: Tx[] }>('/transactions?status=review&limit=1', [store.review_count]);
 
@@ -114,6 +116,26 @@ export function Home() {
         ))}
       </a>
     ),
+    recurring: (() => {
+      const r = recurring.data;
+      if (!r) return null;
+      const week = localDay(new Date(Date.now() + 7 * 86400_000));
+      const soon = r.confirmed.filter((c) => c.next_date && c.next_date <= week);
+      const s = r.suggestions[0];
+      if (!s && !soon.length) return null;
+      return (
+        <section className="card">
+          <div className="row between"><h2 className="h2">Spese ricorrenti</h2><a href="#/ricorrenti" style={{ fontSize: 14, fontWeight: 600, textDecoration: 'none' }}>Tutte</a></div>
+          {soon.map((c) => (
+            <div key={c.id} className="row between" style={{ fontSize: 14 }}>
+              <span>{c.merchant} <span className="muted">· {c.next_date! < localDay() ? 'in ritardo' : formatDayShort(c.next_date!)}</span></span>
+              <b className="num money">{eur(-c.amount_eur)}</b>
+            </div>
+          ))}
+          {s && <SuggestionCard s={s} onDone={recurring.reload} />}
+        </section>
+      );
+    })(),
     review: store.review_count > 0 && firstReview ? (
       <section className="card warn">
         <div className="row between">

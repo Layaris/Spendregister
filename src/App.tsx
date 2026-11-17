@@ -15,6 +15,7 @@ import { Stats } from './pages/Stats';
 import { TxDetail } from './pages/TxDetail';
 import { WalletImport } from './pages/WalletImport';
 import { Budget } from './pages/Budget';
+import { Recurring } from './pages/Recurring';
 import { TripDetail, Trips } from './pages/Trips';
 import { go, useRoute } from './router';
 import { StoreProvider, useStore } from './store';
@@ -85,6 +86,7 @@ function Shell({ onAuthChange }: { onAuthChange: () => void }) {
     case 'carte': content = <Cards />; break;
     case 'importa-wallet': content = <WalletImport />; break;
     case 'budget': content = <Budget />; break;
+    case 'ricorrenti': content = <Recurring />; break;
     case 'viaggi': content = a ? <TripDetail id={a} /> : <Trips />; break;
     case 'assistente': content = <ComingSoon title="Assistente AI" text="La chat sulle tue spese, la lettura di scontrini e screenshot e l'inserimento a voce arrivano con il prossimo aggiornamento, con Gemini o NanoGPT." />; break;
     case 'altro': content = <More onAuthChange={onAuthChange} />; break;

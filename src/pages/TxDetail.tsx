@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { TripRowForTx } from './Trips';
+import { RecurringRowForTx } from './Recurring';
 import { api, type TxDetail as Detail } from '../api';
 import { back } from '../router';
 import { useApi, useStore } from '../store';
@@ -219,6 +220,7 @@ export function TxDetail({ id }: { id: string }) {
             onBlur={() => { if (form.labels !== t.labels.join(', ')) save({ labels: form.labels.split(',').map((x) => x.trim()).filter(Boolean) }); }} />
         </label>
         {t.type !== 'transfer' && <TripRowForTx txId={t.id} />}
+        {t.type === 'expense' && t.merchant && <RecurringRowForTx merchant={t.merchant} amount={t.amount_eur} categoryId={t.category_id} />}
         <a className="lrow" href={`#/regole/nuova?da=${t.id}`}>
           <span className="lrow-ic"><Icon name="rules" size={18} /></span>
           <span className="lrow-label grow">Crea una regola{t.merchant ? ` per ${t.merchant}` : ''}</span>

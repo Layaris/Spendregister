@@ -1473,6 +1473,38 @@ describe('filtri dei movimenti e viaggi', () => {
   });
 });
 
+describe('spese ricorrenti', () => {
+  const c = new Client('10.55.0.1');
+  beforeAll(async () => {
+    await c.post('/api/guest');
+    for (const d of ['2026-08-03', '2026-09-03', '2026-10-03', '2026-11-03']) await c.post('/api/transactions', { amount: 9.99, currency: 'EUR', merchant: 'Netflix', occurred_at: `${d}T10:00:00+08:00` });
+    for (const [d, a] of [['2026-09-05', 30], ['2026-10-05', 30], ['2026-11-05', 36]] as const) await c.post('/api/transactions', { amount: a, currency: 'EUR', merchant: 'Spotify Famiglia', occurred_at: `${d}T10:00:00+08:00` });
+    for (const [d, a] of [['2026-09-01', 12], ['2026-09-20', 80], ['2026-10-02', 35]] as const) await c.post('/api/transactions', { amount: a, currency: 'EUR', merchant: 'Pepito', occurred_at: `${d}T10:00:00+08:00` });
+  });
+  it('propone, si conferma o si scarta, segnala prezzo cambiato e ritardo', async () => {
+    let r = (await c.get('/api/recurring?today=2026-11-17')).json;
+    expect(r.suggestions.map((s: any) => [s.merchant, s.period, s.amount_eur])).toEqual([['Netflix', 'month', -9990]]); // Spotify no: l'ultimo addebito è il 20% in più (oltre il 15%)
+    const s = r.suggestions[0];
+    await c.post('/api/recurring', { ...s, status: 'confirmed' });
+    await c.post('/api/recurring', { merchant: 'Spotify Famiglia', period: 'month', amount_eur: -30_000, status: 'confirmed' }); // segnata a mano
+    r = (await c.get('/api/recurring?today=2026-11-17')).json;
+    expect(r.suggestions).toEqual([]);
+    expect(r.confirmed.map((x: any) => [x.merchant, x.next_date, x.late, x.new_amount])).toEqual([['Netflix', '2026-12-03', false, null], ['Spotify Famiglia', '2026-12-05', false, -36_000]]);
+    expect(r.per_month).toBe(-39_990);
+    // A gennaio Netflix non è più arrivata: in ritardo.
+    expect((await c.get('/api/recurring?today=2027-01-20')).json.confirmed.find((x: any) => x.merchant === 'Netflix').late).toBe(true);
+    // Scartata non torna; nel backup.
+    const id = r.confirmed.find((x: any) => x.merchant === 'Netflix').id;
+    await c.post('/api/recurring', { merchant: 'Netflix', period: 'month', amount_eur: -9990, status: 'dismissed' });
+    r = (await c.get('/api/recurring?today=2026-11-17')).json;
+    expect(r.suggestions).toEqual([]);
+    expect(r.dismissed).toBe(1);
+    expect((await c.get('/api/backup/export?table=recurring')).json.rows).toHaveLength(2);
+    await c.del(`/api/recurring/${id}`);
+    expect((await c.get('/api/recurring/of/netflix')).json.item).toBeNull();
+  });
+});
+
 describe('pulizia notturna', () => {
   const withSession = (token: string) => { const c = new Client('10.30.0.1'); c.cookie = `ledgy_session=${token}`; return c; };
   const ping = (token: string) => new Client('10.30.0.2').post(`/api/in/${token}/ping`, {});

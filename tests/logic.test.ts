@@ -282,3 +282,33 @@ describe('lettore proposto da una notifica vera', () => {
     expect(suggestPattern('Il tuo codice di verifica è 482913')).toBeNull();
   });
 });
+
+import { detectRecurring, nextDate } from '../shared/recurring';
+
+describe('spese ricorrenti proposte', () => {
+  const o = (merchant: string, day: string, eur: number) => ({ merchant, day, amount_eur: -eur * 1000, category_id: null });
+  const today = '2026-11-17';
+  it('riconosce un abbonamento mensile con qualche giorno di differenza', () => {
+    const rows = [o('Netflix', '2026-08-03', 9.99), o('Netflix', '2026-09-03', 9.99), o('Netflix', '2026-10-02', 9.99), o('Netflix', '2026-11-03', 9.99)];
+    expect(detectRecurring(rows, today)).toEqual([{ merchant: 'Netflix', period: 'month', amount_eur: -9990, last_date: '2026-11-03', next_date: '2026-12-03', count: 4, category_id: null }]);
+  });
+  it('settimanale e annuale', () => {
+    const week = ['2026-10-20', '2026-10-27', '2026-11-03', '2026-11-10', '2026-11-17'].map((d) => o('Yoga Barn', d, 25));
+    const year = ['2023-12-01', '2024-12-02', '2025-12-01'].map((d) => o('Dominio', d, 15));
+    const r = detectRecurring([...week, ...year], today);
+    expect(r.map((c) => [c.merchant, c.period])).toEqual([['Yoga Barn', 'week'], ['Dominio', 'year']]);
+  });
+  it('non propone: due volte sole, importi molto diversi, date irregolari, cose finite o già scelte', () => {
+    expect(detectRecurring([o('A', '2026-09-01', 10), o('A', '2026-10-01', 10)], today)).toEqual([]);
+    expect(detectRecurring(['2026-08-01', '2026-09-01', '2026-10-01', '2026-11-01'].map((d, i) => o('Pepito', d, [12, 80, 35, 140][i])), today)).toEqual([]);
+    expect(detectRecurring(['2026-09-01', '2026-09-12', '2026-10-25', '2026-11-02'].map((d) => o('Bar', d, 5)), today)).toEqual([]);
+    expect(detectRecurring(['2026-01-05', '2026-02-05', '2026-03-05', '2026-04-05'].map((d) => o('Palestra vecchia', d, 40)), today)).toEqual([]);
+    const netflix = ['2026-09-03', '2026-10-03', '2026-11-03'].map((d) => o('Netflix', d, 10));
+    expect(detectRecurring(netflix, today, new Set(['netflix']))).toEqual([]);
+  });
+  it('prossima data a fine mese', () => {
+    expect(nextDate('2026-01-31', 'month')).toBe('2026-02-28');
+    expect(nextDate('2026-12-15', 'month')).toBe('2027-01-15');
+    expect(nextDate('2024-02-29', 'year')).toBe('2025-02-28');
+  });
+});
