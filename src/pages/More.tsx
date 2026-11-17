@@ -78,6 +78,7 @@ export function More({ onAuthChange }: { onAuthChange: () => void }) {
       <BackupSection />
       <WipeBalance />
       <AiSettings />
+      <FeaturesSection />
       <SettingsSection />
       {!guest && <button className="btn" onClick={logout}>Esci</button>}
       {!guest && <DeleteAccount onDone={onAuthChange} />}
@@ -362,6 +363,38 @@ function BackupSection() {
       )}
       {busy && progress && <span className="muted" style={{ fontSize: 13 }} role="status">{progress}</span>}
       <ErrorBox error={error} />
+    </section>
+  );
+}
+
+const FEATURES: Array<[string, string, string]> = [
+  ['alerts', 'Avvisi', 'Spese insolite, possibili doppioni, commissioni bancarie, budget quasi finito'],
+  ['forecast', 'Previsione di fine mese', 'Spese, entrate e saldo previsti, dalla media degli ultimi mesi'],
+  ['weekly_summary', 'Riepilogo settimanale', 'Una scheda in Home con la tua settimana: speso, confronto, categorie principali'],
+];
+
+/** Impostazioni › Funzioni: le funzioni facoltative si accendono e si spengono qui (sincronizzate con l'account). */
+function FeaturesSection() {
+  const store = useStore();
+  const on = store.settings.features ?? {};
+  const toggle = async (k: string) => {
+    await api('/settings', { method: 'PUT', json: { features: { [k]: !on[k] } } });
+    await store.refresh();
+  };
+  return (
+    <section className="stack" style={{ gap: 8 }}>
+      <span className="section-title">Funzioni</span>
+      <div className="list">
+        {FEATURES.map(([k, title, text]) => (
+          <div key={k} className="lrow" style={{ cursor: 'default' }}>
+            <span className="grow stack" style={{ gap: 0, minWidth: 0 }}><span style={{ fontWeight: 600 }}>{title}</span><span className="muted" style={{ fontSize: 13 }}>{text}</span></span>
+            <button role="switch" aria-checked={!!on[k]} aria-label={`${on[k] ? 'Spegni' : 'Accendi'} ${title}`} onClick={() => toggle(k)}
+              style={{ width: 51, height: 31, borderRadius: 16, border: 0, position: 'relative', flexShrink: 0, cursor: 'pointer', background: on[k] ? 'var(--accent)' : 'var(--line)' }}>
+              <span style={{ position: 'absolute', top: 2, left: on[k] ? 22 : 2, width: 27, height: 27, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,.2)', transition: 'left .15s' }} />
+            </button>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }

@@ -32,7 +32,7 @@ export function SuggestionCard({ s, onDone }: { s: Suggestion; onDone: () => voi
         <CategoryIcon id={s.category_id} size={36} />
         <div className="grow stack" style={{ gap: 2 }}>
           <span style={{ fontWeight: 600 }}>{s.merchant} · <span className="num money">{eur(-s.amount_eur)}</span> {EVERY[s.period]}?</span>
-          <span className="muted" style={{ fontSize: 13 }}>{s.count} volte, l’ultima il {formatDayShort(s.last_date)} · prossima verso il {formatDayShort(s.next_date)}</span>
+          <span className="muted" style={{ fontSize: 13 }}>{s.count} volte, l’ultima il {formatDayShort(s.last_date)} · {s.next_date < localDay() ? 'era attesa il' : 'prossima verso il'} {formatDayShort(s.next_date)}</span>
         </div>
       </div>
       <div className="row" style={{ gap: 8 }}>

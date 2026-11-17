@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { roundMilli, toMilli } from '../shared/money';
 import { evaluateRules, type RuleActions, type RuleDefinition } from '../shared/rules';
 import { isValidTimeZone } from '../shared/time';
-import { accountInfo } from './auth';
+import { accountInfo, FEATURE_DEFAULTS } from './auth';
 import { getEurRate } from './fx';
 import { upgradeCatalog } from './seed';
 import { bad, body, newId, notFound, nowIso, runBatch, uid, type AppEnv } from './lib';
@@ -47,7 +47,7 @@ catalogApi.get('/bootstrap', async (c) => {
     categories: categories.results,
     labels: labels.results,
     review_count: review?.n ?? 0,
-    settings: { timezone: account.timezone, recovery_created_at: account.recovery_created_at, display_currency: account.display_currency, theme: account.theme, home_layout: account.home_layout },
+    settings: { timezone: account.timezone, recovery_created_at: account.recovery_created_at, display_currency: account.display_currency, theme: account.theme, home_layout: account.home_layout, features: account.features },
     account: { email: account.email },
   });
 });
@@ -357,16 +357,16 @@ catalogApi.post('/rules/:id/apply', async (c) => {
 
 catalogApi.get('/settings', async (c) => {
   const a = await accountInfo(c.env.DB, uid(c));
-  return c.json({ timezone: a.timezone, recovery_created_at: a.recovery_created_at, display_currency: a.display_currency, theme: a.theme, home_layout: a.home_layout });
+  return c.json({ timezone: a.timezone, recovery_created_at: a.recovery_created_at, display_currency: a.display_currency, theme: a.theme, home_layout: a.home_layout, features: a.features });
 });
 
 /** Valute in cui si possono vedere totali e saldi (Impostazioni). */
 export const DISPLAY_CURRENCIES = ['EUR', 'USD', 'AED', 'PHP', 'IDR', 'SGD', 'CNY', 'THB'];
 /** Schede possibili della Home (src/pages/Home.tsx). */
-export const HOME_WIDGETS = ['hero', 'budget', 'review', 'recurring', 'accounts', 'cashflow', 'balance', 'top', 'cards', 'recent'];
+export const HOME_WIDGETS = ['hero', 'alerts', 'week', 'budget', 'review', 'recurring', 'forecast', 'accounts', 'cashflow', 'balance', 'top', 'cards', 'recent'];
 
 catalogApi.put('/settings', async (c) => {
-  const b = await body<{ timezone?: string; display_currency?: string; theme?: string; home_layout?: string[] | null }>(c);
+  const b = await body<{ timezone?: string; display_currency?: string; theme?: string; home_layout?: string[] | null; features?: Record<string, boolean> }>(c);
   const db = c.env.DB;
   if (b.timezone !== undefined) {
     if (!isValidTimeZone(b.timezone)) bad('Fuso orario non valido');
@@ -386,6 +386,12 @@ catalogApi.put('/settings', async (c) => {
     // Schede tolte nel frattempo (es. "capture", passata nelle impostazioni) si scartano senza errore.
     const keep = b.home_layout ? [...new Set(b.home_layout)].filter((k) => HOME_WIDGETS.includes(k)) : null;
     await db.prepare('UPDATE users SET home_layout = ? WHERE id = ?').bind(keep ? JSON.stringify(keep) : null, uid(c)).run();
+  }
+  if (b.features !== undefined) {
+    if (!b.features || typeof b.features !== 'object') bad('Funzioni non valide');
+    const now = (await accountInfo(db, uid(c))).features;
+    for (const [k, v] of Object.entries(b.features)) if (k in FEATURE_DEFAULTS && typeof v === 'boolean') now[k] = v;
+    await db.prepare('UPDATE users SET features = ? WHERE id = ?').bind(JSON.stringify(now), uid(c)).run();
   }
   return c.json({ ok: true });
 });

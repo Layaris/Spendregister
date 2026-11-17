@@ -9,12 +9,26 @@ import { eur, formatDayShort, formatMoney, localDay, monthPeriod, pct, periodOf 
 import { BudgetBar, type BudgetView } from './Budget';
 import { SuggestionCard, useRecurring } from './Recurring';
 
+interface Alert { id: string; kind: 'unusual' | 'duplicate' | 'fees' | 'budget'; tx?: string; amount?: number; avg?: number; merchant?: string | null; category_id?: string; pct?: number; cards?: Array<{ card: string; total: number }> }
+interface Forecast { months: number; spent: number | null; expected_spend?: number; income?: number; expected_income?: number }
+interface Insights { alerts: Alert[]; forecast: Forecast | null; week: { from: string; to: string; spent: number; count: number; previous: number; top: Array<{ category_id: string | null; total: number }> } | null }
+
+/** Titolo, testo e link di un avviso (importi nella valuta di visualizzazione). */
+function alertText(a: Alert, catName: (id: string | null | undefined) => string): { title: string; text: string; href: string } {
+  if (a.kind === 'unusual') return { title: `Spesa insolita: ${a.merchant}`, text: `${eur(a.amount ?? 0)}, di solito circa ${eur(a.avg ?? 0)}`, href: `#/m/${a.tx}` };
+  if (a.kind === 'duplicate') return { title: `Possibile doppione${a.merchant ? `: ${a.merchant}` : ''}`, text: `Due movimenti da ${eur(a.amount ?? 0)} a meno di un’ora. Se è lo stesso, eliminane uno.`, href: `#/m/${a.tx}` };
+  if (a.kind === 'fees') return { title: `Commissioni bancarie: ${eur(a.amount ?? 0)} questo mese`, text: a.cards?.length ? a.cards.map((c) => `${c.card} ${eur(c.total)}`).join(' · ') : 'Guarda quali carte le addebitano', href: '#/statistiche/spese' };
+  const name = a.category_id === '*' ? 'Budget del mese' : `Budget ${catName(a.category_id)}`;
+  const left = a.amount ?? 0;
+  return { title: `${name}: ${(a.pct ?? 0) >= 100 ? 'superato' : `al ${a.pct}%`}`, text: left >= 0 ? `Ti restano ${eur(left)}` : `Sei oltre di ${eur(-left)}`, href: '#/budget' };
+}
+
 /** Schede della Home: si accendono, si spengono e si riordinano (Personalizza). */
 export const HOME_WIDGETS: Array<[string, string]> = [
-  ['hero', 'Speso, saldo e previsione'], ['budget', 'Budget del mese'], ['review', 'Da rivedere'], ['recurring', 'Spese ricorrenti in arrivo'], ['accounts', 'Conti'],
+  ['hero', 'Speso, saldo e previsione'], ['alerts', 'Avvisi'], ['week', 'La tua settimana'], ['budget', 'Budget del mese'], ['review', 'Da rivedere'], ['recurring', 'Spese ricorrenti in arrivo'], ['forecast', 'Fine mese prevista'], ['accounts', 'Conti'],
   ['cashflow', 'Entrate e uscite'], ['balance', 'Andamento del saldo'], ['top', 'Spese principali'], ['cards', 'Spesa per carta'], ['recent', 'Ultimi movimenti'],
 ];
-export const DEFAULT_HOME = ['hero', 'budget', 'review', 'recurring', 'accounts', 'cashflow', 'top', 'cards', 'recent'];
+export const DEFAULT_HOME = ['hero', 'alerts', 'week', 'budget', 'review', 'recurring', 'forecast', 'accounts', 'cashflow', 'top', 'cards', 'recent'];
 
 const CURRENT_LABEL: Record<string, string> = {
   day: 'Speso oggi', week: 'Speso questa settimana', month: 'Speso questo mese', year: 'Speso quest’anno', ytd: 'Speso da inizio anno', custom: 'Speso nel periodo',
@@ -35,6 +49,13 @@ export function Home() {
   const total = store.accounts.reduce((sum, a) => sum + (a.balance_eur ?? 0), 0);
   const budget = useApi<BudgetView>(on('budget') ? `/budgets?today=${localDay()}` : null, [store.review_count]);
   const recurring = useRecurring(on('recurring'));
+  const insights = useApi<Insights>(on('alerts') || on('forecast') || on('week') ? `/insights?today=${localDay()}` : null, [store.review_count]);
+  const [dismissed, setDismissed] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('ledgy-dismissed') ?? '[]') as string[]; } catch { return []; } });
+  const dismiss = (id: string) => {
+    const next = [...dismissed, id].slice(-200);
+    setDismissed(next);
+    try { localStorage.setItem('ledgy-dismissed', JSON.stringify(next)); } catch { /* ignora */ }
+  };
   const recent = useApi<{ items: Tx[] }>('/transactions?limit=5', [store.review_count]);
   const review = useApi<{ items: Tx[] }>('/transactions?status=review&limit=1', [store.review_count]);
 
@@ -116,6 +137,55 @@ export function Home() {
         ))}
       </a>
     ),
+    alerts: (() => {
+      const list = insights.data?.alerts.filter((a) => !dismissed.includes(a.id)) ?? [];
+      if (!list.length) return null;
+      return (
+        <section className="card warn" style={{ gap: 10 }}>
+          <h2 className="h2">Avvisi</h2>
+          {list.slice(0, 4).map((a) => {
+            const t = alertText(a, store.catName);
+            return (
+              <div key={a.id} className="row" style={{ alignItems: 'flex-start', gap: 10 }}>
+                <span className="lrow-ic" style={{ background: 'var(--warn-soft)', color: 'var(--warn)', flexShrink: 0 }}><Icon name="warn" size={18} /></span>
+                <a href={t.href} className="grow stack" style={{ gap: 2, textDecoration: 'none', color: 'inherit', minWidth: 0 }}>
+                  <b style={{ fontSize: 15 }}>{t.title}</b><span className="muted" style={{ fontSize: 13 }}>{t.text}</span>
+                </a>
+                <button className="iconbtn" style={{ width: 32, height: 32 }} aria-label={`Nascondi: ${t.title}`} onClick={() => dismiss(a.id)}><Icon name="close" size={14} /></button>
+              </div>
+            );
+          })}
+        </section>
+      );
+    })(),
+    week: insights.data?.week ? (() => {
+      const w = insights.data.week;
+      const d = w.previous > 0 ? Math.round(((w.spent - w.previous) / w.previous) * 100) : null;
+      return (
+        <section className="card">
+          <div className="row between"><h2 className="h2">La tua settimana</h2><span className="muted" style={{ fontSize: 13 }}>{formatDayShort(w.from)} – {formatDayShort(w.to)}</span></div>
+          <div className="row between" style={{ alignItems: 'flex-end' }}>
+            <span className="num money" style={{ font: '700 26px var(--f-display)' }}>{eur(w.spent)}</span>
+            {d != null && <span className={`chip ${d > 0 ? 'warn' : 'ok'}`}>{d > 0 ? '+' : ''}{d}% sulla settimana prima</span>}
+          </div>
+          {w.top.map((c) => <div key={c.category_id ?? 'none'} className="row between" style={{ fontSize: 14 }}><span>{store.catName(c.category_id)}</span><b className="num money">{eur(c.total)}</b></div>)}
+        </section>
+      );
+    })() : null,
+    forecast: insights.data?.forecast && insights.data.forecast.spent != null ? (() => {
+      const f = insights.data.forecast as { months: number; spent: number; expected_spend: number; income: number; expected_income: number };
+      const end = total + (f.expected_income - f.income) - (f.expected_spend - f.spent);
+      return (
+        <section className="card">
+          <div className="row between"><h2 className="h2">Fine mese prevista</h2><span className="muted" style={{ fontSize: 12 }}>media di {f.months} mesi</span></div>
+          <div className="metrics" style={{ marginTop: 0, borderTop: 0 }}>
+            <div className="metric"><span>Spese previste</span><b className="num money">{eur(f.expected_spend)}</b></div>
+            <div className="metric"><span>Entrate previste</span><b className="num money pos">{eur(f.expected_income)}</b></div>
+            <div className="metric"><span>Saldo dei conti a fine mese</span><b className={`num money ${end < 0 ? 'neg' : ''}`}>{eur(end)}</b></div>
+          </div>
+        </section>
+      );
+    })() : null,
     recurring: (() => {
       const r = recurring.data;
       if (!r) return null;

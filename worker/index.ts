@@ -16,6 +16,7 @@ import { walletApi } from './wallet';
 import { budgetsApi } from './budgets';
 import { tripsApi } from './trips';
 import { recurringApi } from './recurring';
+import { insightsApi } from './insights';
 
 const app = new Hono<AppEnv>();
 
@@ -114,6 +115,7 @@ priv.route('/import/wallet', walletApi);
 priv.route('/budgets', budgetsApi);
 priv.route('/trips', tripsApi);
 priv.route('/recurring', recurringApi);
+priv.route('/insights', insightsApi);
 app.route('/api', priv);
 
 app.all('/api/*', (c) => c.json({ error: 'Percorso non trovato' }, 404));

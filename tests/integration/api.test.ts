@@ -1505,6 +1505,52 @@ describe('spese ricorrenti', () => {
   });
 });
 
+describe('avvisi, previsione e riepilogo settimanale', () => {
+  const c = new Client('10.56.0.1');
+  const own: Record<string, string> = {};
+  const add = (amount: number, merchant: string, day: string, extra: Record<string, unknown> = {}) =>
+    c.post('/api/transactions', { amount, currency: 'EUR', merchant, occurred_at: `${day}T10:00:00+08:00`, ...extra }).then((r) => r.json.id as string);
+  beforeAll(async () => {
+    await c.post('/api/guest');
+    await loadOwn(c, own);
+    // Storico di 3 mesi: 300 € al mese di cibo, stipendio 2000.
+    for (const m of ['08', '09', '10']) {
+      await add(300, 'Pepito', `2026-${m}-10`, { category_id: own.cat_food_groceries });
+      await add(2000, 'Cliente', `2026-${m}-01`, { type: 'income' });
+    }
+    for (const d of ['2026-10-20', '2026-10-25', '2026-11-01']) await add(5, 'Kopi Kenangan', d, { category_id: own.cat_food_bar });
+  });
+  it('avvisa di spese insolite, doppioni, commissioni e budget quasi finito', async () => {
+    const odd = await add(60, 'Kopi Kenangan', '2026-11-15', { category_id: own.cat_food_bar });
+    await add(12, 'Grab', '2026-11-16', { occurred_at: '2026-11-16T10:00:00+08:00', category_id: own.cat_transport_taxi });
+    const dup = await add(12, 'Grab', '2026-11-16', { occurred_at: '2026-11-16T10:20:00+08:00', category_id: own.cat_transport_taxi });
+    await add(3, 'Commissione', '2026-11-05', { category_id: own.cat_fin_fees });
+    await c.put('/api/budgets', { category_id: own.cat_food, amount: 70_000 });
+    const r = (await c.get('/api/insights?today=2026-11-17')).json;
+    const kinds = r.alerts.map((a: any) => a.kind).sort();
+    expect(kinds).toEqual(['budget', 'duplicate', 'fees', 'unusual']);
+    expect(r.alerts.find((a: any) => a.kind === 'unusual')).toMatchObject({ tx: odd, amount: 60_000, avg: 5000, merchant: 'Kopi Kenangan' });
+    expect(r.alerts.find((a: any) => a.kind === 'duplicate')).toMatchObject({ tx: dup, merchant: 'Grab' });
+    expect(r.alerts.find((a: any) => a.kind === 'budget')).toMatchObject({ category_id: own.cat_food, pct: 93 }); // 65 € di 70
+  });
+  it('previsione solo con almeno 2 mesi di storico; riepilogo settimanale solo se acceso', async () => {
+    const r = (await c.get('/api/insights?today=2026-11-17')).json;
+    // Cibo: media 300 + bar 5 (ottobre: 10/3) → atteso almeno quanto già speso; entrate attese 2000.
+    expect(r.forecast).toMatchObject({ months: 3, expected_income: 2_000_000, income: 0 });
+    expect(r.forecast.expected_spend).toBeGreaterThanOrEqual(r.forecast.spent);
+    expect(r.week).toBeNull();
+    await c.put('/api/settings', { features: { weekly_summary: true, inventata: true } });
+    expect((await c.get('/api/bootstrap')).json.settings.features).toEqual({ alerts: true, forecast: true, weekly_summary: true });
+    const w = (await c.get('/api/insights?today=2026-11-17')).json.week;
+    expect(w).toMatchObject({ from: '2026-11-11', to: '2026-11-17', spent: 84_000, count: 3 });
+    const fresh = new Client('10.56.0.2');
+    await fresh.post('/api/guest');
+    expect((await fresh.get('/api/insights?today=2026-11-17')).json.forecast).toEqual({ months: 0, spent: null });
+    // Le funzioni sono nel backup.
+    expect(JSON.stringify((await c.get('/api/backup/export?table=settings')).json.rows)).toContain('weekly_summary');
+  });
+});
+
 describe('pulizia notturna', () => {
   const withSession = (token: string) => { const c = new Client('10.30.0.1'); c.cookie = `ledgy_session=${token}`; return c; };
   const ping = (token: string) => new Client('10.30.0.2').post(`/api/in/${token}/ping`, {});

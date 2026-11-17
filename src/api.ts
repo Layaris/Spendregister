@@ -31,7 +31,7 @@ export interface Account { id: string; name: string; type: string; currency: str
 export interface Category { id: string; name: string; parent_id: string | null; kind: 'expense' | 'income'; nature: string | null; color: string | null; icon: string | null }
 export interface Label { id: string; name: string }
 export type Theme = 'light' | 'blue' | 'dark' | 'system';
-export interface Settings { timezone: string; recovery_created_at: string | null; display_currency: string; theme: Theme; home_layout: string[] | null }
+export interface Settings { timezone: string; recovery_created_at: string | null; display_currency: string; theme: Theme; home_layout: string[] | null; features?: Record<string, boolean> }
 export interface Bootstrap { accounts: Account[]; categories: Category[]; labels: Label[]; review_count: number; settings: Settings; account: { email: string | null } }
 
 export interface Tx {
