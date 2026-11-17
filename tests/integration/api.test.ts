@@ -1132,7 +1132,7 @@ describe('intelligenza artificiale', () => {
     const r = await c.post(`/api/transactions/${first.id}/ai`);
     expect(r.json).toMatchObject({ category_id: own.cat_care_spa, provider: 'nanogpt' });
     const mid = await aiStats();
-    expect(mid.gemini - before.gemini).toBe(1);
+    expect(mid.gemini - before.gemini).toBe(2); // con la ricerca Google e poi senza
     expect(mid.nanoOnline - before.nanoOnline).toBe(1);
     expect((await c.get('/api/ai')).json.gemini_paused_until).toBeTruthy();
     await c.post(`/api/transactions/${first.id}/ai`);
@@ -1596,6 +1596,55 @@ describe('stile del riquadro in alto', () => {
     await d.post('/api/guest');
     await d.post('/api/backup/import/chunk', { mode: 'replace', table: 'settings', rows, maps: {} });
     expect((await d.get('/api/bootstrap')).json.settings.hero_style).toBe('ring');
+  });
+});
+
+describe('AI: il caso della spesa CK Bedugul (17 novembre)', () => {
+  const NOTIFICA = { title: '💳 Card payment', text: '💳 Card payment\n\n208,500.00 IDR | CK BEDUGUL CANGGU | Card payment | Cashback: +$0.46' };
+  const make = async (ip: string) => {
+    const c = new Client(ip);
+    await c.post('/api/guest');
+    const own: Record<string, string> = {};
+    await loadOwn(c, own);
+    return { c, own, phone: await newDevice(c) };
+  };
+  const tx = async (c: Client, phone: string, n: { title: string; text: string }) => (await c.get(`/api/transactions/${(await c.post(phone, n)).json.transaction_id}`)).json;
+  // Il tempo di finire il lavoro in background (waitUntil) dopo la risposta.
+  const settle = () => new Promise((ok) => setTimeout(ok, 400));
+  it('"CK …" è Circle K: spesa e supermercato anche senza AI', async () => {
+    const { c, own, phone } = await make('10.59.0.1');
+    expect(await tx(c, phone, NOTIFICA)).toMatchObject({ merchant: 'Circle K', category_id: own.cat_food_groceries });
+  });
+  it('Gemini senza ricerca Google disponibile risponde lo stesso, senza mettersi in pausa', async () => {
+    const { c, own, phone } = await make('10.59.0.2');
+    await c.put('/api/ai', { gemini_key: 'gemini-senzaricerca' });
+    const t = await tx(c, phone, { title: '💳 Card payment', text: '💳 Card payment\n\n450,000.00 IDR | RELOAD SANCTUARY CANGGU | Card payment' });
+    await settle();
+    expect((await c.get(`/api/transactions/${t.id}`)).json.category_id).toBe(own.cat_care_spa);
+    const ai = (await c.get('/api/ai')).json;
+    expect(ai.last_error).toBeNull();
+    expect(ai.gemini_paused_until ?? null).toBeNull();
+  });
+  it('NanoGPT senza ricerca sul web riprova senza; gli errori dicono il codice', async () => {
+    const { c, own, phone } = await make('10.59.0.3');
+    await c.put('/api/ai', { nanogpt_key: 'nano-offline' });
+    const t = await tx(c, phone, { title: '💳 Card payment', text: '💳 Card payment\n\n300,000.00 IDR | PT SINAR ABADI JAYA | Card payment' });
+    await settle();
+    expect((await c.get(`/api/transactions/${t.id}`)).json.category_id).toBe(own.cat_care_spa);
+    await c.put('/api/ai', { nanogpt_key: 'nano-sbagliata' });
+    expect((await c.post('/api/ai/test')).status).toBe(400);
+    expect((await c.get('/api/ai')).json.last_error).toBe('nanogpt invalid_key (HTTP 401)');
+  });
+  it('se l’AI non riesce, ogni ora riprova sulle spese rimaste senza categoria', async () => {
+    const { c, own, phone } = await make('10.59.0.4');
+    await c.put('/api/ai', { gemini_key: 'gemini-esaurita' });
+    const t = await tx(c, phone, { title: '💳 Card payment', text: '💳 Card payment\n\n120,000.00 IDR | PT KARYA MULIA ABADI | Card payment' });
+    await settle();
+    expect((await c.get(`/api/transactions/${t.id}`)).json.category_id).toBeNull();
+    await c.put('/api/ai', { gemini_key: 'gemini-ok' });
+    expect((await fetch(`${BASE}/__scheduled?cron=23+*+*+*+*`)).status).toBe(200);
+    await settle();
+    expect((await c.get(`/api/transactions/${t.id}`)).json.category_id).toBe(own.cat_care_spa);
   });
 });
 

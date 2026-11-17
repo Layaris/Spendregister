@@ -13,6 +13,7 @@ import { body, HttpError, type AppEnv, type Env } from './lib';
 import { statsApi } from './stats';
 import { transactionsApi } from './transactions';
 import { walletApi } from './wallet';
+import { aiCategorizeLater } from './ai';
 import { budgetsApi } from './budgets';
 import { tripsApi } from './trips';
 import { recurringApi } from './recurring';
@@ -122,9 +123,26 @@ app.route('/api', priv);
 
 app.all('/api/*', (c) => c.json({ error: 'Percorso non trovato' }, 404));
 
+const AI_RETRY_CRON = '23 * * * *';
+
+/** Spese degli ultimi 3 giorni senza categoria, di account con l'AI accesa: una alla volta, al massimo 15 per giro. */
+async function retryAiCategories(env: Env) {
+  const since = new Date(Date.now() - 3 * 86400_000).toISOString();
+  const { results } = await env.DB.prepare(`SELECT t.id, t.user_id FROM transactions t JOIN ai_settings a ON a.user_id = t.user_id AND a.enabled = 1
+      AND (a.gemini_key IS NOT NULL OR a.nanogpt_key IS NOT NULL)
+    WHERE t.category_id IS NULL AND t.deleted_at IS NULL AND t.type <> 'transfer' AND t.review_choices IS NULL AND t.merchant IS NOT NULL AND t.created_at >= ?
+    ORDER BY t.created_at DESC LIMIT 15`).bind(since).all<{ id: string; user_id: string }>();
+  for (const r of results) {
+    try { await aiCategorizeLater(env, r.user_id, r.id); } catch { /* si riprova al prossimo giro */ }
+  }
+}
+
 export default {
   fetch: app.fetch,
-  async scheduled(_controller: ScheduledController, env: Env) {
+  async scheduled(controller: ScheduledController, env: Env) {
+    // Ogni ora: l'AI riprova sulle spese catturate rimaste senza categoria (es. Gemini al limite, NanoGPT giù).
+    await retryAiCategories(env);
+    if (controller.cron === AI_RETRY_CRON) return;
     // Pulizia notturna: sessioni scadute, tentativi vecchi, notifiche scartate da oltre 90 giorni.
     const now = new Date().toISOString();
     const day = new Date(Date.now() - 86400_000).toISOString();

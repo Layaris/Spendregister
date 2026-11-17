@@ -79,7 +79,7 @@ export const TREE: Group[] = [
   { id: 'cat_other', name: 'Altro', color: '#7D8790', icon: 'dots', kind: 'expense', nature: null, children: [] },
 ];
 
-export const CATALOG_VERSION = 4;
+export const CATALOG_VERSION = 5;
 
 /** Categorie della versione 1 (stile Wallet) che non esistono più: dove vanno i loro movimenti. */
 export const RETIRED: Record<string, string> = {
@@ -212,6 +212,10 @@ const PRESETS: Array<{ id: string; name: string; priority: number; definition: R
     ['rule_v4_tax_it', 'Tasse italiane', '\\bf24\\b|pagopa|agenzia\\s*(delle\\s*)?entrate|\\binps\\b|imposta\\s*di\\s*bollo', 'cat_fin_taxes', null, 'must'],
     ['rule_v4_bank_fee', 'Commissioni bancarie', 'foreign\\s*transaction\\s*fee|fx\\s*fee|transfer\\s*fee|biaya\\s*(admin|transfer|kartu)|annual\\s*fee|card\\s*fee', 'cat_fin_fees', null, 'must'],
   ], 60, 4),
+  // ---- Versione 5: "CK …" nelle notifiche di Bali è Circle K. ----
+  ...travel([
+    ['rule_v5_circle_k', 'Circle K (CK)', '^ck\\s|circle\\s*k', 'cat_food_groceries', 'Circle K', 'need'],
+  ], 59, 5),
   ...renames([
     ['rule_n4_starbucks', '\\bstarbucks\\b', 'Starbucks'],
     ['rule_n4_mcdonalds', 'mc\\s*donald|\\bmcd\\b', "McDonald's"],

@@ -65,13 +65,16 @@ function fakeAi(): Server {
         if (b.tools?.[0]?.google_search) stats.geminiSearch++;
         const key = req.headers['x-goog-api-key'];
         if (key === 'gemini-esaurita') return send(429, { error: { status: 'RESOURCE_EXHAUSTED' } });
-        if (key !== 'gemini-ok') return send(403, { error: 'chiave' });
+        // Come la chiave gratuita vera: la ricerca Google è al limite, senza ricerca risponde.
+        if (key === 'gemini-senzaricerca' && b.tools?.[0]?.google_search) return send(429, { error: { status: 'RESOURCE_EXHAUSTED', details: [{ retryDelay: '40s' }] } });
+        if (key !== 'gemini-ok' && key !== 'gemini-senzaricerca') return send(403, { error: 'chiave' });
         return send(200, { candidates: [{ content: { parts: [{ text: pick(b.contents[0].parts[0].text, b.contents[0].parts.length > 1) }] } }] });
       }
       if (req.url === '/nanogpt') {
         stats.nanogpt++;
         if (String(b.model).endsWith(':online')) stats.nanoOnline++;
-        if (req.headers.authorization !== 'Bearer nano-ok') return send(401, { error: 'chiave' });
+        if (req.headers.authorization === 'Bearer nano-offline' && String(b.model).endsWith(':online')) return send(404, { error: 'model not found' });
+        if (req.headers.authorization !== 'Bearer nano-ok' && req.headers.authorization !== 'Bearer nano-offline') return send(401, { error: 'chiave' });
         const m = b.messages[0].content;
         return send(200, { choices: [{ message: { content: pick(typeof m === 'string' ? m : m[0].text, Array.isArray(m)) } }] });
       }

@@ -17,6 +17,6 @@
       "migrations_dir": "migrations"
     }
   ],
-  "triggers": { "crons": ["0 1 * * *"] },
+  "triggers": { "crons": ["0 1 * * *", "23 * * * *"] },
   "observability": { "enabled": true }
 }

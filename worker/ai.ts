@@ -18,8 +18,19 @@ export interface AiSettingsRow {
 type Provider = 'gemini' | 'nanogpt';
 
 export class AiError extends Error {
-  constructor(public code: 'no_key' | 'quota' | 'invalid_key' | 'no_credit' | 'bad_response' | 'network', public provider?: Provider) {
+  /** status: codice HTTP del servizio (se c'è), per capire cosa è andato storto. */
+  constructor(public code: 'no_key' | 'quota' | 'invalid_key' | 'no_credit' | 'bad_response' | 'network', public provider?: Provider, public status?: number) {
     super(code);
+  }
+}
+
+/** Secondi di attesa suggeriti da Gemini in un 429 ("retryDelay": "37s"), se ci sono. */
+async function retryDelay(res: Response): Promise<number | null> {
+  try {
+    const m = (await res.text()).match(/"retryDelay"\s*:\s*"(\d+)(?:\.\d+)?s"/);
+    return m ? Number(m[1]) : null;
+  } catch {
+    return null;
   }
 }
 
@@ -59,10 +70,15 @@ async function callGemini(env: Env, key: string, model: string, prompt: string, 
   } catch {
     throw new AiError('network', 'gemini');
   }
-  if (res.status === 429) throw new AiError('quota', 'gemini');
-  if (res.status === 400 && search) return callGemini(env, key, model, prompt, false, o); // modello senza ricerca
-  if (res.status === 401 || res.status === 403) throw new AiError('invalid_key', 'gemini');
-  if (!res.ok) throw new AiError('network', 'gemini');
+  if (res.status === 401 || res.status === 403) throw new AiError('invalid_key', 'gemini', res.status);
+  // La ricerca Google ha limiti gratuiti più bassi (e alcuni modelli non la offrono): senza ricerca si risponde lo stesso.
+  if (search && !res.ok) return callGemini(env, key, model, prompt, false, o);
+  if (res.status === 429) {
+    const e = new AiError('quota', 'gemini', 429);
+    (e as AiError & { wait?: number | null }).wait = await retryDelay(res);
+    throw e;
+  }
+  if (!res.ok) throw new AiError('network', 'gemini', res.status);
   const j = (await res.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
   const text = j.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
   if (!text) throw new AiError('bad_response', 'gemini');
@@ -85,11 +101,12 @@ async function callNanoGpt(env: Env, key: string, model: string, prompt: string,
   } catch {
     throw new AiError('network', 'nanogpt');
   }
-  if (res.status === 400 && search) return callNanoGpt(env, key, model, prompt, false, o);
-  if (res.status === 401 || res.status === 403) throw new AiError('invalid_key', 'nanogpt');
-  if (res.status === 402) throw new AiError('no_credit', 'nanogpt');
-  if (res.status === 429) throw new AiError('quota', 'nanogpt');
-  if (!res.ok) throw new AiError('network', 'nanogpt');
+  if (res.status === 401 || res.status === 403) throw new AiError('invalid_key', 'nanogpt', res.status);
+  if (res.status === 402) throw new AiError('no_credit', 'nanogpt', 402);
+  // ":online" (ricerca sul web) non è disponibile per ogni modello o può fallire: si riprova senza.
+  if (search && !res.ok) return callNanoGpt(env, key, model, prompt, false, o);
+  if (res.status === 429) throw new AiError('quota', 'nanogpt', 429);
+  if (!res.ok) throw new AiError('network', 'nanogpt', res.status);
   const j = (await res.json()) as { choices?: Array<{ message?: { content?: string | Array<{ text?: string }> } }> };
   const c = j.choices?.[0]?.message?.content;
   const text = typeof c === 'string' ? c : Array.isArray(c) ? c.map((p) => p.text ?? '').join('') : '';
@@ -121,11 +138,14 @@ export async function askAi(env: Env, userId: string, prompt: string, opts: AskO
     } catch (e) {
       last = e instanceof AiError ? e : new AiError('network', p);
       if (p === 'gemini' && last.code === 'quota') {
-        await db.prepare('UPDATE ai_settings SET gemini_paused_until = ? WHERE user_id = ?').bind(new Date(Date.now() + PAUSE_MS).toISOString(), userId).run();
+        // Limite al minuto: pausa breve (quella suggerita da Gemini); limite del giorno o sconosciuto: un'ora.
+        const wait = (last as AiError & { wait?: number | null }).wait;
+        const ms = wait != null && wait <= 300 ? (wait + 5) * 1000 : PAUSE_MS;
+        await db.prepare('UPDATE ai_settings SET gemini_paused_until = ? WHERE user_id = ?').bind(new Date(Date.now() + ms).toISOString(), userId).run();
       }
     }
   }
-  await db.prepare('UPDATE ai_settings SET last_error = ? WHERE user_id = ?').bind(`${last.provider ?? ''} ${last.code}`.trim(), userId).run();
+  await db.prepare('UPDATE ai_settings SET last_error = ? WHERE user_id = ?').bind(`${last.provider ?? ''} ${last.code}${last.status ? ` (HTTP ${last.status})` : ''}`.trim(), userId).run();
   throw last;
 }
 
