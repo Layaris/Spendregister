@@ -5,6 +5,7 @@ import {
 import type { LoginChoice, RegisterChoice } from './guest';
 import { backupApi } from './backup';
 import { captureAdminApi, inboundApi } from './capture';
+import { cardsApi } from './cards';
 import { catalogApi } from './catalog';
 import { configureFixedRates } from './fx';
 import { body, HttpError, type AppEnv, type Env } from './lib';
@@ -82,6 +83,7 @@ priv.route('/', catalogApi);
 priv.route('/transactions', transactionsApi);
 priv.route('/stats', statsApi);
 priv.route('/capture', captureAdminApi);
+priv.route('/cards', cardsApi);
 priv.route('/backup', backupApi);
 app.route('/api', priv);
 

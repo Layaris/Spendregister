@@ -1020,6 +1020,57 @@ describe('lettore creato da una notifica arrivata', () => {
   });
 });
 
+describe('carte e banche', () => {
+  const c = new Client('10.45.0.1');
+  let phone = '';
+  let rev = '';
+  beforeAll(async () => {
+    await c.post('/api/guest');
+    phone = await newDevice(c);
+  });
+  it('si sceglie la carta direttamente dalla notifica e vale per tutte quelle con lo stesso titolo', async () => {
+    const first = await c.post(phone, { title: '💳 Card payment', text: '52,900.00 IDR | Grab* A-A3D4M24GXEQSAV | Card payment | Cashback: +$0.12' });
+    await c.post(phone, { title: '💳 Card payment', text: '52.50 EUR | GENKI* GT-652379 | Card payment | Cashback: +$2.35' });
+    rev = (await c.post(phone, { title: 'Revolut', text: 'Hai pagato 3,00 € a Caffè Bali' })).json.transaction_id;
+    expect((await c.post(`/api/capture/captures/${first.json.capture_id}/card`, { card: 'Xplace' })).json).toMatchObject({ card: 'Xplace', applied: 2 });
+    const list = (await c.get('/api/capture/captures')).json.items;
+    expect(list.filter((x: any) => x.card === 'Xplace').length).toBe(2);
+    const next = await c.post(phone, { title: '💳 Card payment', text: '16,200.00 IDR | Grab* A-B | Card payment | Cashback: +$0.04' });
+    expect((await c.get(`/api/transactions/${next.json.transaction_id}`)).json.card).toBe('Xplace');
+    expect((await c.get(`/api/transactions/${rev}`)).json.card).toBe('Revolut');
+  });
+  it('cambiare solo il conto di una spesa catturata non toglie la carta', async () => {
+    const acc = (await c.post('/api/accounts', { name: 'Revolut EUR', currency: 'EUR' })).json.id;
+    await c.put(`/api/transactions/${rev}`, { account_id: acc });
+    expect((await c.get(`/api/transactions/${rev}`)).json).toMatchObject({ card: 'Revolut', account_id: acc });
+  });
+  it('la pagina Carte elenca le carte con le spese del mese e le fonti', async () => {
+    const items = (await c.get('/api/cards')).json.items;
+    const x = items.find((i: any) => i.name === 'Xplace');
+    expect(x).toMatchObject({ count: 3 });
+    expect(x.sources).toEqual(['💳 card payment']);
+    expect(items.map((i: any) => i.name)).toContain('Revolut');
+  });
+  it('la spesa per carta divide lo stesso totale, non si somma', async () => {
+    const today = new Date();
+    const from = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+    const to = new Date(today.getFullYear(), today.getMonth() + 1, 1).toISOString().slice(0, 10);
+    await c.post('/api/transactions', { amount: 4, currency: 'EUR', merchant: 'Mercato' });
+    const s = (await c.get(`/api/stats?from=${from}&to=${to}`)).json;
+    const sum = s.by_card.reduce((a: number, x: any) => a + x.total, 0);
+    expect(sum).toBe(s.spent);
+    expect(s.by_card.find((x: any) => x.card === null).total).toBe(4000);
+    expect(s.by_card.find((x: any) => x.card === 'Revolut').total).toBe(3000);
+  });
+  it('rinomina e toglie una carta ovunque', async () => {
+    expect((await c.post('/api/cards/rename', { from: 'Xplace', to: 'Xplace Visa' })).json.changed).toBe(3);
+    const r = await c.post(phone, { title: '💳 Card payment', text: '10,000.00 IDR | Warung | Card payment | Cashback: +$0.01' });
+    expect((await c.get(`/api/transactions/${r.json.transaction_id}`)).json.card).toBe('Xplace Visa');
+    expect((await c.post('/api/cards/rename', { from: 'Revolut', to: '' })).json.changed).toBe(1);
+    expect((await c.get(`/api/transactions/${rev}`)).json.card).toBeNull();
+  });
+});
+
 describe('pulizia notturna', () => {
   const withSession = (token: string) => { const c = new Client('10.30.0.1'); c.cookie = `ledgy_session=${token}`; return c; };
   const ping = (token: string) => new Client('10.30.0.2').post(`/api/in/${token}/ping`, {});

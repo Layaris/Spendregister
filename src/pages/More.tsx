@@ -17,6 +17,7 @@ const DISPLAY_CURRENCIES: Array<[string, string]> = [
 const LINKS: Array<[string, string, string, string]> = [
   ['#/rivedere', 'inbox', 'Da rivedere', 'Movimenti catturati che aspettano una scelta'],
   ['#/cattura', 'bolt', 'Cattura automatica', 'Telefoni collegati, notifiche ricevute, lettori'],
+  ['#/carte', 'card', 'Carte e banche', 'Con quale carta paghi, quanto per carta'],
   ['#/regole', 'rules', 'Regole', 'Categoria in base a merchant, importo, ora'],
   ['#/assistente', 'sparkle', 'Assistente AI', 'Domande sulle spese, scontrini, screenshot'],
 ];

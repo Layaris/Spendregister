@@ -43,7 +43,7 @@ await api(inPath, json({ title: 'BCA', text: `Transaksi berhasil Rp 41.${String(
 const me = () => api('/api/me');
 check((await me()).guest === true, "l'ospite ha una sessione sul server");
 const grabRule = (await api('/api/rules')).items.find((r) => r.name === 'Grab').id;
-const routes = ['', 'rivedere', 'movimenti', 'aggiungi', 'aggiungi/entrata', 'statistiche', 'statistiche/spese', 'statistiche/flusso', 'statistiche/entrate', 'statistiche/saldo', 'regole', `regole/${grabRule}`, 'cattura', 'altro', 'categorie', 'assistente'];
+const routes = ['', 'rivedere', 'movimenti', 'aggiungi', 'aggiungi/entrata', 'statistiche', 'statistiche/spese', 'statistiche/flusso', 'statistiche/entrate', 'statistiche/saldo', 'regole', `regole/${grabRule}`, 'cattura', 'altro', 'categorie', 'carte', 'assistente'];
 for (const r of routes) {
   await page.goto(`${BASE}/#/${r}`);
   await page.waitForTimeout(500);
@@ -116,7 +116,21 @@ check(true, 'apre il dettaglio del flusso di cassa');
 
 // Cattura: lettore creato da una notifica arrivata, già compilato; si scrive solo il nome della carta.
 await page.goto(`${BASE}/#/cattura`);
-await page.click('button:has-text("Crea lettore") >> nth=0');
+// Carta scelta direttamente dalla notifica: vale per tutte quelle con lo stesso titolo.
+await page.click('button[aria-label^="Carta della notifica"] >> nth=0');
+await page.fill('input[placeholder="Nuova carta, es. Xplace"]', 'Banca E2E');
+await page.click('[aria-label="Carta o banca"] button:has-text("Usa")');
+await page.waitForSelector('button[aria-label="Carta della notifica: Banca E2E"]');
+check((await api('/api/cards')).items.some((c) => c.name === 'Banca E2E' && c.count >= 1), 'sceglie la carta dalla notifica con un tocco');
+await page.goto(`${BASE}/#/carte`);
+await page.waitForSelector('text=Banca E2E');
+check(true, 'la pagina Carte e banche mostra la carta');
+await page.goto(`${BASE}/#/statistiche/spese`);
+await page.waitForSelector('text=Per categoria');
+check(await page.isVisible('text=Per carta') || (await api('/api/transactions?limit=500')).items.every((t) => !t.card || t.occurred_at.slice(0, 7) !== new Date().toISOString().slice(0, 7)), 'statistiche: spesa per carta');
+await page.goto(`${BASE}/#/cattura`);
+await page.click('button[aria-label="Carta della notifica: Banca E2E"] >> nth=0');
+await page.click('button:has-text("Formato strano? Crea un lettore")');
 await page.waitForSelector('input[placeholder="Es. Xplace, Jago"]');
 check((await page.inputValue('input.mono')).includes('(?<amount>') && (await page.inputValue('textarea.input')).length > 10, 'il lettore da una notifica arriva già compilato');
 await page.fill('input[placeholder="Es. Xplace, Jago"]', 'Carta E2E');

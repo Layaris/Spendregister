@@ -77,6 +77,7 @@ export interface Stats {
   by_category: Array<{ category_id: string | null; total: number; count: number }>;
   by_subcategory: Array<{ category_id: string | null; parent_id: string | null; total: number; count: number }>;
   income_by_category: Array<{ category_id: string | null; total: number; count: number }>;
+  by_card: Array<{ card: string | null; total: number; count: number }>;
   by_nature: Array<{ nature: string | null; total: number }>;
   by_merchant: Array<{ merchant: string; total: number; count: number }>;
   daily: Array<{ day: string; spent: number; income: number; must: number; need: number; want: number }>;

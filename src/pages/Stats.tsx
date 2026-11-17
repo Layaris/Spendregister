@@ -140,6 +140,21 @@ function Spending({ s }: { s: StatsData }) {
           );
         })}
       </section>
+      {s.by_card.some((x) => x.card) && (
+        <section className="card">
+          <div className="row between"><span className="label">Per carta</span><a href="#/carte" style={{ fontSize: 14, textDecoration: 'none' }}>Carte</a></div>
+          <span className="muted" style={{ fontSize: 13, marginTop: -6 }}>Le stesse spese del totale, divise per carta: non si sommano.</span>
+          {s.by_card.map((x) => (
+            <div key={x.card ?? 'none'} className="stack" style={{ gap: 6 }}>
+              <span className="row between" style={{ fontSize: 16, fontWeight: 600 }}>
+                <span>{x.card ?? <span className="muted" style={{ fontWeight: 400 }}>Senza carta</span>}</span>
+                <span className="num money">{eur(x.total)} <span className="muted" style={{ fontWeight: 400, fontSize: 14 }}>· {Math.round((x.total / s.spent) * 100)}%</span></span>
+              </span>
+              <span className="bar" style={{ height: 10, borderRadius: 5 }}><span style={{ display: 'block', height: '100%', borderRadius: 5, width: `${(x.total / s.spent) * 100}%`, background: x.card ? 'var(--accent)' : GREY }} /></span>
+            </div>
+          ))}
+        </section>
+      )}
       {s.by_merchant.length > 0 && (
         <section className="card">
           <span className="label">Dove spendi di più</span>

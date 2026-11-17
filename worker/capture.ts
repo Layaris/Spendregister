@@ -6,6 +6,7 @@ import { cleanMerchantName, parseNotification, parseWithParser, type AiHint, typ
 import { evaluateRules } from '../shared/rules';
 import { normalizePostedAt } from '../shared/time';
 import { bad, body, getTimeZone, HttpError, newId, notFound, nowIso, randomToken, uid, type AppEnv } from './lib';
+import { learnSource } from './cards';
 import { categoryFromHistory, categoryFromWords, convertToEur, defaultAccountId, insertTransaction, loadRules } from './transactions';
 
 interface CapturePayload {
@@ -236,9 +237,19 @@ captureAdminApi.get('/captures', async (c) => {
   const limit = Math.min(Number(c.req.query('limit')) || 50, 200);
   const stmt = status
     ? c.env.DB.prepare('SELECT * FROM captures WHERE user_id = ? AND status = ? ORDER BY received_at DESC LIMIT ?').bind(uid(c), status, limit)
-    : c.env.DB.prepare('SELECT * FROM captures WHERE user_id = ? ORDER BY received_at DESC LIMIT ?').bind(uid(c), limit);
+    : c.env.DB.prepare('SELECT c.*, t.card AS card FROM captures c LEFT JOIN transactions t ON t.id = c.transaction_id WHERE c.user_id = ? ORDER BY c.received_at DESC LIMIT ?').bind(uid(c), limit);
   const { results } = await stmt.all();
   return c.json({ items: results });
+});
+
+/** Carta di una notifica, con un tocco: vale per tutte quelle con lo stesso titolo (o app), passate e future. */
+captureAdminApi.post('/captures/:id/card', async (c) => {
+  const b = await body<{ card?: string | null }>(c);
+  const cap = await c.env.DB.prepare('SELECT app, title FROM captures WHERE id = ? AND user_id = ?').bind(c.req.param('id'), uid(c)).first<{ app: string | null; title: string | null }>();
+  if (!cap) notFound();
+  const key = sourceKey(cap.app, cap.title);
+  if (!key) bad('Questa notifica non ha né titolo né app: scegli la carta dal movimento');
+  return c.json(await learnSource(c.env.DB, uid(c), key, b.card ?? null, undefined));
 });
 
 /** Rielabora una notifica (per esempio dopo aver aggiunto un lettore). */

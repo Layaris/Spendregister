@@ -22,7 +22,7 @@ statsApi.get('/', async (c) => {
   const tBase = "t.user_id = ? AND t.deleted_at IS NULL AND t.duplicate_of IS NULL AND t.type <> 'transfer' AND substr(t.occurred_at, 1, 10) >= ? AND substr(t.occurred_at, 1, 10) < ?";
   const [prevFrom, prevTo] = shiftPeriod(from, to);
 
-  const [totals, prev, byCategory, byNature, byMerchant, daily, bySub, incomeByCategory] = await Promise.all([
+  const [totals, prev, byCategory, byNature, byMerchant, daily, bySub, incomeByCategory, byCard] = await Promise.all([
     db.prepare(`SELECT COALESCE(SUM(CASE WHEN amount_eur < 0 THEN -amount_eur ELSE 0 END), 0) AS spent,
                        COALESCE(SUM(CASE WHEN amount_eur > 0 THEN amount_eur ELSE 0 END), 0) AS income,
                        COUNT(*) AS count FROM transactions WHERE ${base}`).bind(u, from, to).first<{ spent: number; income: number; count: number }>(),
@@ -54,6 +54,10 @@ statsApi.get('/', async (c) => {
                 FROM transactions t
                 WHERE t.amount_eur > 0 AND ${tBase}
                 GROUP BY t.category_id ORDER BY total DESC`).bind(u, from, to).all<{ category_id: string | null; total: number; count: number }>(),
+    // Da quale carta: divide lo stesso totale delle spese (la somma delle carte, "senza carta" compreso, è la spesa totale).
+    db.prepare(`SELECT card, SUM(-amount_eur) AS total, COUNT(*) AS count FROM transactions
+                WHERE amount_eur < 0 AND ${base} GROUP BY card ORDER BY total DESC`).bind(u, from, to)
+      .all<{ card: string | null; total: number; count: number }>(),
   ]);
 
   // Previsione a fine periodo: media giornaliera finora, proiettata sui giorni rimanenti.
@@ -68,7 +72,7 @@ statsApi.get('/', async (c) => {
     previous: { from: prevFrom, to: prevTo, spent: prev?.spent ?? 0, income: prev?.income ?? 0 },
     forecast, days: { total: totalDays, elapsed },
     by_category: byCategory.results, by_subcategory: bySub.results, income_by_category: incomeByCategory.results,
-    by_nature: byNature.results, by_merchant: byMerchant.results, daily: daily.results,
+    by_nature: byNature.results, by_merchant: byMerchant.results, by_card: byCard.results, daily: daily.results,
   });
 });
 

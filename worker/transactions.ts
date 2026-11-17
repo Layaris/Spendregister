@@ -8,6 +8,7 @@ import { bad, body, getTimeZone, newId, notFound, nowIso, parseJson, runBatch, u
 import { seedId } from './seed';
 import { categoryFromKeywords } from '../shared/keywords';
 import { sourceKey } from '../shared/apps';
+import { learnSource } from './cards';
 
 export interface TxRow {
   id: string;
@@ -326,19 +327,7 @@ transactionsApi.put('/:id', async (c) => {
   if (row.capture_id && (b.card !== undefined || (b.account_id !== undefined && b.account_id !== row.account_id))) {
     const cap = await c.env.DB.prepare('SELECT app, title FROM captures WHERE id = ? AND user_id = ?').bind(row.capture_id, userId).first<{ app: string | null; title: string | null }>();
     const key = cap ? sourceKey(cap.app, cap.title) : null;
-    if (key) {
-      const old = await c.env.DB.prepare('SELECT card, account_id FROM capture_sources WHERE user_id = ? AND key = ?').bind(userId, key).first<{ card: string | null; account_id: string | null }>();
-      const card = b.card !== undefined ? (b.card?.trim().slice(0, 60) || null) : old?.card ?? row.card;
-      const account = b.account_id !== undefined ? b.account_id : old?.account_id ?? null;
-      const same = `capture_id IN (SELECT id FROM captures WHERE user_id = ? AND lower(COALESCE(NULLIF(app, ''), title)) = ?)`;
-      const res = await c.env.DB.batch([
-        c.env.DB.prepare(`INSERT INTO capture_sources (user_id, key, card, account_id, updated_at) VALUES (?, ?, ?, ?, ?)
-                          ON CONFLICT (user_id, key) DO UPDATE SET card = excluded.card, account_id = excluded.account_id, updated_at = excluded.updated_at`)
-          .bind(userId, key, card, account, nowIso()),
-        c.env.DB.prepare(`UPDATE transactions SET card = ? WHERE user_id = ? AND ${same}`).bind(card, userId, userId, key),
-      ]);
-      source = { card, applied: res[1].meta.changes ?? 0 };
-    }
+    if (key) source = await learnSource(c.env.DB, userId, key, b.card, b.account_id !== undefined && b.account_id !== row.account_id ? b.account_id : undefined, row.card);
   } else if (b.card !== undefined) {
     await c.env.DB.prepare('UPDATE transactions SET card = ? WHERE id = ? AND user_id = ?').bind(b.card?.trim().slice(0, 60) || null, id, userId).run();
   }

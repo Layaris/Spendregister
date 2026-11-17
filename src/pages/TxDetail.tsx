@@ -3,7 +3,7 @@ import { api, type TxDetail as Detail } from '../api';
 import { back } from '../router';
 import { useApi, useStore } from '../store';
 import { Icon } from '../icons';
-import { CategoryIcon, CategorySheet, ErrorBox, Loading, TopBar } from '../ui';
+import { CategoryIcon, CategorySheet, ErrorBox, Loading, TopBar, type CardInfo } from '../ui';
 import { parseAmount } from '../../shared/money';
 import { eur, formatMoney, formatWhen, NATURE_LABEL } from '../util';
 
@@ -14,6 +14,7 @@ export function TxDetail({ id }: { id: string }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [form, setForm] = useState({ merchant: '', note: '', amount: '', labels: '', when: '', card: '' });
   const [picking, setPicking] = useState(false);
+  const cards = useApi<{ items: CardInfo[] }>('/cards');
   const [suggest, setSuggest] = useState<{ merchant: string; others: number; category: string } | null>(null);
 
   useEffect(() => {
@@ -173,7 +174,7 @@ export function TxDetail({ id }: { id: string }) {
         <label className="lrow">
           <span className="lrow-ic"><Icon name="card" size={18} /></span>
           <span className="lrow-label">Carta o banca</span>
-          <input className="lrow-input" placeholder={t.source === 'capture' ? 'Es. Revolut' : 'Facoltativa'} value={form.card}
+          <input className="lrow-input" list="known-cards" placeholder={t.source === 'capture' ? 'Es. Revolut' : 'Facoltativa'} value={form.card}
             onChange={(e) => setForm({ ...form, card: e.target.value })} onBlur={() => blurSave('card', form.card, t.card)} />
         </label>
         {hasNature && (
@@ -188,6 +189,7 @@ export function TxDetail({ id }: { id: string }) {
       </div>
       {t.source === 'capture' && <span className="muted" style={{ fontSize: 13, padding: '0 6px' }}>La carta e il conto che scegli qui valgono anche per le prossime notifiche con lo stesso titolo; la carta anche per quelle già arrivate.</span>}
 
+      <datalist id="known-cards">{cards.data?.items.map((c) => <option key={c.name} value={c.name} />)}</datalist>
       <span className="section-title">Altro</span>
       <div className="list">
         <label className="lrow">

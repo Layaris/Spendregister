@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { api, type Tx } from './api';
 import { Icon } from './icons';
 import { back } from './router';
-import { useStore } from './store';
+import { useApi, useStore } from './store';
 import { eur, formatMoney } from './util';
 
 export function CategoryIcon({ id, size = 40 }: { id: string | null | undefined; size?: number }) {
@@ -133,6 +133,42 @@ export function CategorySheet({ value, kind, onPick, onClose }: { value: string 
           {adding === 'root' ? addForm : <button className="btn" onClick={() => { setAdding('root'); setName(q); }}>+ Nuova categoria</button>}
           <a href="#/categorie" className="muted" style={{ fontSize: 14, alignSelf: 'center' }} onClick={onClose}>Gestisci le categorie</a>
         </div>
+      </div>
+    </div>
+  );
+}
+
+export interface CardInfo { name: string; count: number; month_spent: number; sources: string[] }
+
+/** Scelta della carta o banca: quelle già conosciute con un tocco, oppure una nuova. */
+export function CardSheet({ value, onPick, onClose, extra }: { value: string | null; onPick: (card: string | null) => void; onClose: () => void; extra?: ReactNode }) {
+  const { data } = useApi<{ items: CardInfo[] }>('/cards');
+  const [name, setName] = useState('');
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal card sheet" role="dialog" aria-modal="true" aria-label="Carta o banca" onClick={(e) => e.stopPropagation()}>
+        <div className="row between"><h2 className="h2">Con quale carta?</h2><button className="btn ghost" onClick={onClose}>Chiudi</button></div>
+        <span className="muted" style={{ fontSize: 14 }}>Vale per questa notifica e per tutte quelle con lo stesso titolo, già arrivate e future.</span>
+        <div className="list" style={{ overflowY: 'auto', flexShrink: 1 }}>
+          {data?.items.map((c) => (
+            <button key={c.name} className="lrow" onClick={() => onPick(c.name)}>
+              <span className="lrow-ic" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}><Icon name="card" size={18} /></span>
+              <span className="grow" style={{ fontWeight: 600 }}>{c.name}</span>
+              {value === c.name ? <Icon name="check" size={20} /> : <span className="muted" style={{ fontSize: 13 }}>{c.count} spese</span>}
+            </button>
+          ))}
+          {value && (
+            <button className="lrow" onClick={() => onPick(null)}>
+              <span className="lrow-ic"><Icon name="close" size={18} /></span>
+              <span className="grow muted">Nessuna carta</span>
+            </button>
+          )}
+        </div>
+        <div className="row" style={{ gap: 6 }}>
+          <input className="input grow" placeholder="Nuova carta, es. Xplace" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) onPick(name.trim()); }} />
+          <button className="btn primary" disabled={!name.trim()} onClick={() => onPick(name.trim())}>Usa</button>
+        </div>
+        {extra}
       </div>
     </div>
   );

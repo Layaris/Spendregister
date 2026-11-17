@@ -3,11 +3,11 @@ import { suggestPattern } from '../../shared/notification';
 import { api } from '../api';
 import { Icon } from '../icons';
 import { useApi, useStore } from '../store';
-import { ErrorBox, Loading, TopBar } from '../ui';
+import { CardSheet, ErrorBox, Loading, TopBar } from '../ui';
 import { relativeTime } from '../util';
 
 interface Device { id: string; name: string; platform: string; method: string; token_hint: string; last_seen_at: string | null; last_capture_at: string | null }
-interface Capture { id: string; received_at: string; app: string | null; title: string | null; text: string; status: string; detail: string | null; transaction_id: string | null }
+interface Capture { id: string; received_at: string; app: string | null; title: string | null; text: string; status: string; detail: string | null; transaction_id: string | null; card?: string | null }
 interface Parser { id: string; name: string; app: string; pattern: string; default_currency: string | null; sample: string | null; enabled: number }
 
 const STATUS: Record<string, string> = { created: 'Salvata', review: 'Da rivedere', duplicate: 'Doppione', ignored: 'Ignorata', unrecognized: 'Non riconosciuta' };
@@ -17,6 +17,7 @@ export function Capture() {
   const devices = useApi<{ items: Device[] }>('/capture/devices');
   const captures = useApi<{ items: Capture[] }>('/capture/captures?limit=30');
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [cardFor, setCardFor] = useState<Capture | null>(null);
   const parsers = useApi<{ items: Parser[] }>('/capture/parsers');
   const [connect, setConnect] = useState<{ platform: 'ios' | 'android'; url?: string } | null>(null);
   const [name, setName] = useState('');
@@ -127,12 +128,30 @@ export function Capture() {
             <div className="raw" style={{ fontSize: 11 }}>{[c.title, c.text].filter(Boolean).join(' · ')}</div>
             <div className="row" style={{ gap: 8 }}>
               {c.detail && <span className="muted grow" style={{ fontSize: 12 }}>{c.detail}</span>}
-              <button className="btn small" onClick={() => setDraft({ app: (c.title ?? c.app ?? '').replace(/^[^\p{L}\d]+/u, '').trim(), sample: c.text, pattern: suggestPattern(c.text) ?? '', key: Date.now() })}>Crea lettore</button>
+              <button className="btn small" aria-label={`Carta della notifica: ${c.card ?? 'nessuna'}`} onClick={() => setCardFor(c)} style={{ color: c.card ? 'var(--accent)' : undefined }}>
+                <Icon name="card" size={16} />{c.card ? c.card : 'Scegli la carta'}
+              </button>
               {c.transaction_id ? <a className="btn small" href={`#/m/${c.transaction_id}`}>Apri</a> : c.status === 'unrecognized' && <button className="btn small" onClick={() => retry(c)}>Riprova</button>}
             </div>
           </div>
         ))}
       </section>
+
+      {cardFor && (
+        <CardSheet value={cardFor.card ?? null} onClose={() => setCardFor(null)}
+          onPick={async (card) => {
+            const r = await api<{ applied: number }>(`/capture/captures/${cardFor.id}/card`, { method: 'POST', json: { card } });
+            setCardFor(null);
+            captures.reload();
+            await store.refresh();
+            store.toast(card ? `${card}: ${r.applied} ${r.applied === 1 ? 'spesa' : 'spese'}, e d'ora in poi le prossime` : 'Carta tolta');
+          }}
+          extra={<button className="btn ghost" style={{ alignSelf: 'center' }} onClick={() => {
+            const c = cardFor;
+            setCardFor(null);
+            setDraft({ app: (c.title ?? c.app ?? '').replace(/^[^\p{L}\d]+/u, '').trim(), sample: c.text, pattern: suggestPattern(c.text) ?? '', key: Date.now() });
+          }}>Formato strano? Crea un lettore per questa notifica</button>} />
+      )}
 
       <Parsers list={parsers.data?.items ?? null} reload={() => { parsers.reload(); captures.reload(); }} draft={draft} />
     </div>
