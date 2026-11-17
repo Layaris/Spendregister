@@ -43,7 +43,7 @@ await api(inPath, json({ title: 'BCA', text: `Transaksi berhasil Rp 41.${String(
 const me = () => api('/api/me');
 check((await me()).guest === true, "l'ospite ha una sessione sul server");
 const grabRule = (await api('/api/rules')).items.find((r) => r.name === 'Grab').id;
-const routes = ['', 'rivedere', 'movimenti', 'aggiungi', 'aggiungi/entrata', 'statistiche', 'statistiche/spese', 'statistiche/flusso', 'statistiche/entrate', 'statistiche/saldo', 'regole', `regole/${grabRule}`, 'cattura', 'altro', 'categorie', 'carte', 'assistente'];
+const routes = ['', 'rivedere', 'movimenti', 'aggiungi', 'aggiungi/entrata', 'statistiche', 'statistiche/spese', 'statistiche/flusso', 'statistiche/entrate', 'statistiche/saldo', 'regole', `regole/${grabRule}`, 'cattura', 'altro', 'categorie', 'carte', 'assistente', 'budget', 'viaggi', 'ricorrenti', 'importa-wallet'];
 for (const r of routes) {
   await page.goto(`${BASE}/#/${r}`);
   await page.waitForTimeout(500);

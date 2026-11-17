@@ -38,11 +38,11 @@ insightsApi.get('/', async (c) => {
         FROM transactions t WHERE ${LIVE} AND t.type = 'expense' AND t.merchant IS NOT NULL AND substr(t.occurred_at, 1, 10) >= ?2
         ORDER BY t.occurred_at DESC LIMIT 40`).bind(u, shift(today, -7), shift(today, -365)).all<{ id: string; merchant: string; amount: number; avg: number | null; n: number }>(),
       // Possibili doppioni: stesso importo e negozio a meno di un'ora di distanza, negli ultimi 14 giorni.
-      db.prepare(`SELECT a.id AS a, b.id AS b, a.merchant, -a.amount_eur AS amount FROM transactions a JOIN transactions b
+      db.prepare(`SELECT a.id AS a, b.id AS b, CASE WHEN b.occurred_utc >= a.occurred_utc THEN b.id ELSE a.id END AS later, a.merchant, -a.amount_eur AS amount FROM transactions a JOIN transactions b
           ON b.user_id = a.user_id AND b.id > a.id AND b.amount = a.amount AND b.currency = a.currency AND b.type = a.type
           AND lower(COALESCE(b.merchant, '')) = lower(COALESCE(a.merchant, '')) AND abs(julianday(b.occurred_utc) - julianday(a.occurred_utc)) < 0.042
         WHERE a.user_id = ?1 AND a.deleted_at IS NULL AND b.deleted_at IS NULL AND a.duplicate_of IS NULL AND b.duplicate_of IS NULL
-          AND a.type <> 'transfer' AND substr(a.occurred_at, 1, 10) >= ?2 LIMIT 5`).bind(u, shift(today, -14)).all<{ a: string; b: string; merchant: string | null; amount: number }>(),
+          AND a.type <> 'transfer' AND substr(a.occurred_at, 1, 10) >= ?2 LIMIT 5`).bind(u, shift(today, -14)).all<{ a: string; b: string; later: string; merchant: string | null; amount: number }>(),
       // Commissioni bancarie del mese, per carta.
       db.prepare(`SELECT COALESCE(t.card, '') AS card, -SUM(t.amount_eur) AS total FROM transactions t
         WHERE ${LIVE} AND t.type = 'expense' AND substr(t.occurred_at, 1, 10) >= ?2 AND (t.category_id = ?3 OR t.category_id IN (SELECT id FROM categories WHERE parent_id = ?3))
@@ -55,7 +55,7 @@ insightsApi.get('/', async (c) => {
       }
     }
     for (const d of dups.results) {
-      out.alerts.push({ id: `dup:${d.a}:${d.b}`, kind: 'duplicate', tx: d.b, amount: d.amount, merchant: d.merchant });
+      out.alerts.push({ id: `dup:${d.a}:${d.b}`, kind: 'duplicate', tx: d.later, amount: d.amount, merchant: d.merchant });
     }
     const feeTotal = fees.results.reduce((s, f) => s + f.total, 0);
     if (feeTotal >= 1000) {
