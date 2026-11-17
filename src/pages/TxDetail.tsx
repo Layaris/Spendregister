@@ -217,6 +217,11 @@ export function TxDetail({ id }: { id: string }) {
           <input className="lrow-input" placeholder="Es. Viaggio Bangkok" value={form.labels} onChange={(e) => setForm({ ...form, labels: e.target.value })}
             onBlur={() => { if (form.labels !== t.labels.join(', ')) save({ labels: form.labels.split(',').map((x) => x.trim()).filter(Boolean) }); }} />
         </label>
+        <a className="lrow" href={`#/regole/nuova?da=${t.id}`}>
+          <span className="lrow-ic"><Icon name="rules" size={18} /></span>
+          <span className="lrow-label grow">Crea una regola{t.merchant ? ` per ${t.merchant}` : ''}</span>
+          <Icon name="next" size={18} />
+        </a>
       </div>
 
       {t.status === 'review' && t.category_id && (

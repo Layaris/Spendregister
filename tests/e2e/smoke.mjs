@@ -248,8 +248,21 @@ await page.click('[role=alertdialog] button:has-text("Conferma")');
 await page.waitForSelector('.tabbar');
 check((await me()).email === EMAIL && (await api('/api/transactions?limit=500')).items.length === before + 1, "rientra e aggiunge la spesa fatta da ospite");
 
+// Regola da un movimento: il tasto nel dettaglio apre l'editor già compilato, il salvataggio torna al movimento.
+const barCat = (await api('/api/bootstrap')).categories.find((c) => c.name === 'Bar e caffè').id;
+const ruleTx = await api('/api/transactions', json({ amount: 4, currency: 'EUR', merchant: 'Caffetteria Regola E2E', category_id: barCat }));
+await page.goto(`${BASE}/#/m/${ruleTx.id}`);
+await page.click('a:has-text("Crea una regola per Caffetteria Regola E2E")');
+await page.waitForSelector('input[aria-label="Valore"]');
+check(await page.inputValue('input[aria-label="Valore"]') === 'caffetteria regola e2e', "l'editor parte con il negozio del movimento");
+await page.click('button:has-text("Salva")');
+await page.waitForFunction((id) => location.hash === `#/m/${id}`, ruleTx.id);
+const made = (await api('/api/rules')).items.find((r) => r.name === 'Caffetteria Regola E2E');
+check(made && made.definition.actions.category_id === barCat && !made.definition.soft, 'crea la regola dal movimento e torna al dettaglio');
+
 // Home: il riquadro in alto ha speso del mese, saldo totale e altre due cifre.
 await page.goto(`${BASE}/#/`);
+await page.reload(); // i movimenti aggiunti sopra passano dall'API, non dall'app: si ricarica
 await page.waitForSelector('.hero .metric b:not(:has-text("…"))');
 check(await page.locator('.hero .metric').count() === 3 && await page.isVisible('.hero >> text=Saldo di tutti i conti') && await page.isVisible('.hero >> text=Spesa media al giorno'),
   'la Home mostra speso, saldo di tutti i conti e altre metriche con nomi chiari');
@@ -269,11 +282,12 @@ check(await page.waitForSelector('a[href="#/cattura"] >> text=/Attiva su|Nessun 
 
 // Svuota il bilancio: chiede conferma, toglie solo i movimenti, tiene conti, categorie e impostazioni.
 const accountsBefore = (await api('/api/bootstrap')).accounts.length;
+const txBefore = (await api('/api/transactions?limit=500')).items.length;
 await page.goto(`${BASE}/#/altro`);
 await page.click('button:has-text("Svuota il bilancio")');
 await page.waitForSelector('[role=alertdialog] >> text=Sei sicuro');
 await page.click('[role=alertdialog] button:has-text("Annulla")');
-check((await api('/api/transactions?limit=500')).items.length === before + 1, '"Annulla" non cancella niente');
+check((await api('/api/transactions?limit=500')).items.length === txBefore, '"Annulla" non cancella niente');
 await page.click('button:has-text("Svuota il bilancio")');
 await page.click('[role=alertdialog] button:has-text("Sì, svuota")');
 await page.waitForSelector('text=Bilancio svuotato');

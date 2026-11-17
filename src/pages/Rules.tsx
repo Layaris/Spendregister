@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Band, Condition, ConditionField, ConditionOp, Rule, RuleActions, RuleDefinition } from '../../shared/rules';
-import { api } from '../api';
+import { api, type Tx } from '../api';
 import { Icon } from '../icons';
 import { go } from '../router';
 import { useApi, useStore } from '../store';
@@ -8,7 +8,7 @@ import { CategorySelect, ErrorBox, Loading, TopBar } from '../ui';
 import { NATURE_LABEL } from '../util';
 
 const FIELDS: Array<[ConditionField, string]> = [
-  ['merchant', 'Il merchant'], ['text', 'Il testo della notifica'], ['app', "L'app o carta"], ['currency', 'La valuta'],
+  ['merchant', 'Il negozio'], ['text', 'Il testo della notifica'], ['app', "L'app o carta"], ['currency', 'La valuta'],
   ['amount_eur', "L'importo in euro"], ['hour', "L'ora"], ['weekday', 'Il giorno (1 = lunedì)'], ['source', 'La fonte'],
 ];
 const OPS: Array<[ConditionOp, string]> = [
@@ -89,6 +89,19 @@ export function RuleEditor({ id }: { id: string }) {
   const [preview, setPreview] = useState<{ matched: number; changed: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [applyHistory, setApplyHistory] = useState(false);
+  // Da un movimento (#/regole/nuova?da=<id>): regola già compilata con negozio, categoria e natura.
+  const from = isNew ? new URLSearchParams(location.hash.split('?')[1] ?? '').get('da') : null;
+  const source = useApi<Tx>(from ? `/transactions/${from}` : null);
+  useEffect(() => {
+    const t = source.data;
+    if (!t) return;
+    setName(t.merchant ?? '');
+    setDef({
+      conditions: [{ field: 'merchant', op: 'contains', value: (t.merchant ?? '').toLowerCase() }],
+      actions: { ...(t.category_id ? { category_id: t.category_id } : {}), ...(t.nature ? { nature: t.nature } : {}) },
+    });
+    setApplyHistory(true);
+  }, [source.data]);
 
   useEffect(() => {
     const r = existing.data?.items.find((x) => x.id === id);
@@ -144,7 +157,7 @@ export function RuleEditor({ id }: { id: string }) {
         }
         store.toast(`Regola salvata, ${changed} movimenti aggiornati`);
       } else store.toast('Regola salvata');
-      go('/regole');
+      go(from ? `/m/${from}` : '/regole');
     } catch (e) {
       setError((e as Error).message);
     }
@@ -160,7 +173,8 @@ export function RuleEditor({ id }: { id: string }) {
 
   return (
     <div className="stack" style={{ gap: 14 }}>
-      <TopBar backTo="/regole" />
+      <TopBar backTo={from ? `/m/${from}` : '/regole'} />
+      {from && <p className="lead">Regola per le spese come questa: cambia ciò che serve, per esempio aggiungi le fasce di importo come per Grab (sotto 2 € taxi, sopra 6 € cibo).</p>}
       <label className="field"><span>Nome della regola</span><input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Es. Grab" /></label>
 
       <section className="card">
