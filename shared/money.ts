@@ -119,13 +119,19 @@ export function amountAppearsInText(text: string, value: number, currency?: stri
   return false;
 }
 
+/** Simboli brevi delle valute più usate (più corti del codice: occupano meno spazio). Le altre restano col codice. */
+export const CURRENCY_SYMBOLS: Record<string, string> = {
+  EUR: '€', USD: '$', IDR: 'Rp', THB: '฿', PHP: '₱', SGD: 'S$', CNY: '¥', JPY: '¥', GBP: '£', VND: '₫', MYR: 'RM', AUD: 'A$', NZD: 'NZ$',
+  KRW: '₩', INR: '₹', HKD: 'HK$', TWD: 'NT$', CAD: 'C$', CHF: 'CHF', AED: 'AED', LKR: 'Rs', KHR: '៛', LAK: '₭', TRY: '₺', BRL: 'R$', MXN: 'MX$',
+};
+export const currencySymbol = (currency: string) => CURRENCY_SYMBOLS[currency.toUpperCase()] ?? currency.toUpperCase();
+
+/** "1.234,50 €", "208.500 Rp", "12,00 $": migliaia sempre separate, simbolo dopo il numero (all'italiana). */
 export function formatMoney(milli: number, currency: string, opts: { sign?: boolean } = {}): string {
   const decimals = currencyDecimals(currency);
-  const value = Math.abs(milli) / 1000;
-  const body = new Intl.NumberFormat('it-IT', {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  }).format(value);
+  const fixed = (Math.abs(milli) / 1000).toFixed(decimals);
+  const [int, dec] = fixed.split('.');
+  const body = `${int.replace(/\B(?=(\d{3})+(?!\d))/g, '.')}${dec ? `,${dec}` : ''}`;
   const sign = milli < 0 ? '−' : opts.sign && milli > 0 ? '+' : '';
-  return currency === 'EUR' ? `${sign}${body} €` : `${sign}${body} ${currency}`;
+  return `${sign}${body}\u00a0${currencySymbol(currency)}`;
 }

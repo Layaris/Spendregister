@@ -12,6 +12,8 @@ export const displayCurrency = () => display.currency;
 export const eur = (milli: number, sign = false) => formatMoney(Math.round(milli * display.perEur), display.currency, { sign });
 /** Da un importo nella valuta di visualizzazione ai millesimi di euro. */
 export const fromDisplay = (milli: number) => Math.round(milli / display.perEur);
+/** Carattere più piccolo per gli importi lunghi, così stanno su una riga: base fino a 9 caratteri, poi scende. */
+export const fitSize = (text: string, base: number, min = Math.round(base * 0.6)) => Math.max(min, Math.min(base, Math.round(base * (10 / Math.max(text.length, 10)))));
 
 const MONTHS = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
 const MONTHS_SHORT = ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', 'ott', 'nov', 'dic'];

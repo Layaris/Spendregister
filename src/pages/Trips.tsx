@@ -5,7 +5,7 @@ import { Icon } from '../icons';
 import { go } from '../router';
 import { useApi, useStore } from '../store';
 import { CategoryIcon, ErrorBox, Loading, TopBar } from '../ui';
-import { eur, formatDayShort, formatMoney, localDay, pct } from '../util';
+import { eur, fitSize, formatDayShort, formatMoney, localDay, pct } from '../util';
 
 interface TripRow { id: string; name: string; place: string | null; start_date: string; end_date: string; spent: number }
 interface TripView extends TripRow {
@@ -102,7 +102,7 @@ export function TripDetail({ id }: { id: string }) {
       {editing && <TripForm initial={t} onSaved={() => { setEditing(false); v.reload(); }} onCancel={() => setEditing(false)} />}
       <section className="card">
         <span className="label">Speso in viaggio</span>
-        <span className="num money" style={{ font: '700 32px var(--f-display)' }}>{eur(t.spent)}</span>
+        <span className="num money" style={{ font: `700 ${fitSize(eur(t.spent), 32)}px var(--f-display)` }}>{eur(t.spent)}</span>
         <span className="muted" style={{ fontSize: 14 }}>
           <b className="num money" style={{ color: 'var(--ink)' }}>{eur(t.per_day)}</b> al giorno
           {diff != null && <> · {diff >= 0 ? `+${diff}%` : `${diff}%`} rispetto ai giorni normali ({eur(t.normal_per_day!)} al giorno)</>}

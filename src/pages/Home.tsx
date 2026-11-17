@@ -5,7 +5,7 @@ import { setPeriod, usePeriodSpec } from '../period';
 import { PeriodSheet, periodArrows } from '../PeriodSheet';
 import { useApi, useStore } from '../store';
 import { CategoryIcon, TxRow } from '../ui';
-import { eur, formatDayShort, formatMoney, localDay, monthPeriod, pct, periodOf } from '../util';
+import { eur, fitSize, formatDayShort, formatMoney, localDay, monthPeriod, pct, periodOf } from '../util';
 import { BudgetBar, budgetTone, type BudgetView } from './Budget';
 import { SuggestionCard, useRecurring } from './Recurring';
 
@@ -25,10 +25,10 @@ function alertText(a: Alert, catName: (id: string | null | undefined) => string)
 
 /** Schede della Home: si accendono, si spengono e si riordinano (Personalizza). */
 export const HOME_WIDGETS: Array<[string, string]> = [
-  ['hero', 'Speso, saldo e previsione'], ['alerts', 'Avvisi'], ['week', 'La tua settimana'], ['budget', 'Budget del mese'], ['review', 'Da rivedere'], ['recurring', 'Spese ricorrenti in arrivo'], ['forecast', 'Fine mese prevista'], ['accounts', 'Conti'],
+  ['hero', 'Speso, saldo e previsione'], ['alerts', 'Avvisi'], ['week', 'La tua settimana'], ['budget', 'Budget del mese'], ['review', 'Da rivedere'], ['recurring', 'Spese ricorrenti in arrivo'], ['forecast', 'Come finirà il mese (previsione)'], ['accounts', 'Conti'],
   ['cashflow', 'Entrate e uscite'], ['balance', 'Andamento del saldo'], ['top', 'Spese principali'], ['cards', 'Spesa per carta'], ['recent', 'Ultimi movimenti'],
 ];
-export const DEFAULT_HOME = ['hero', 'alerts', 'week', 'budget', 'review', 'recurring', 'forecast', 'accounts', 'cashflow', 'top', 'cards', 'recent'];
+export const DEFAULT_HOME = ['hero', 'alerts', 'week', 'budget', 'review', 'recurring', 'accounts', 'cashflow', 'top', 'cards', 'recent'];
 
 const CURRENT_LABEL: Record<string, string> = {
   day: 'Speso oggi', week: 'Speso questa settimana', month: 'Speso questo mese', year: 'Speso quest’anno', ytd: 'Speso da inizio anno', custom: 'Speso nel periodo',
@@ -61,7 +61,9 @@ export function Home() {
 
   const s = stats.data;
   const firstReview = review.data?.items[0];
-  const diff = s && s.previous.spent > 0 ? Math.round(((s.spent - s.previous.spent) / s.previous.spent) * 100) : null;
+  // Percentuale solo se il periodo prima non era quasi vuoto e la differenza non è assurda (+56279% non dice niente).
+  const rawDiff = s && s.previous.spent >= 10_000 ? Math.round(((s.spent - s.previous.spent) / s.previous.spent) * 100) : null;
+  const diff = rawDiff != null && Math.abs(rawDiff) <= 300 ? rawDiff : null;
   const daysLeft = s ? Math.max(s.days.total - s.days.elapsed, 0) : 0;
   const ongoing = daysLeft > 0 && s != null && s.days.elapsed > 0;
   const current = spec.offset === 0 && spec.kind !== 'custom';
@@ -108,14 +110,14 @@ export function Home() {
               {bud ? (
                 <>
                   <span className="label">{bud.left >= 0 ? 'Ti restano' : 'Oltre il budget di'}</span>
-                  <span className="num money hero-mid" style={{ color: bud.left < 0 ? 'var(--neg)' : undefined }}>{eur(Math.abs(bud.left))}</span>
+                  <span className="num money hero-mid" style={{ color: bud.left < 0 ? 'var(--neg)' : undefined, fontSize: fitSize(eur(Math.abs(bud.left)), 30) }}>{eur(Math.abs(bud.left))}</span>
                   {bud.left > 0 && <span className="muted" style={{ fontSize: 13 }}>cioè <b style={{ color: 'var(--ink)' }}>{eur(bud.per_day)} al giorno</b> per {daysLeftToday} {daysLeftToday === 1 ? 'giorno' : 'giorni'}</span>}
                   <span className="muted" style={{ fontSize: 13 }}>Speso {eur(bud.spent)} di {eur(bud.amount)}</span>
                 </>
               ) : (
                 <>
                   <span className="label">{spentLabel}</span>
-                  <span className="num money hero-mid">{s ? eur(spent) : '…'}</span>
+                  <span className="num money hero-mid" style={{ fontSize: fitSize(eur(spent), 30) }}>{s ? eur(spent) : '…'}</span>
                   {s && <span className="muted" style={{ fontSize: 13 }}>In media {eur(perDay)} al giorno{diff != null ? ` · ${diff > 0 ? '+' : ''}${diff}% ${prevShort}` : ''}</span>}
                   {setBudget}
                 </>
@@ -133,12 +135,12 @@ export function Home() {
           </div>
           <div className="row between" style={{ alignItems: 'flex-end', gap: 10 }}>
             <div className="stack" style={{ gap: 2, minWidth: 0 }}>
-              <span className="hero-amount num money">{s ? eur(spent) : '…'}</span>
+              <span className="hero-amount num money" style={{ fontSize: fitSize(eur(spent), 34) }}>{s ? eur(spent) : '…'}</span>
               <span className="muted" style={{ fontSize: 13 }}>{ongoing ? 'spesi finora' : 'spesi'}</span>
             </div>
             {bud && (
               <div className="stack" style={{ gap: 2, alignItems: 'flex-end', textAlign: 'right' }}>
-                <span className="num money hero-left" style={{ color: bud.left < 0 ? 'var(--neg)' : 'var(--accent)' }}>{eur(Math.abs(bud.left))}</span>
+                <span className="num money hero-left" style={{ color: bud.left < 0 ? 'var(--neg)' : 'var(--accent)', fontSize: fitSize(eur(Math.abs(bud.left)), 22) }}>{eur(Math.abs(bud.left))}</span>
                 <span className="muted" style={{ fontSize: 13 }}>{bud.left < 0 ? 'oltre il budget' : 'ancora disponibili'}</span>
               </div>
             )}
@@ -217,12 +219,14 @@ export function Home() {
     })(),
     week: insights.data?.week ? (() => {
       const w = insights.data.week;
-      const d = w.previous > 0 ? Math.round(((w.spent - w.previous) / w.previous) * 100) : null;
+      // Confronto solo se ha senso: settimana prima non quasi vuota e differenza non assurda.
+      const raw = w.previous >= 10_000 ? Math.round(((w.spent - w.previous) / w.previous) * 100) : null;
+      const d = raw != null && Math.abs(raw) <= 300 ? raw : null;
       return (
         <section className="card">
           <div className="row between"><h2 className="h2">La tua settimana</h2><span className="muted" style={{ fontSize: 13 }}>{formatDayShort(w.from)} – {formatDayShort(w.to)}</span></div>
           <div className="row between" style={{ alignItems: 'flex-end' }}>
-            <span className="num money" style={{ font: '700 26px var(--f-display)' }}>{eur(w.spent)}</span>
+            <span className="num money" style={{ font: `700 ${fitSize(eur(w.spent), 26)}px var(--f-display)` }}>{eur(w.spent)}</span>
             {d != null && <span className={`chip ${d > 0 ? 'warn' : 'ok'}`}>{d > 0 ? '+' : ''}{d}% sulla settimana prima</span>}
           </div>
           {w.top.map((c) => <div key={c.category_id ?? 'none'} className="row between" style={{ fontSize: 14 }}><span>{store.catName(c.category_id)}</span><b className="num money">{eur(c.total)}</b></div>)}
@@ -232,13 +236,17 @@ export function Home() {
     forecast: insights.data?.forecast && insights.data.forecast.spent != null ? (() => {
       const f = insights.data.forecast as { months: number; spent: number; expected_spend: number; income: number; expected_income: number };
       const end = total + (f.expected_income - f.income) - (f.expected_spend - f.spent);
+      const month = monthPeriod(0).label.split(' ')[0].toLowerCase();
       return (
         <section className="card">
-          <div className="row between"><h2 className="h2">Fine mese prevista</h2><span className="muted" style={{ fontSize: 12 }}>media di {f.months} mesi</span></div>
+          <div className="stack" style={{ gap: 2 }}>
+            <h2 className="h2">Come finirà {month}</h2>
+            <span className="muted" style={{ fontSize: 13 }}>Se spendi e incassi come nella media degli ultimi {f.months} mesi</span>
+          </div>
           <div className="metrics" style={{ marginTop: 0, borderTop: 0 }}>
-            <div className="metric"><span>Spese previste</span><b className="num money">{eur(f.expected_spend)}</b></div>
-            <div className="metric"><span>Entrate previste</span><b className="num money pos">{eur(f.expected_income)}</b></div>
-            <div className="metric"><span>Saldo dei conti a fine mese</span><b className={`num money ${end < 0 ? 'neg' : ''}`}>{eur(end)}</b></div>
+            <div className="metric"><span>Spese del mese <span className="muted">(finora {eur(f.spent)})</span></span><b className="num money">{eur(f.expected_spend)}</b></div>
+            <div className="metric"><span>Entrate del mese <span className="muted">(finora {eur(f.income)})</span></span><b className="num money pos">{eur(f.expected_income)}</b></div>
+            <div className="metric"><span>Sui conti a fine mese <span className="muted">(oggi {eur(total)})</span></span><b className={`num money ${end < 0 ? 'neg' : ''}`}>{eur(end)}</b></div>
           </div>
         </section>
       );

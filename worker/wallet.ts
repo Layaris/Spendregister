@@ -12,6 +12,7 @@ import { getEurRate } from './fx';
 import { bad, body, getTimeZone, HttpError, newId, nowIso, uid, type AppContext, type AppEnv, type Env } from './lib';
 import { seedId } from './seed';
 import { convertToEur } from './transactions';
+import { accountBalance } from './catalog';
 
 export const walletApi = new Hono<AppEnv>();
 
@@ -96,7 +97,9 @@ walletApi.post('/prepare', async (c) => {
       accounts: accounts.map((a) => ({
         id: a.id, name: a.name, currency: (a.currencyCode ?? a.balance?.currencyCode ?? 'EUR').toUpperCase(), type: a.accountType ?? 'General',
         archived: !!a.archived, balance: a.balance?.currentBalance ?? null,
-        suggest: ours.results.find((o) => o.external_id === `wallet:${a.id}`)?.id ?? ours.results.find((o) => lower(o.name) === lower(a.name))?.id ?? 'new',
+        // Un conto con lo stesso nome si propone solo se ha anche la stessa valuta.
+        suggest: ours.results.find((o) => o.external_id === `wallet:${a.id}`)?.id
+          ?? ours.results.find((o) => lower(o.name) === lower(a.name) && o.currency === (a.currencyCode ?? a.balance?.currencyCode ?? 'EUR').toUpperCase())?.id ?? 'new',
       })),
       categories: categories.map((w) => ({
         id: w.id, name: w.name, parent: w.parentName ?? null, group: w.group?.name ?? null,
@@ -221,23 +224,29 @@ walletApi.post('/finish', async (c) => {
     return fail(c, e);
   }
   const today = new Date().toISOString().slice(0, 10);
-  let aligned = 0;
+  // Più conti di Wallet nello stesso conto di Ledgy: si sommano. Valute diverse: si converte al cambio di oggi
+  // (un conto Wallet in rupie dentro un conto Ledgy in dollari non deve diventare 693.454 $).
+  const targets = new Map<string, number>();
   for (const [wid, ourId] of Object.entries(b.align ?? {}).slice(0, 200)) {
     const w = accounts.find((a) => a.id === wid);
-    const target = w?.balance?.currentBalance;
-    if (typeof target !== 'number') continue;
-    const a = await db.prepare(`SELECT a.currency, a.initial_balance,
-        COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = a.id AND deleted_at IS NULL AND duplicate_of IS NULL AND currency = a.currency), 0) AS same_cur,
-        COALESCE((SELECT SUM(amount_eur) FROM transactions WHERE account_id = a.id AND deleted_at IS NULL AND duplicate_of IS NULL AND currency <> a.currency), 0) AS other_eur
-      FROM accounts a WHERE a.id = ? AND a.user_id = ?`).bind(ourId, u).first<{ currency: string; initial_balance: number; same_cur: number; other_eur: number }>();
-    if (!a) continue;
-    let other = 0;
-    if (a.other_eur) {
-      const rate = a.currency === 'EUR' ? 1 : (await getEurRate(db, a.currency, today))?.eurPerUnit;
-      other = rate ? Math.round(a.other_eur / rate) : 0;
+    const value = w?.balance?.currentBalance;
+    if (typeof value !== 'number' || !ourId) continue;
+    const ours = await accountBalance(db, ourId, u);
+    if (!ours) continue;
+    const from = (w?.currencyCode ?? w?.balance?.currencyCode ?? ours.currency).toUpperCase();
+    let milli = Math.round(value * 1000);
+    if (from !== ours.currency) {
+      const [a, z] = await Promise.all([from === 'EUR' ? 1 : getEurRate(db, from, today).then((r) => r?.eurPerUnit), ours.currency === 'EUR' ? 1 : getEurRate(db, ours.currency, today).then((r) => r?.eurPerUnit)]);
+      if (!a || !z) continue; // senza cambio non si tocca il saldo
+      milli = Math.round((milli * a) / z);
     }
-    const initial = Math.round(target * 1000) - a.same_cur - other;
-    await db.prepare('UPDATE accounts SET initial_balance = ? WHERE id = ?').bind(initial, ourId).run();
+    targets.set(ourId, (targets.get(ourId) ?? 0) + milli);
+  }
+  let aligned = 0;
+  for (const [ourId, target] of targets) {
+    const ours = await accountBalance(db, ourId, u);
+    if (!ours) continue;
+    await db.prepare('UPDATE accounts SET initial_balance = ? WHERE id = ? AND user_id = ?').bind(ours.initial + target - ours.balance, ourId, u).run();
     aligned++;
   }
   return c.json({ aligned });

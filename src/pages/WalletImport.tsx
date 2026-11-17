@@ -145,6 +145,7 @@ export function WalletImport() {
                   <span style={{ fontWeight: 600 }}>{a.name}</span>
                   <span className="muted" style={{ fontSize: 13 }}>{a.balance != null ? formatMoney(Math.round(a.balance * 1000), a.currency) : a.currency}{a.archived ? ' · archiviato' : ''}</span>
                 </span>
+                {(() => { const o = store.accounts.find((x) => x.id === accounts[a.id]); return o && o.currency !== a.currency ? <span style={{ fontSize: 12, color: 'var(--warn)', maxWidth: 110 }}>{a.currency} in un conto {o.currency}: meglio un conto nuovo</span> : null; })()}
                 <select className="input" style={{ width: 150 }} aria-label={`Dove mettere ${a.name}`} value={accounts[a.id] ?? 'new'} onChange={(e) => setAccounts({ ...accounts, [a.id]: e.target.value })}>
                   <option value="new">Conto nuovo</option>
                   {store.accounts.map((o) => <option key={o.id} value={o.id}>In {o.name}</option>)}

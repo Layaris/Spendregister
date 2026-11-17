@@ -5,8 +5,9 @@ import { isValidTimeZone } from '../shared/time';
 import { accountInfo, FEATURE_DEFAULTS } from './auth';
 import { getEurRate } from './fx';
 import { upgradeCatalog } from './seed';
-import { bad, body, newId, notFound, nowIso, runBatch, uid, type AppEnv } from './lib';
-import { checkOwned, loadRules, ruleInputFromTx, type TxRow } from './transactions';
+import { bad, body, getTimeZone, newId, notFound, nowIso, runBatch, uid, type AppEnv } from './lib';
+import { checkOwned, convertToEur, insertTransaction, loadRules, ruleInputFromTx, type TxRow } from './transactions';
+import { zonedIso } from '../shared/time';
 
 export const catalogApi = new Hono<AppEnv>();
 
@@ -63,6 +64,45 @@ catalogApi.post('/accounts', async (c) => {
     .bind(id, uid(c), b.name.trim().slice(0, 80), b.type ?? 'general', currency, roundMilli(toMilli(b.initial_balance ?? 0), currency), b.color ?? null, uid(c), nowIso())
     .run();
   return c.json({ id }, 201);
+});
+
+/** Saldo di un conto nella sua valuta: iniziale + movimenti nella stessa valuta + gli altri (in euro) al cambio di oggi. */
+export async function accountBalance(db: D1Database, accountId: string, userId: string): Promise<{ currency: string; balance: number; initial: number } | null> {
+  const a = await db.prepare(`SELECT a.currency, a.initial_balance,
+      COALESCE((SELECT SUM(amount) FROM transactions WHERE account_id = a.id AND deleted_at IS NULL AND duplicate_of IS NULL AND currency = a.currency), 0) AS same_cur,
+      COALESCE((SELECT SUM(amount_eur) FROM transactions WHERE account_id = a.id AND deleted_at IS NULL AND duplicate_of IS NULL AND currency <> a.currency), 0) AS other_eur
+    FROM accounts a WHERE a.id = ? AND a.user_id = ?`).bind(accountId, userId).first<{ currency: string; initial_balance: number; same_cur: number; other_eur: number }>();
+  if (!a) return null;
+  let other = 0;
+  if (a.other_eur) {
+    const rate = a.currency === 'EUR' ? 1 : (await getEurRate(db, a.currency, new Date().toISOString().slice(0, 10)))?.eurPerUnit;
+    other = rate ? Math.round(a.other_eur / rate) : 0;
+  }
+  return { currency: a.currency, initial: a.initial_balance, balance: a.initial_balance + a.same_cur + other };
+}
+
+/**
+ * Correggi il saldo: "oggi ho davvero X". La differenza diventa un aggiustamento (non è una spesa né un'entrata:
+ * non entra in statistiche, budget, avvisi), visibile tra i movimenti del conto.
+ */
+catalogApi.post('/accounts/:id/adjust', async (c) => {
+  const b = await body<{ balance?: number }>(c);
+  const db = c.env.DB;
+  const u = uid(c);
+  const now = await accountBalance(db, c.req.param('id'), u);
+  if (!now) notFound('Conto non trovato');
+  const target = Number(b.balance);
+  if (!Number.isFinite(target) || Math.abs(target) > 1e13) bad('Saldo non valido');
+  const diff = roundMilli(toMilli(target), now.currency) - now.balance;
+  if (!diff) return c.json({ diff: 0 });
+  const today = new Date().toISOString();
+  const fx = await convertToEur(db, diff, now.currency, today);
+  await insertTransaction(db, u, {
+    type: 'transfer', account_id: c.req.param('id'), amount: diff, currency: now.currency, occurred_at: zonedIso(new Date(), await getTimeZone(db, u)),
+    merchant: 'Correzione saldo', merchant_raw: 'Correzione saldo', source: 'adjustment', status: 'confirmed',
+    ...(fx ? { amount_eur: fx.amount_eur, fx_rate: fx.fx_rate, fx_date: fx.fx_date } : { amount_eur: 0 }),
+  });
+  return c.json({ diff });
 });
 
 catalogApi.put('/accounts/:id', async (c) => {

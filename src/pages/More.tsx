@@ -144,13 +144,14 @@ function Accounts() {
     setConfirmCur(false);
     setError(null);
   };
-  /** Saldo vero → movimento di correzione per la differenza, nella valuta del conto. */
+  /** Saldo vero → correzione del saldo per la differenza (non è una spesa né un'entrata: non tocca statistiche e budget). */
   const correct = (id: string, currency: string, balance: number) => {
     const v = parseAmount(edit.target, currency);
     if (!v) { setError('Importo non valido'); return; }
-    const diff = Math.round(v.value * 1000) - balance;
-    if (!diff) { setEdit({ ...edit, target: '' }); return; }
-    run(() => api('/transactions', { method: 'POST', json: { type: diff > 0 ? 'income' : 'expense', amount: Math.abs(diff) / 1000, currency, account_id: id, merchant: 'Correzione saldo' } }), 'Saldo corretto')
+    const negative = edit.target.trim().startsWith('-') || edit.target.trim().startsWith('−');
+    const target = negative ? -v.value : v.value;
+    if (Math.round(target * 1000) === balance) { setEdit({ ...edit, target: '' }); return; }
+    run(() => api('/accounts/' + id + '/adjust', { method: 'POST', json: { balance: target } }), 'Saldo corretto: non conta come spesa né come entrata')
       .then((ok) => ok && setEdit({ ...edit, target: '' }));
   };
   const add = async () => {
@@ -193,7 +194,7 @@ function Accounts() {
                     </div>
                   </div>
                 )}
-                <label className="field"><span>Saldo vero oggi (Ledgy aggiunge la differenza)</span>
+                <label className="field"><span>Saldo vero oggi, in {a.currency}: la differenza diventa una correzione del saldo, che non conta come spesa né come entrata</span>
                   <div className="row" style={{ gap: 6 }}>
                     <input className="input grow num" inputMode="decimal" placeholder={formatMoney(a.balance, a.currency)} value={edit.target} onChange={(e) => setEdit({ ...edit, target: e.target.value })} />
                     <button className="btn primary" disabled={!edit.target.trim()} onClick={() => correct(a.id, a.currency, a.balance)}>Correggi</button>

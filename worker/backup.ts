@@ -30,7 +30,7 @@ export const TABLES: Record<string, string[]> = {
   budgets: ['category_id', 'amount', 'updated_at'],
   trips: ['id', 'name', 'place', 'start_date', 'end_date', 'created_at'],
   trip_items: ['trip_id', 'transaction_id', 'mode'],
-  recurring: ['id', 'merchant', 'category_id', 'amount_eur', 'period', 'status', 'last_date', 'created_at', 'updated_at'],
+  recurring: ['id', 'merchant', 'category_id', 'amount_eur', 'period', 'every', 'status', 'last_date', 'created_at', 'updated_at'],
 };
 /** Tabelle dei dati dell'account, nell'ordine in cui si cancellano (prima chi usa le altre). */
 export const ACCOUNT_DATA = ['trip_items', 'trips', 'recurring', 'budgets', 'capture_sources', 'favorites', 'captures', 'transactions', 'rules', 'parsers', 'devices', 'labels', 'categories', 'accounts'];
@@ -288,7 +288,7 @@ backupApi.post('/import/chunk', async (c) => {
     const cats = new Set((await db.prepare('SELECT id FROM categories WHERE user_id = ?').bind(u).all<{ id: string }>()).results.map((x) => x.id));
     out = rows.map((r) => {
       const cid = cat(r.category_id);
-      return { ...r, id: id(r.id), category_id: cid && cats.has(cid) ? cid : null, created_at: r.created_at ?? nowIso(), updated_at: r.updated_at ?? nowIso() };
+      return { ...r, id: id(r.id), category_id: cid && cats.has(cid) ? cid : null, every: Number(r.every) >= 1 ? Number(r.every) : 1, created_at: r.created_at ?? nowIso(), updated_at: r.updated_at ?? nowIso() };
     });
   } else if (table === 'trip_items') {
     // Solo se viaggio e movimento esistono e sono dell'account.

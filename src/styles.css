@@ -234,3 +234,6 @@ textarea.input { min-height: 90px; resize: vertical; }
 .bubble .draft { padding: 10px; border-radius: 12px; background: var(--sunken); }
 .composer { position: fixed; left: 0; right: 0; bottom: calc(60px + env(safe-area-inset-bottom, 0px)); padding: 8px max(12px, calc((100% - 560px) / 2 + 12px)); background: color-mix(in srgb, var(--bg) 94%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border-top: 1px solid var(--line); z-index: 18; }
 .composer .iconbtn { flex-shrink: 0; background: var(--card); }
+
+/* Gli importi non vanno mai a capo ("687.069,15 $" su una riga sola). */
+.money { white-space: nowrap; }

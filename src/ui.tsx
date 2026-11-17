@@ -3,7 +3,7 @@ import { api, type Tx } from './api';
 import { Icon } from './icons';
 import { back } from './router';
 import { useApi, useStore } from './store';
-import { eur, formatMoney } from './util';
+import { displayCurrency, eur, formatMoney } from './util';
 
 export function CategoryIcon({ id, size = 40 }: { id: string | null | undefined; size?: number }) {
   const { cat, parentOf } = useStore();
@@ -24,15 +24,17 @@ export function Money({ milli, currency = 'EUR', sign, className }: { milli: num
 
 export function TxRow({ t }: { t: Tx }) {
   const { catName } = useStore();
-  const foreign = t.currency !== 'EUR';
+  // Nella valuta di visualizzazione si mostra l'importo originale (niente cambio avanti e indietro); le altre valute sotto.
+  const same = t.currency === displayCurrency();
+  const foreign = !same;
   return (
     <a href={`#/m/${t.id}`} className="txrow">
       {t.type === 'transfer'
-        ? <div className="ic" style={{ width: 40, height: 40, background: 'var(--blue-soft)', color: 'var(--blue-ink)' }}><Icon name="transfer" size={22} /></div>
+        ? <div className="ic" style={{ width: 40, height: 40, background: 'var(--blue-soft)', color: 'var(--blue-ink)' }}><Icon name={t.source === 'adjustment' ? 'wallet' : 'transfer'} size={22} /></div>
         : <CategoryIcon id={t.category_id} />}
       <div className="grow stack" style={{ gap: 3 }}>
         <span style={{ fontWeight: 600 }}>{t.merchant ?? t.note ?? (t.type === 'transfer' ? (t.amount > 0 ? 'Trasferimento in entrata' : 'Trasferimento in uscita') : catName(t.category_id))}</span>
-        <span className="muted" style={{ fontSize: 13 }}>{t.type === 'transfer' ? 'Trasferimento tra conti' : catName(t.category_id)}</span>
+        <span className="muted" style={{ fontSize: 13 }}>{t.source === 'adjustment' ? 'Non conta come spesa né come entrata' : t.type === 'transfer' ? 'Trasferimento tra conti' : catName(t.category_id)}</span>
         {t.status === 'review' ? (
           <span className="chip warn">Da rivedere</span>
         ) : t.source === 'capture' ? (
@@ -40,7 +42,7 @@ export function TxRow({ t }: { t: Tx }) {
         ) : null}
       </div>
       <div className="amt">
-        <span className="num money" style={{ fontWeight: 600, color: t.amount_eur > 0 ? 'var(--pos)' : undefined }}>{eur(t.amount_eur, t.amount_eur > 0)}</span>
+        <span className="num money" style={{ fontWeight: 600, color: t.amount_eur > 0 ? 'var(--pos)' : undefined }}>{same ? formatMoney(t.amount, t.currency, { sign: t.amount > 0 }) : eur(t.amount_eur, t.amount_eur > 0)}</span>
         {foreign && <span className="muted num money" style={{ fontSize: 12 }}>{formatMoney(Math.abs(t.amount), t.currency)}</span>}
       </div>
     </a>

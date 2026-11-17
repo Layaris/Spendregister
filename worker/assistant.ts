@@ -4,6 +4,7 @@
 // - "image": scontrino o screenshot di un'app bancaria → uno o più movimenti da confermare. La foto non si salva.
 import { Hono } from 'hono';
 import { parseAmount } from '../shared/money';
+import { everyLabel } from '../shared/recurring';
 import { aiMessage, askAi, jsonFrom } from './ai';
 import { accountInfo } from './auth';
 import { budgetView } from './budgets';
@@ -36,7 +37,7 @@ async function contextFor(db: D1Database, u: string, today: string, cur: string)
       LEFT JOIN categories c ON c.id = t.category_id WHERE ${LIVE} ORDER BY t.occurred_utc DESC LIMIT 30`).bind(u).all<{ day: string; type: string; merchant: string | null; amount: number; currency: string; amount_eur: number; cat: string | null; card: string | null }>(),
     db.prepare(`SELECT a.name, a.currency, a.initial_balance + COALESCE((SELECT SUM(t.amount) FROM transactions t WHERE t.account_id = a.id AND t.deleted_at IS NULL AND t.duplicate_of IS NULL AND t.currency = a.currency), 0) AS balance
       FROM accounts a WHERE a.user_id = ?1 AND a.archived = 0`).bind(u).all<{ name: string; currency: string; balance: number }>(),
-    db.prepare("SELECT merchant, amount_eur, period FROM recurring WHERE user_id = ? AND status = 'confirmed'").bind(u).all<{ merchant: string; amount_eur: number; period: string }>(),
+    db.prepare("SELECT merchant, amount_eur, period, every FROM recurring WHERE user_id = ? AND status = 'confirmed'").bind(u).all<{ merchant: string; amount_eur: number; period: 'week' | 'month' | 'year'; every: number }>(),
     db.prepare('SELECT name, place, start_date, end_date FROM trips WHERE user_id = ? ORDER BY start_date DESC LIMIT 10').bind(u).all(),
     budgetView(db, u, month, today),
   ]);
@@ -54,7 +55,7 @@ async function contextFor(db: D1Database, u: string, today: string, cur: string)
     negozi_ultimi_90_giorni: merchants.results.map((m) => ({ negozio: m.merchant, spese: conv(m.total), volte: m.n })),
     ultimi_movimenti: recent.results.map((r) => ({ giorno: r.day, tipo: r.type, negozio: r.merchant, categoria: r.cat, importo: conv(r.amount_eur), originale: r.currency !== cur ? `${r.amount / 1000} ${r.currency}` : undefined, carta: r.card ?? undefined })),
     conti: accounts.results.map((a) => ({ conto: a.name, saldo: `${Math.round(a.balance) / 1000} ${a.currency}` })),
-    spese_ricorrenti: recurring.results.map((r) => ({ negozio: r.merchant, importo: conv(-r.amount_eur), ogni: r.period })),
+    spese_ricorrenti: recurring.results.map((r) => ({ negozio: r.merchant, importo: conv(-r.amount_eur), frequenza: everyLabel(r.period, r.every) })),
     viaggi: trips.results,
     budget: budget.total ? { totale: conv(budget.total.amount), speso: conv(budget.total.spent), restano: conv(budget.total.left),
       categorie: budget.categories.map((b) => ({ categoria: names.get(b.category_id), budget: conv(b.amount), speso: conv(b.spent) })) } : null,

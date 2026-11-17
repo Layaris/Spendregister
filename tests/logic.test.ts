@@ -33,8 +33,11 @@ describe('parseAmount', () => {
 
 describe('formato e arrotondamento', () => {
   it('formatta euro e rupie', () => {
-    expect(formatMoney(-2940, 'EUR')).toBe('−2,94 €');
-    expect(formatMoney(55600000, 'IDR')).toBe('55.600 IDR');
+    expect(formatMoney(-2940, 'EUR')).toBe('−2,94\u00a0€');
+    expect(formatMoney(55600000, 'IDR')).toBe('55.600\u00a0Rp');
+    expect(formatMoney(4500000, 'USD')).toBe('4.500,00\u00a0$'); // migliaia separate anche sotto 10.000
+    expect(formatMoney(687069150, 'USD', { sign: true })).toBe('+687.069,15\u00a0$');
+    expect(formatMoney(1000, 'XYZ')).toBe('1,00\u00a0XYZ');
   });
   it('arrotonda ai decimali della valuta', () => {
     expect(roundMilli(2946, 'EUR')).toBe(2950);
@@ -290,7 +293,7 @@ describe('spese ricorrenti proposte', () => {
   const today = '2026-11-17';
   it('riconosce un abbonamento mensile con qualche giorno di differenza', () => {
     const rows = [o('Netflix', '2026-08-03', 9.99), o('Netflix', '2026-09-03', 9.99), o('Netflix', '2026-10-02', 9.99), o('Netflix', '2026-11-03', 9.99)];
-    expect(detectRecurring(rows, today)).toEqual([{ merchant: 'Netflix', period: 'month', amount_eur: -9990, last_date: '2026-11-03', next_date: '2026-12-03', count: 4, category_id: null }]);
+    expect(detectRecurring(rows, today)).toEqual([{ merchant: 'Netflix', period: 'month', every: 1, amount_eur: -9990, last_date: '2026-11-03', next_date: '2026-12-03', count: 4, category_id: null }]);
   });
   it('settimanale e annuale', () => {
     const week = ['2026-10-20', '2026-10-27', '2026-11-03', '2026-11-10', '2026-11-17'].map((d) => o('Yoga Barn', d, 25));

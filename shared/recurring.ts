@@ -4,33 +4,52 @@
 
 export type Period = 'week' | 'month' | 'year';
 export interface Occurrence { merchant: string; day: string; amount_eur: number; category_id: string | null }
-export interface Candidate { merchant: string; period: Period; amount_eur: number; last_date: string; next_date: string; count: number; category_id: string | null }
+export interface Candidate { merchant: string; period: Period; every: number; amount_eur: number; last_date: string; next_date: string; count: number; category_id: string | null }
 
-const PERIODS: Array<{ period: Period; min: number; max: number; grace: number }> = [
-  { period: 'week', min: 6, max: 8, grace: 4 },
-  { period: 'month', min: 26, max: 35, grace: 10 },
-  { period: 'year', min: 350, max: 380, grace: 30 },
+/** Intervalli riconosciuti, con qualche giorno di margine. */
+const PERIODS: Array<{ period: Period; every: number; min: number; max: number; grace: number }> = [
+  { period: 'week', every: 1, min: 6, max: 8, grace: 4 },
+  { period: 'week', every: 2, min: 13, max: 16, grace: 6 },
+  { period: 'month', every: 1, min: 26, max: 35, grace: 10 },
+  { period: 'month', every: 2, min: 55, max: 66, grace: 14 },
+  { period: 'month', every: 3, min: 84, max: 99, grace: 20 },
+  { period: 'month', every: 6, min: 172, max: 192, grace: 25 },
+  { period: 'year', every: 1, min: 350, max: 380, grace: 30 },
 ];
 
 const dayMs = (d: string) => Date.parse(`${d}T00:00:00Z`);
 const between = (a: string, b: string) => Math.round((dayMs(b) - dayMs(a)) / 86400_000);
 const iso = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
-/** Prossima data attesa: stesso giorno del mese dopo (o l'ultimo giorno, se il mese è più corto). */
-export function nextDate(last: string, period: Period): string {
-  if (period === 'week') return iso(dayMs(last) + 7 * 86400_000);
+/** Prossima data attesa: N settimane dopo, oppure stesso giorno N mesi/anni dopo (l'ultimo giorno se il mese è più corto). */
+export function nextDate(last: string, period: Period, every = 1): string {
+  if (period === 'week') return iso(dayMs(last) + 7 * every * 86400_000);
   const [y, m, d] = last.split('-').map(Number);
-  const add = period === 'month' ? 1 : 12;
+  const add = period === 'month' ? every : 12 * every;
   const ny = y + Math.floor((m - 1 + add) / 12);
   const nm = ((m - 1 + add) % 12) + 1;
   const lastDay = new Date(Date.UTC(ny, nm, 0)).getUTCDate();
   return `${ny}-${String(nm).padStart(2, '0')}-${String(Math.min(d, lastDay)).padStart(2, '0')}`;
 }
 
-export const graceDays = (period: Period) => PERIODS.find((p) => p.period === period)!.grace;
+/** Giorni di tolleranza prima di dire "non è arrivata". */
+export const graceDays = (period: Period, every = 1) => (period === 'week' ? 3 + every : period === 'month' ? 8 + 3 * every : 30 * every);
 
 /** Quanto pesa al mese una spesa ricorrente (negativa = uscita). */
-export const perMonth = (amount: number, period: Period) => Math.round(period === 'week' ? (amount * 52) / 12 : period === 'year' ? amount / 12 : amount);
+export const perMonth = (amount: number, period: Period, every = 1) =>
+  Math.round(period === 'week' ? (amount * 52) / 12 / every : period === 'year' ? amount / 12 / every : amount / every);
+
+/** "ogni mese", "ogni 3 mesi", "ogni 2 settimane", "ogni anno". */
+export function everyLabel(period: Period, every = 1): string {
+  if (every <= 1) return period === 'week' ? 'ogni settimana' : period === 'month' ? 'ogni mese' : 'ogni anno';
+  return `ogni ${every} ${period === 'week' ? 'settimane' : period === 'month' ? 'mesi' : 'anni'}`;
+}
+
+/** Scelte di frequenza per i menu (valore "periodo:N"). */
+export const FREQUENCIES: Array<[string, string]> = [
+  ['week:1', 'Ogni settimana'], ['week:2', 'Ogni 2 settimane'], ['month:1', 'Ogni mese'], ['month:2', 'Ogni 2 mesi'],
+  ['month:3', 'Ogni 3 mesi'], ['month:4', 'Ogni 4 mesi'], ['month:6', 'Ogni 6 mesi'], ['year:1', 'Ogni anno'],
+];
 
 const median = (xs: number[]) => {
   const s = [...xs].sort((a, b) => a - b);
@@ -61,9 +80,9 @@ function seriesOf(list: Occurrence[], today: string): Candidate | null {
     const similar = run.filter((o) => Math.abs(o.amount_eur - typical) <= Math.abs(typical) * 0.15);
     if (similar.length < run.length || similar.length < 3) continue;
     const last = run[run.length - 1];
-    const next = nextDate(last.day, p.period);
+    const next = nextDate(last.day, p.period, p.every);
     if (between(next, today) > p.grace) continue; // non si ripete più
-    return { merchant: last.merchant, period: p.period, amount_eur: typical, last_date: last.day, next_date: next, count: run.length, category_id: last.category_id };
+    return { merchant: last.merchant, period: p.period, every: p.every, amount_eur: typical, last_date: last.day, next_date: next, count: run.length, category_id: last.category_id };
   }
   return null;
 }
@@ -82,5 +101,5 @@ export function detectRecurring(rows: Occurrence[], today: string, skip: Set<str
     const c = seriesOf(list, today);
     if (c) out.push(c);
   }
-  return out.sort((a, b) => perMonth(a.amount_eur, a.period) - perMonth(b.amount_eur, b.period));
+  return out.sort((a, b) => perMonth(a.amount_eur, a.period, a.every) - perMonth(b.amount_eur, b.period, b.every));
 }

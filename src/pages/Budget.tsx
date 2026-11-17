@@ -6,7 +6,7 @@ import { api } from '../api';
 import { Icon } from '../icons';
 import { useApi, useStore } from '../store';
 import { CategoryIcon, CategorySelect, ErrorBox, Loading, TopBar } from '../ui';
-import { displayCurrency, eur, fromDisplay, localDay, monthPeriod } from '../util';
+import { displayCurrency, eur, fitSize, fromDisplay, localDay, monthPeriod } from '../util';
 
 export interface BudgetView {
   month: string;
@@ -112,7 +112,7 @@ export function Budget() {
             <div className="row between" style={{ alignItems: 'flex-start' }}>
               <div className="stack" style={{ gap: 4 }}>
                 <span className="label">{v.total.left >= 0 ? 'Ti restano' : 'Hai superato il budget di'}</span>
-                <span className="num money" style={{ font: '700 30px var(--f-display)', color: v.total.left < 0 ? 'var(--neg)' : undefined }}>{eur(Math.abs(v.total.left))}</span>
+                <span className="num money" style={{ font: `700 ${fitSize(eur(Math.abs(v.total.left)), 30)}px var(--f-display)`, color: v.total.left < 0 ? 'var(--neg)' : undefined }}>{eur(Math.abs(v.total.left))}</span>
               </div>
               <button className="btn small" onClick={() => setEditing('*')}>Modifica</button>
             </div>

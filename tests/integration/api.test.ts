@@ -285,7 +285,7 @@ describe('cattura delle notifiche', () => {
   it('Grab tra 2 e 6 € va in "da rivedere" con la scelta', async () => {
     const r = await capture(deviceUrl, { title: 'Revolut', text: 'Hai pagato Rp55.600 a Grab* A-A359GUFW36UCAV', posted_at: '2026-11-10T14:32:08+08:00' });
     expect(r.json.status).toBe('review');
-    expect(r.json.notify).toBe('Da rivedere: Grab −2,78 €');
+    expect(r.json.notify).toBe('Da rivedere: Grab −2,78\u00a0€');
     const t = await tx(r.json.transaction_id);
     expect(t.amount).toBe(-55600000);
     expect(t.amount_eur).toBe(-2780);
@@ -1645,6 +1645,59 @@ describe('AI: il caso della spesa CK Bedugul (17 novembre)', () => {
     expect((await fetch(`${BASE}/__scheduled?cron=23+*+*+*+*`)).status).toBe(200);
     await settle();
     expect((await c.get(`/api/transactions/${t.id}`)).json.category_id).toBe(own.cat_care_spa);
+  });
+});
+
+describe('casi segnalati il 17 novembre', () => {
+  it('correggere il saldo non è una spesa: statistiche, budget e avvisi non cambiano', async () => {
+    const c = new Client('10.60.0.1');
+    await c.post('/api/guest');
+    const usd = (await c.post('/api/accounts', { name: 'Contanti', currency: 'USD', initial_balance: 693_454 })).json.id;
+    await c.post('/api/transactions', { amount: 20, currency: 'USD', merchant: 'Pepito', account_id: usd });
+    await c.put('/api/budgets', { category_id: '*', amount: 4_500_000 });
+    const before = (await c.get('/api/stats?from=2026-01-01&to=2030-01-01')).json.spent;
+    const r = (await c.post(`/api/accounts/${usd}/adjust`, { balance: 9000 })).json;
+    expect(r.diff).toBe(9_000_000 - 693_434_000);
+    const acc = (await c.get('/api/bootstrap')).json.accounts.find((a: any) => a.id === usd);
+    expect(acc.balance).toBe(9_000_000);
+    expect((await c.get('/api/stats?from=2026-01-01&to=2030-01-01')).json.spent).toBe(before);
+    expect((await c.get('/api/budgets')).json.total.spent).toBe(before);
+    const adj = (await c.get('/api/transactions?q=Correzione')).json.items[0];
+    expect(adj).toMatchObject({ type: 'transfer', source: 'adjustment', category_id: null, amount: 9_000_000 - 693_434_000, currency: 'USD' });
+    expect((await c.get('/api/insights')).json.alerts.filter((a: any) => a.kind === 'budget')).toEqual([]);
+  });
+  it('import da Wallet: un conto in rupie dentro un conto in dollari converte il saldo; due conti nello stesso si sommano', async () => {
+    const c = new Client('10.60.0.2');
+    await c.post('/api/guest');
+    const usd = (await c.post('/api/accounts', { name: 'Contanti IDR', currency: 'USD', initial_balance: 0 })).json.id;
+    const p = (await c.post('/api/import/wallet/prepare', { token: 'wallet-ok' })).json;
+    // Stesso nome ma valuta diversa: non lo propone.
+    expect(p.accounts.find((a: any) => a.id === 'wa-cash').suggest).toBe('new');
+    const start = (await c.post('/api/import/wallet/start', { accounts: p.accounts.map((a: any) => ({ ...a, target: usd })), labels: [] })).json;
+    let offset: number | null = 0;
+    while (offset != null) offset = (await c.post('/api/import/wallet/page', { token: 'wallet-ok', offset, accounts: start.accounts, categories: {} })).json.next;
+    await c.post('/api/import/wallet/finish', { token: 'wallet-ok', align: start.accounts });
+    const acc = (await c.get('/api/bootstrap')).json.accounts.find((a: any) => a.id === usd);
+    // 1234,50 € + 500.000 Rp (= 25 €) = 1259,50 € = 1399,44 $ (tassi dei test: USD 0,9 €, IDR 0,00005 €)
+    expect(Math.abs(acc.balance - Math.round((1_234_500 + 25_000) / 0.9))).toBeLessThanOrEqual(2); // arrotondamento per conto
+  });
+  it('spese ricorrenti ogni 3 mesi riconosciute; aggiunte a mano con la prossima data; frequenza modificabile', async () => {
+    const c = new Client('10.60.0.3');
+    await c.post('/api/guest');
+    for (const d of ['2026-02-10', '2026-05-10', '2026-08-11', '2026-11-10']) await c.post('/api/transactions', { amount: 45, currency: 'EUR', merchant: 'Assicurazione moto', occurred_at: `${d}T10:00:00+08:00` });
+    let r = (await c.get('/api/recurring?today=2026-11-17')).json;
+    expect(r.suggestions.map((s: any) => [s.merchant, s.period, s.every, s.next_date])).toEqual([['Assicurazione moto', 'month', 3, '2027-02-10']]);
+    await c.post('/api/recurring', { ...r.suggestions[0], status: 'confirmed' });
+    await c.post('/api/recurring', { merchant: 'Dominio ledgy', period: 'year', every: 1, amount_eur: -15_000, next_date: '2027-03-01', status: 'confirmed' });
+    await c.post('/api/recurring', { merchant: 'Palestra', period: 'month', every: 2, amount_eur: -60_000, next_date: '2026-10-05', status: 'confirmed' });
+    r = (await c.get('/api/recurring?today=2026-11-17')).json;
+    const by = (m: string) => r.confirmed.find((x: any) => x.merchant === m);
+    expect(by('Assicurazione moto')).toMatchObject({ every: 3, next_date: '2027-02-10', late: false, per_month: -15_000 });
+    expect(by('Dominio ledgy')).toMatchObject({ next_date: '2027-03-01', per_month: -1250 });
+    expect(by('Palestra')).toMatchObject({ next_date: '2026-12-05', per_month: -30_000 }); // dal 5 ottobre ogni 2 mesi
+    await c.put(`/api/recurring/${by('Palestra').id}`, { every: 1 });
+    expect((await c.get('/api/recurring?today=2026-11-17')).json.confirmed.find((x: any) => x.merchant === 'Palestra')).toMatchObject({ every: 1, next_date: '2026-12-05' }); // la prossima da oggi in poi
+    expect((await c.put(`/api/recurring/${by('Palestra').id}`, { every: 99 })).status).toBe(400);
   });
 });
 

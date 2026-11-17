@@ -7,7 +7,7 @@ import { useApi, useStore } from '../store';
 import { Icon } from '../icons';
 import { CategoryIcon, CategorySheet, ErrorBox, Loading, TopBar, type CardInfo } from '../ui';
 import { parseAmount } from '../../shared/money';
-import { eur, formatMoney, formatWhen, NATURE_LABEL } from '../util';
+import { eur, fitSize, formatMoney, formatWhen, NATURE_LABEL } from '../util';
 
 export function TxDetail({ id }: { id: string }) {
   const store = useStore();
@@ -92,7 +92,7 @@ export function TxDetail({ id }: { id: string }) {
       <section className="card" style={{ alignItems: 'center', textAlign: 'center', gap: 6, padding: '18px 16px' }}>
         <CategoryIcon id={t.category_id} size={52} />
         <span style={{ fontWeight: 600, fontSize: 18 }}>{t.merchant ?? (income ? 'Entrata' : 'Spesa')}</span>
-        <span className="hero-amount num money" style={{ fontSize: 40, color: income ? 'var(--pos)' : 'var(--neg)' }}>{eur(t.amount_eur, true)}</span>
+        <span className="hero-amount num money" style={{ fontSize: fitSize(eur(t.amount_eur, true), 40), color: income ? 'var(--pos)' : 'var(--neg)' }}>{eur(t.amount_eur, true)}</span>
         {t.currency !== 'EUR' && t.fx_rate && (
           <span className="muted num" style={{ fontSize: 14 }}>
             {formatMoney(Math.abs(t.amount), t.currency)} · 1 € = {new Intl.NumberFormat('it-IT', { maximumFractionDigits: 2 }).format(1 / t.fx_rate)} {t.currency}
@@ -125,6 +125,15 @@ export function TxDetail({ id }: { id: string }) {
         </section>
       )}
 
+      {t.type === 'transfer' && (
+        <section className="card" style={{ gap: 4 }}>
+          <b>{t.source === 'adjustment' ? 'Correzione del saldo' : 'Trasferimento tra conti'}</b>
+          <span className="muted" style={{ fontSize: 14 }}>{t.source === 'adjustment'
+            ? 'Cambia solo il saldo del conto: non è una spesa né un’entrata, quindi non conta in statistiche, budget e avvisi.'
+            : 'Soldi spostati tra i tuoi conti: non contano come spesa né come entrata.'}</span>
+        </section>
+      )}
+
       <span className="section-title">Essenziale</span>
       <div className="list">
         <div className="lrow note">
@@ -132,26 +141,26 @@ export function TxDetail({ id }: { id: string }) {
           <textarea className="lrow-input" rows={2} placeholder="Aggiungi una descrizione" aria-label="Descrizione" value={form.note}
             onChange={(e) => setForm({ ...form, note: e.target.value })} onBlur={onBlur('note', t.note)} />
         </div>
-        <button className="lrow" onClick={() => setPicking(true)}>
+        {t.type !== 'transfer' && <button className="lrow" onClick={() => setPicking(true)}>
           {cat ? <CategoryIcon id={t.category_id} size={32} /> : <span className="lrow-ic"><Icon name="question" size={18} /></span>}
           <span className="lrow-label">Categoria</span>
           <span className={`lrow-value ${cat ? 'set' : 'accent'}`}>{cat ? cat.name : 'Scegli'}</span>
           <Icon name="next" size={18} />
-        </button>
+        </button>}
         <label className="lrow">
           <span className="lrow-ic"><Icon name="store" size={18} /></span>
           <span className="lrow-label">Dove</span>
           <input className="lrow-input" placeholder="Negozio o persona" value={form.merchant} onChange={(e) => setForm({ ...form, merchant: e.target.value })} onBlur={onBlur('merchant', t.merchant)} />
         </label>
       </div>
-      <button className="btn" style={{ background: 'var(--card)', alignSelf: 'flex-start' }} disabled={asking} onClick={askAi}>
+      {t.type !== 'transfer' && <button className="btn" style={{ background: 'var(--card)', alignSelf: 'flex-start' }} disabled={asking} onClick={askAi}>
         <Icon name="sparkle" size={18} />{asking ? 'L’AI sta cercando…' : cat ? 'Chiedi all’AI se è giusta' : 'Chiedi la categoria all’AI'}
-      </button>
+      </button>}
       {picking && <CategorySheet value={t.category_id} kind={income ? 'income' : 'expense'} onPick={(v) => { setPicking(false); save({ category_id: v }, 'Categoria salvata'); }} onClose={() => setPicking(false)} />}
 
       <span className="section-title">Dettagli</span>
       <div className="list">
-        <div className="lrow" style={{ cursor: 'default', padding: '10px 12px' }}>
+        {t.type !== 'transfer' && <div className="lrow" style={{ cursor: 'default', padding: '10px 12px' }}>
           <div className="seg grow" role="group" aria-label="Spesa o entrata">
             {(['expense', 'income'] as const).map((k) => (
               <button key={k} aria-pressed={(k === 'income') === income}
@@ -163,7 +172,7 @@ export function TxDetail({ id }: { id: string }) {
                 }}>{k === 'income' ? 'Entrata' : 'Spesa'}</button>
             ))}
           </div>
-        </div>
+        </div>}
         <label className="lrow">
           <span className="lrow-ic"><Icon name="income" size={18} /></span>
           <span className="lrow-label">Importo</span>
