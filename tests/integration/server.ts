@@ -35,8 +35,19 @@ let ai: Server | null = null;
  */
 function fakeAi(): Server {
   const stats = { gemini: 0, nanogpt: 0, geminiSearch: 0, nanoOnline: 0 };
-  const pick = (prompt: string) => {
+  const pick = (prompt: string, image = false) => {
     if (prompt.includes('{"ok": true}')) return '{"ok": true}';
+    // Assistente: risponde citando il totale del mese che trova nei DATI (così il test vede che i dati arrivano).
+    if (prompt.startsWith('ASSISTENTE_LEDGY')) {
+      const data = JSON.parse(prompt.split('\nDATI: ')[1].split('\n')[0]);
+      const month = data.mesi.find((m: { mese: string }) => m.mese === data.oggi.slice(0, 7));
+      return `Questo mese hai speso ${month?.spese ?? 0} ${data.valuta}. Domanda: ${prompt.split('DOMANDA: ')[1]}`;
+    }
+    if (prompt.startsWith('ESTRAI_MOVIMENTI')) {
+      const cat = (name: string) => prompt.split('\n').find((l) => /^cat_/.test(l) && l.endsWith(name))?.split(':')[0] ?? null;
+      if (image) return '```json\n{"transactions": [{"type": "expense", "amount": "185.000", "currency": "idr", "merchant": "Pepito Canggu", "date": "2026-11-16", "time": "18:42", "category_id": "' + cat('Spesa e supermercato') + '"}, {"type": "expense", "amount": 0, "merchant": "vuoto"}, {"type": "income", "amount": 20, "currency": "EUR", "merchant": "Rimborso", "date": "2099-01-01", "category_id": "inventata"}]}\n```';
+      return '{"transactions": [{"type": "expense", "amount": 50000, "currency": null, "merchant": "Taxi", "date": "2026-11-16", "time": null, "note": null, "category_id": "' + cat('Taxi e auto con autista') + '"}]}';
+    }
     const lines = prompt.split('\n').filter((l) => /^cat_[^:]+: /.test(l));
     const line = lines.find((l) => l.includes('Massaggi e spa')) ?? lines[0] ?? '';
     return `Ecco: {"category_id": "${line.split(':')[0]}", "reason": "centro benessere con sauna e bagni di ghiaccio"}`;
@@ -55,13 +66,14 @@ function fakeAi(): Server {
         const key = req.headers['x-goog-api-key'];
         if (key === 'gemini-esaurita') return send(429, { error: { status: 'RESOURCE_EXHAUSTED' } });
         if (key !== 'gemini-ok') return send(403, { error: 'chiave' });
-        return send(200, { candidates: [{ content: { parts: [{ text: pick(b.contents[0].parts[0].text) }] } }] });
+        return send(200, { candidates: [{ content: { parts: [{ text: pick(b.contents[0].parts[0].text, b.contents[0].parts.length > 1) }] } }] });
       }
       if (req.url === '/nanogpt') {
         stats.nanogpt++;
         if (String(b.model).endsWith(':online')) stats.nanoOnline++;
         if (req.headers.authorization !== 'Bearer nano-ok') return send(401, { error: 'chiave' });
-        return send(200, { choices: [{ message: { content: pick(b.messages[0].content) } }] });
+        const m = b.messages[0].content;
+        return send(200, { choices: [{ message: { content: pick(typeof m === 'string' ? m : m[0].text, Array.isArray(m)) } }] });
       }
       send(404, {});
     });

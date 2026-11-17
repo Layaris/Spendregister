@@ -222,3 +222,12 @@ textarea.input { min-height: 90px; resize: vertical; }
 .rules-group .rules-chevron { transition: transform .15s; color: var(--muted); }
 .rules-group[open] .rules-chevron { transform: rotate(90deg); }
 .rules-group:not([open]) { gap: 0; }
+
+/* Assistente */
+.chat-page { padding-bottom: 150px; }
+.bubble { max-width: 88%; padding: 10px 14px; border-radius: 18px; font-size: 15px; line-height: 1.4; }
+.bubble.user { align-self: flex-end; background: var(--accent); color: var(--accent-ink); border-bottom-right-radius: 6px; }
+.bubble.assistant { align-self: flex-start; background: var(--card); border-bottom-left-radius: 6px; width: 88%; }
+.bubble .draft { padding: 10px; border-radius: 12px; background: var(--sunken); }
+.composer { position: fixed; left: 0; right: 0; bottom: calc(60px + env(safe-area-inset-bottom, 0px)); padding: 8px max(12px, calc((100% - 560px) / 2 + 12px)); background: color-mix(in srgb, var(--bg) 94%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border-top: 1px solid var(--line); z-index: 18; }
+.composer .iconbtn { flex-shrink: 0; background: var(--card); }

@@ -41,23 +41,26 @@ export function jsonFrom(text: string): Record<string, unknown> {
   try { return JSON.parse(text.slice(s, e + 1)) as Record<string, unknown>; } catch { throw new AiError('bad_response'); }
 }
 
-async function callGemini(env: Env, key: string, model: string, prompt: string, search: boolean): Promise<string> {
+/** Opzioni di una richiesta: ricerca sul web, lunghezza massima della risposta, un'immagine (scontrino o screenshot). */
+export interface AskOpts { search?: boolean; maxTokens?: number; image?: { mime: string; data: string } }
+
+async function callGemini(env: Env, key: string, model: string, prompt: string, search: boolean, o: AskOpts = {}): Promise<string> {
   let res: Response;
   try {
     res = await fetch(endpoints(env).gemini(model), {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        contents: [{ role: 'user', parts: [{ text: prompt }, ...(o.image ? [{ inline_data: { mime_type: o.image.mime, data: o.image.data } }] : [])] }],
         ...(search ? { tools: [{ google_search: {} }] } : {}),
-        generationConfig: { temperature: 0.1, maxOutputTokens: 400 },
+        generationConfig: { temperature: 0.1, maxOutputTokens: o.maxTokens ?? 400 },
       }),
     });
   } catch {
     throw new AiError('network', 'gemini');
   }
   if (res.status === 429) throw new AiError('quota', 'gemini');
-  if (res.status === 400 && search) return callGemini(env, key, model, prompt, false); // modello senza ricerca
+  if (res.status === 400 && search) return callGemini(env, key, model, prompt, false, o); // modello senza ricerca
   if (res.status === 401 || res.status === 403) throw new AiError('invalid_key', 'gemini');
   if (!res.ok) throw new AiError('network', 'gemini');
   const j = (await res.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
@@ -66,19 +69,23 @@ async function callGemini(env: Env, key: string, model: string, prompt: string, 
   return text;
 }
 
-async function callNanoGpt(env: Env, key: string, model: string, prompt: string, search: boolean): Promise<string> {
+async function callNanoGpt(env: Env, key: string, model: string, prompt: string, search: boolean, o: AskOpts = {}): Promise<string> {
   let res: Response;
   try {
     res = await fetch(endpoints(env).nanogpt, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
       // ":online" chiede a NanoGPT una ricerca sul web prima di rispondere.
-      body: JSON.stringify({ model: search ? `${model}:online` : model, messages: [{ role: 'user', content: prompt }], temperature: 0.1, max_tokens: 400, stream: false }),
+      body: JSON.stringify({
+        model: search ? `${model}:online` : model,
+        messages: [{ role: 'user', content: o.image ? [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: `data:${o.image.mime};base64,${o.image.data}` } }] : prompt }],
+        temperature: 0.1, max_tokens: o.maxTokens ?? 400, stream: false,
+      }),
     });
   } catch {
     throw new AiError('network', 'nanogpt');
   }
-  if (res.status === 400 && search) return callNanoGpt(env, key, model, prompt, false);
+  if (res.status === 400 && search) return callNanoGpt(env, key, model, prompt, false, o);
   if (res.status === 401 || res.status === 403) throw new AiError('invalid_key', 'nanogpt');
   if (res.status === 402) throw new AiError('no_credit', 'nanogpt');
   if (res.status === 429) throw new AiError('quota', 'nanogpt');
@@ -94,7 +101,7 @@ async function callNanoGpt(env: Env, key: string, model: string, prompt: string,
  * Chiede all'AI dell'account: Gemini se c'è la chiave e non è in pausa, altrimenti (o se fallisce) NanoGPT.
  * Restituisce il testo e il servizio usato; annota l'esito in ai_settings.
  */
-export async function askAi(env: Env, userId: string, prompt: string, opts: { search?: boolean } = {}): Promise<{ text: string; provider: Provider }> {
+export async function askAi(env: Env, userId: string, prompt: string, opts: AskOpts = {}): Promise<{ text: string; provider: Provider }> {
   const db = env.DB;
   const s = await aiSettings(db, userId);
   if (!s || !s.enabled || (!s.gemini_key && !s.nanogpt_key)) throw new AiError('no_key');
@@ -107,8 +114,8 @@ export async function askAi(env: Env, userId: string, prompt: string, opts: { se
   for (const p of chain) {
     try {
       const text = p === 'gemini'
-        ? await callGemini(env, s.gemini_key!, s.gemini_model || GEMINI_MODELS[0], prompt, opts.search ?? false)
-        : await callNanoGpt(env, s.nanogpt_key!, s.nanogpt_model || NANOGPT_MODELS[0], prompt, opts.search ?? false);
+        ? await callGemini(env, s.gemini_key!, s.gemini_model || GEMINI_MODELS[0], prompt, opts.search ?? false, opts)
+        : await callNanoGpt(env, s.nanogpt_key!, s.nanogpt_model || NANOGPT_MODELS[0], prompt, opts.search ?? false, opts);
       await db.prepare('UPDATE ai_settings SET last_provider = ?, last_error = NULL, last_used_at = ? WHERE user_id = ?').bind(p, nowIso(), userId).run();
       return { text, provider: p };
     } catch (e) {

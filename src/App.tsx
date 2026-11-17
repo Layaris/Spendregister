@@ -15,6 +15,7 @@ import { Stats } from './pages/Stats';
 import { TxDetail } from './pages/TxDetail';
 import { WalletImport } from './pages/WalletImport';
 import { Budget } from './pages/Budget';
+import { Assistant } from './pages/Assistant';
 import { Recurring } from './pages/Recurring';
 import { TripDetail, Trips } from './pages/Trips';
 import { go, useRoute } from './router';
@@ -88,7 +89,7 @@ function Shell({ onAuthChange }: { onAuthChange: () => void }) {
     case 'budget': content = <Budget />; break;
     case 'ricorrenti': content = <Recurring />; break;
     case 'viaggi': content = a ? <TripDetail id={a} /> : <Trips />; break;
-    case 'assistente': content = <ComingSoon title="Assistente AI" text="La chat sulle tue spese, la lettura di scontrini e screenshot e l'inserimento a voce arrivano con il prossimo aggiornamento, con Gemini o NanoGPT." />; break;
+    case 'assistente': content = <Assistant />; break;
     case 'altro': content = <More onAuthChange={onAuthChange} />; break;
     case 'account': content = <Login key={a ?? ''} initial={a === 'crea' ? 'register' : 'login'} onDone={onAuthChange} />; break;
     default: content = <Home />;

@@ -1551,6 +1551,37 @@ describe('avvisi, previsione e riepilogo settimanale', () => {
   });
 });
 
+describe('assistente AI', () => {
+  const c = new Client('10.57.0.1');
+  const own: Record<string, string> = {};
+  beforeAll(async () => {
+    await c.post('/api/guest');
+    await loadOwn(c, own);
+    await c.post('/api/transactions', { amount: 40, currency: 'EUR', merchant: 'Locavore', occurred_at: '2026-11-10T20:00:00+08:00', category_id: own.cat_food_restaurant });
+  });
+  it('senza chiavi lo dice, con le chiavi risponde usando i dati veri', async () => {
+    expect((await c.post('/api/assistant', { mode: 'ask', text: 'quanto ho speso?', today: '2026-11-17' })).json.error).toBeTruthy();
+    await c.put('/api/ai', { gemini_key: 'gemini-ok' });
+    const r = (await c.post('/api/assistant', { mode: 'ask', text: 'Quanto ho speso questo mese?', today: '2026-11-17' })).json;
+    expect(r.answer).toContain('Questo mese hai speso 40 EUR');
+    expect(r.answer).toContain('Quanto ho speso questo mese?');
+  });
+  it('una spesa dettata diventa un movimento da confermare', async () => {
+    await c.post('/api/transactions', { amount: 20000, currency: 'IDR', merchant: 'Warung', occurred_at: '2026-11-15T12:00:00+08:00' });
+    await c.post('/api/transactions', { amount: 30000, currency: 'IDR', merchant: 'Warung', occurred_at: '2026-11-16T12:00:00+08:00' });
+    const r = (await c.post('/api/assistant', { mode: 'parse', text: 'taxi 50k ieri', today: '2026-11-17' })).json;
+    expect(r.drafts).toEqual([{ type: 'expense', amount: 50000, currency: 'IDR', merchant: 'Taxi', date: '2026-11-16', time: null, note: null, category_id: own.cat_transport_taxi }]);
+  });
+  it('uno scontrino o uno screenshot: righe pulite, date nel futuro e categorie inventate scartate', async () => {
+    expect((await c.post('/api/assistant', { mode: 'image', image: 'data:text/plain;base64,AAAA', today: '2026-11-17' })).status).toBe(400);
+    const r = (await c.post('/api/assistant', { mode: 'image', image: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==', today: '2026-11-17' })).json;
+    expect(r.drafts).toEqual([
+      { type: 'expense', amount: 185000, currency: 'IDR', merchant: 'Pepito Canggu', date: '2026-11-16', time: '18:42', note: null, category_id: own.cat_food_groceries },
+      { type: 'income', amount: 20, currency: 'EUR', merchant: 'Rimborso', date: '2026-11-17', time: null, note: null, category_id: null },
+    ]);
+  });
+});
+
 describe('pulizia notturna', () => {
   const withSession = (token: string) => { const c = new Client('10.30.0.1'); c.cookie = `ledgy_session=${token}`; return c; };
   const ping = (token: string) => new Client('10.30.0.2').post(`/api/in/${token}/ping`, {});

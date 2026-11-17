@@ -17,6 +17,7 @@ import { budgetsApi } from './budgets';
 import { tripsApi } from './trips';
 import { recurringApi } from './recurring';
 import { insightsApi } from './insights';
+import { assistantApi } from './assistant';
 
 const app = new Hono<AppEnv>();
 
@@ -116,6 +117,7 @@ priv.route('/budgets', budgetsApi);
 priv.route('/trips', tripsApi);
 priv.route('/recurring', recurringApi);
 priv.route('/insights', insightsApi);
+priv.route('/assistant', assistantApi);
 app.route('/api', priv);
 
 app.all('/api/*', (c) => c.json({ error: 'Percorso non trovato' }, 404));
