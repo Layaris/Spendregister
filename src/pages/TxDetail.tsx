@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { TripRowForTx } from './Trips';
 import { api, type TxDetail as Detail } from '../api';
 import { back } from '../router';
 import { useApi, useStore } from '../store';
@@ -217,6 +218,7 @@ export function TxDetail({ id }: { id: string }) {
           <input className="lrow-input" placeholder="Es. Viaggio Bangkok" value={form.labels} onChange={(e) => setForm({ ...form, labels: e.target.value })}
             onBlur={() => { if (form.labels !== t.labels.join(', ')) save({ labels: form.labels.split(',').map((x) => x.trim()).filter(Boolean) }); }} />
         </label>
+        {t.type !== 'transfer' && <TripRowForTx txId={t.id} />}
         <a className="lrow" href={`#/regole/nuova?da=${t.id}`}>
           <span className="lrow-ic"><Icon name="rules" size={18} /></span>
           <span className="lrow-label grow">Crea una regola{t.merchant ? ` per ${t.merchant}` : ''}</span>

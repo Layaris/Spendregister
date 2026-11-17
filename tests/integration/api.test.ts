@@ -1422,6 +1422,57 @@ describe('budget', () => {
   });
 });
 
+describe('filtri dei movimenti e viaggi', () => {
+  const c = new Client('10.54.0.1');
+  const own: Record<string, string> = {};
+  const add = (amount: number, merchant: string, when: string, extra: Record<string, unknown> = {}) =>
+    c.post('/api/transactions', { amount, currency: 'EUR', merchant, occurred_at: `${when}T12:00:00+07:00`, ...extra }).then((r) => r.json.id as string);
+  const ids: Record<string, string> = {};
+  beforeAll(async () => {
+    await c.post('/api/guest');
+    await loadOwn(c, own);
+    ids.volo = await add(320, 'AirAsia', '2026-11-20', { category_id: own.cat_transport_flights });
+    ids.cena = await add(25, 'Som Tam Nua', '2026-12-04', { category_id: own.cat_food_restaurant, card: 'Revolut', labels: ['Thailandia'] });
+    ids.hotel = await add(180, 'Lub d Siam', '2026-12-05', { category_id: own.cat_travel_hotel, card: 'Revolut' });
+    ids.affitto = await add(600, 'Villa Canggu', '2026-12-06', { category_id: own.cat_home_rent });
+    ids.thb = (await c.post('/api/transactions', { amount: 500, currency: 'IDR', merchant: 'Grab', occurred_at: '2026-12-07T12:00:00+07:00', category_id: own.cat_transport_taxi })).json.id;
+    ids.dopo = await add(40, 'Pepito', '2026-12-20', { category_id: own.cat_food_groceries });
+    await c.post('/api/transactions', { type: 'income', amount: 1000, currency: 'EUR', merchant: 'Cliente', occurred_at: '2026-12-01T12:00:00+07:00' });
+    for (const id of [ids.cena, ids.hotel]) await c.put(`/api/transactions/${id}`, { card: 'Revolut' });
+  });
+  it('cerca e filtra, con i totali di tutto il filtro', async () => {
+    const get = async (qs: string) => (await c.get(`/api/transactions?sum=1&${qs}`)).json;
+    expect((await get('q=revolut')).items.map((t: any) => t.merchant).sort()).toEqual(['Lub d Siam', 'Som Tam Nua']);
+    expect((await get('card=Revolut')).summary).toEqual({ count: 2, spent: 205_000, income: 0 });
+    expect((await get('type=income')).summary).toMatchObject({ count: 1, income: 1_000_000 });
+    expect((await get('min=100000&max=400000')).items.map((t: any) => t.merchant).sort()).toEqual(['AirAsia', 'Lub d Siam']);
+    const label = (await c.get('/api/bootstrap')).json.labels.find((l: any) => l.name === 'Thailandia').id;
+    expect((await get(`label=${label}`)).items.map((t: any) => t.merchant)).toEqual(['Som Tam Nua']);
+    expect((await get('from=2026-12-01&to=2026-12-06&type=expense')).summary.count).toBe(2);
+  });
+  it('un viaggio raccoglie le spese delle sue date, più e meno quelle scelte a mano', async () => {
+    expect((await c.post('/api/trips', { name: 'Bangkok', start_date: '2026-12-10', end_date: '2026-12-01' })).status).toBe(400);
+    const trip = (await c.post('/api/trips', { name: 'Bangkok', place: 'Thailandia', start_date: '2026-12-03', end_date: '2026-12-08' })).json.id;
+    expect((await c.get(`/api/trips/of/${ids.cena}`)).json.trip).toMatchObject({ id: trip, name: 'Bangkok' });
+    await c.put(`/api/trips/of/${ids.volo}`, { trip_id: trip }); // il volo comprato prima
+    await c.put(`/api/trips/of/${ids.affitto}`, { trip_id: null }); // l'affitto di casa non c'entra
+    expect((await c.get(`/api/trips/of/${ids.affitto}`)).json.trip).toBeNull();
+    const v = (await c.get(`/api/trips/${trip}`)).json;
+    expect(v).toMatchObject({ days: 6, count: 4, spent: 320_000 + 25_000 + 180_000 + 20 }); // 500 IDR = 0,02 € (centesimi)
+    expect(v.by_category[0]).toMatchObject({ category_id: own.cat_transport_flights, total: 320_000 });
+    expect(v.by_currency.map((x: any) => x.currency)).toEqual(['EUR', 'IDR']);
+    // Le spese restano nelle loro categorie.
+    expect((await c.get(`/api/transactions/${ids.cena}`)).json.category_id).toBe(own.cat_food_restaurant);
+    // Filtro dei movimenti per viaggio e lista con il totale.
+    expect((await c.get(`/api/transactions?trip=${trip}`)).json.items.map((t: any) => t.merchant).sort()).toEqual(['AirAsia', 'Grab', 'Lub d Siam', 'Som Tam Nua']);
+    expect((await c.get('/api/trips')).json.items[0]).toMatchObject({ name: 'Bangkok', spent: v.spent });
+    // Nel backup; cancellando il viaggio spariscono anche le scelte a mano.
+    expect((await c.get('/api/backup/export?table=trip_items')).json.rows).toHaveLength(2);
+    await c.del(`/api/trips/${trip}`);
+    expect((await c.get('/api/backup/export?table=trip_items')).json.rows).toHaveLength(0);
+  });
+});
+
 describe('pulizia notturna', () => {
   const withSession = (token: string) => { const c = new Client('10.30.0.1'); c.cookie = `ledgy_session=${token}`; return c; };
   const ping = (token: string) => new Client('10.30.0.2').post(`/api/in/${token}/ping`, {});
