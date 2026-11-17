@@ -298,7 +298,7 @@ export const FEATURE_DEFAULTS: Record<string, boolean> = { alerts: true, forecas
 
 export async function accountInfo(db: D1Database, userId: string) {
   const u = await userById(db, userId);
-  const x = u as (typeof u & { display_currency?: string; theme?: string; home_layout?: string | null; features?: string | null }) | null;
+  const x = u as (typeof u & { display_currency?: string; theme?: string; home_layout?: string | null; features?: string | null; hero_style?: string | null }) | null;
   let home: string[] | null = null;
   try { home = x?.home_layout ? (JSON.parse(x.home_layout) as string[]) : null; } catch { home = null; }
   let features: Record<string, boolean> = {};
@@ -306,6 +306,7 @@ export async function accountInfo(db: D1Database, userId: string) {
   return {
     email: u?.email ?? null, timezone: u?.timezone ?? 'Asia/Makassar', recovery_created_at: u?.recovery_created_at ?? null,
     display_currency: x?.display_currency ?? 'EUR', theme: x?.theme ?? 'light', home_layout: home,
+    hero_style: x?.hero_style === 'ring' ? 'ring' : 'compact',
     features: { ...FEATURE_DEFAULTS, ...Object.fromEntries(Object.entries(features).filter(([k]) => k in FEATURE_DEFAULTS)) },
   };
 }

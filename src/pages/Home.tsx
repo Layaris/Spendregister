@@ -6,7 +6,7 @@ import { PeriodSheet, periodArrows } from '../PeriodSheet';
 import { useApi, useStore } from '../store';
 import { CategoryIcon, TxRow } from '../ui';
 import { eur, formatDayShort, formatMoney, localDay, monthPeriod, pct, periodOf } from '../util';
-import { BudgetBar, type BudgetView } from './Budget';
+import { BudgetBar, budgetTone, type BudgetView } from './Budget';
 import { SuggestionCard, useRecurring } from './Recurring';
 
 interface Alert { id: string; kind: 'unusual' | 'duplicate' | 'fees' | 'budget'; tx?: string; amount?: number; avg?: number; merchant?: string | null; category_id?: string; pct?: number; cards?: Array<{ card: string; total: number }> }
@@ -47,7 +47,7 @@ export function Home() {
   const balance = useApi<{ series: Array<{ day: string; balance: number }> }>(on('balance') ? '/stats/balance?days=30' : null, [store.review_count]);
   // Saldo di tutti i conti: la somma dei saldi mostrati in "Conti", ciascuno al cambio di oggi.
   const total = store.accounts.reduce((sum, a) => sum + (a.balance_eur ?? 0), 0);
-  const budget = useApi<BudgetView>(on('budget') ? `/budgets?today=${localDay()}` : null, [store.review_count]);
+  const budget = useApi<BudgetView>(on('budget') || on('hero') ? `/budgets?today=${localDay()}` : null, [store.review_count]);
   const recurring = useRecurring(on('recurring'));
   const insights = useApi<Insights>(on('alerts') || on('forecast') || on('week') ? `/insights?today=${localDay()}` : null, [store.review_count]);
   const [dismissed, setDismissed] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('ledgy-dismissed') ?? '[]') as string[]; } catch { return []; } });
@@ -81,37 +81,94 @@ export function Home() {
   };
 
   const widgets: Record<string, ReactNode> = {
-    hero: (
-      <section className="card hero">
-        <div className="row between" style={{ alignItems: 'flex-start' }}>
-          <span className="label">{spentLabel}</span>
-          {diff != null && <span className={`chip ${diff > 0 ? 'warn' : 'ok'}`} title={`Rispetto ${prevWord}`}>{diff > 0 ? '+' : ''}{diff}% {prevShort}</span>}
-        </div>
-        <span className="hero-amount num money">{s ? eur(s.spent) : '…'}</span>
-        <div className="metrics">
-          <div className="metric">
-            <span>Saldo di tutti i conti</span>
-            <b className={`num money ${total < 0 ? 'neg' : ''}`}>{eur(total)}</b>
-          </div>
-          <div className="metric">
-            <span>Spesa media al giorno</span>
-            <b className="num money">{s ? eur(s.days.elapsed ? Math.round(s.spent / s.days.elapsed) : 0) : '…'}</b>
-          </div>
-          {ongoing ? (
-            <div className="metric">
-              <span>Spesa prevista a fine {endWord}</span>
-              <b className="num money">{s ? eur(s.forecast) : '…'}</b>
+    hero: (() => {
+      const monthNow = spec.kind === 'month' && spec.offset === 0;
+      const bud = monthNow ? budget.data?.total ?? null : null;
+      const spent = s?.spent ?? 0;
+      const perDay = s && s.days.elapsed ? Math.round(spent / s.days.elapsed) : 0;
+      const dayPct = s && ongoing ? (s.days.elapsed / s.days.total) * 100 : undefined;
+      const daysLeftToday = s ? s.days.total - s.days.elapsed + 1 : 0;
+      const pace = bud && dayPct != null ? (bud.spent / bud.amount) * 100 - dayPct : 0;
+      const paceText = !bud || dayPct == null ? '' : bud.left < 0 ? 'Hai già superato il budget del mese.' : pace > 5 ? 'Stai spendendo un po’ più del ritmo.' : pace < -5 ? 'Sei sotto il ritmo: bene.' : 'Sei in linea con il budget.';
+      const setBudget = monthNow && budget.data && !bud ? <a href="#/budget" style={{ fontSize: 14, fontWeight: 600, textDecoration: 'none' }}>Imposta un budget mensile</a> : null;
+      if (store.settings.hero_style === 'ring') {
+        const pct = bud ? Math.round((bud.spent / Math.max(bud.amount, 1)) * 100) : null;
+        const ringPct = pct != null ? Math.min(pct, 100) : dayPct ?? 100;
+        const C = 2 * Math.PI * 50;
+        return (
+          <section className="card hero-ring">
+            <svg width="112" height="112" viewBox="0 0 120 120" aria-hidden="true" style={{ flexShrink: 0 }}>
+              <circle cx="60" cy="60" r="50" fill="none" stroke="var(--sunken)" strokeWidth="12" />
+              <circle cx="60" cy="60" r="50" fill="none" stroke={pct != null ? budgetTone(pct) : 'var(--accent)'} strokeWidth="12" strokeLinecap="round"
+                strokeDasharray={C} strokeDashoffset={C * (1 - ringPct / 100)} transform="rotate(-90 60 60)" />
+              <text x="60" y="58" textAnchor="middle" fontFamily="Space Grotesk, Inter, sans-serif" fontWeight="700" fontSize="24" fill="var(--ink)">{pct != null ? `${pct}%` : s ? `${s.days.elapsed}/${s.days.total}` : '…'}</text>
+              <text x="60" y="77" textAnchor="middle" fontFamily="Inter, sans-serif" fontSize="11" fill="var(--muted)">{pct != null ? 'del budget' : 'giorni'}</text>
+            </svg>
+            <div className="stack" style={{ gap: 4, minWidth: 0 }}>
+              {bud ? (
+                <>
+                  <span className="label">{bud.left >= 0 ? 'Ti restano' : 'Oltre il budget di'}</span>
+                  <span className="num money hero-mid" style={{ color: bud.left < 0 ? 'var(--neg)' : undefined }}>{eur(Math.abs(bud.left))}</span>
+                  {bud.left > 0 && <span className="muted" style={{ fontSize: 13 }}>cioè <b style={{ color: 'var(--ink)' }}>{eur(bud.per_day)} al giorno</b> per {daysLeftToday} {daysLeftToday === 1 ? 'giorno' : 'giorni'}</span>}
+                  <span className="muted" style={{ fontSize: 13 }}>Speso {eur(bud.spent)} di {eur(bud.amount)}</span>
+                </>
+              ) : (
+                <>
+                  <span className="label">{spentLabel}</span>
+                  <span className="num money hero-mid">{s ? eur(spent) : '…'}</span>
+                  {s && <span className="muted" style={{ fontSize: 13 }}>In media {eur(perDay)} al giorno{diff != null ? ` · ${diff > 0 ? '+' : ''}${diff}% ${prevShort}` : ''}</span>}
+                  {setBudget}
+                </>
+              )}
             </div>
-          ) : (
-            <div className="metric">
-              <span>Entrate del periodo</span>
-              <b className="num money pos">{s ? eur(s.income) : '…'}</b>
+          </section>
+        );
+      }
+      return (
+        <section className="card hero">
+          <div className="row between">
+            <span className="label">{monthNow ? title.split(' ')[0] : spentLabel}</span>
+            {bud ? <span className="muted" style={{ fontSize: 13 }}>Budget {eur(bud.amount)}</span>
+              : diff != null && <span className={`chip ${diff > 0 ? 'warn' : 'ok'}`} title={`Rispetto ${prevWord}`}>{diff > 0 ? '+' : ''}{diff}% {prevShort}</span>}
+          </div>
+          <div className="row between" style={{ alignItems: 'flex-end', gap: 10 }}>
+            <div className="stack" style={{ gap: 2, minWidth: 0 }}>
+              <span className="hero-amount num money">{s ? eur(spent) : '…'}</span>
+              <span className="muted" style={{ fontSize: 13 }}>{ongoing ? 'spesi finora' : 'spesi'}</span>
             </div>
-          )}
-        </div>
-      </section>
-    ),
-    budget: !budget.data ? null : !budget.data.total ? (
+            {bud && (
+              <div className="stack" style={{ gap: 2, alignItems: 'flex-end', textAlign: 'right' }}>
+                <span className="num money hero-left" style={{ color: bud.left < 0 ? 'var(--neg)' : 'var(--accent)' }}>{eur(Math.abs(bud.left))}</span>
+                <span className="muted" style={{ fontSize: 13 }}>{bud.left < 0 ? 'oltre il budget' : 'ancora disponibili'}</span>
+              </div>
+            )}
+          </div>
+          {bud && <BudgetBar spent={bud.spent} amount={bud.amount} dayPct={dayPct} />}
+          {bud ? (
+            <span className="muted" style={{ fontSize: 13.5 }}>
+              {dayPct != null && s ? `Oggi è il giorno ${s.days.elapsed} di ${s.days.total} (la tacca). ` : ''}{paceText}
+              {bud.left > 0 && dayPct != null ? <> Puoi spendere <b style={{ color: 'var(--ink)' }}>{eur(bud.per_day)} al giorno</b>.</> : null}
+            </span>
+          ) : s ? (
+            <span className="muted" style={{ fontSize: 13.5 }}>
+              In media <b style={{ color: 'var(--ink)' }}>{eur(perDay)}</b> al giorno{ongoing ? <> · previsti <b style={{ color: 'var(--ink)' }}>{eur(s.forecast)}</b> a fine {endWord}</> : ''}
+            </span>
+          ) : null}
+          {setBudget}
+        </section>
+      );
+    })(),
+    budget: !budget.data ? null : on('hero') ? (budget.data.total && budget.data.categories.length ? (
+      <a href="#/budget" className="card" style={{ textDecoration: 'none', color: 'inherit', gap: 10 }}>
+        <div className="row between"><h2 className="h2">Budget per categoria</h2><Icon name="next" size={18} /></div>
+        {budget.data.categories.slice(0, 4).map((c) => (
+          <div key={c.category_id} className="stack" style={{ gap: 5 }}>
+            <span className="row between" style={{ fontSize: 14 }}><span>{store.catName(c.category_id)}</span><span className="num money"><b style={{ color: c.left < 0 ? 'var(--neg)' : undefined }}>{eur(c.spent)}</b> <span className="muted">di {eur(c.amount)}</span></span></span>
+            <BudgetBar spent={c.spent} amount={c.amount} height={6} />
+          </div>
+        ))}
+      </a>
+    ) : null) : !budget.data.total ? (
       <a href="#/budget" className="card" style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: '14px 16px', textDecoration: 'none', color: 'inherit' }}>
         <span className="lrow-ic" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}><Icon name="wallet" size={18} /></span>
         <span className="grow stack" style={{ gap: 2 }}><b>Imposta un budget mensile</b><span className="muted" style={{ fontSize: 13 }}>Un tetto per il mese e, se vuoi, per alcune categorie</span></span>
@@ -229,7 +286,10 @@ export function Home() {
     ) : null,
     accounts: store.accounts.length > 0 ? (
       <section className="stack" style={{ gap: 10 }}>
-        <h2 className="h2" style={{ padding: '0 4px' }}>Conti</h2>
+        <div className="row between" style={{ padding: '0 4px' }}>
+          <h2 className="h2">Conti</h2>
+          <span className="muted" style={{ fontSize: 14 }}>Totale <b className={`num money ${total < 0 ? 'neg' : ''}`} style={{ color: total < 0 ? undefined : 'var(--ink)' }}>{eur(total)}</b></span>
+        </div>
         <div className="pills" style={{ gap: 10 }}>
           {store.accounts.map((a) => (
             <div key={a.id} className="card" style={{ minWidth: 150, gap: 4 }}>
@@ -352,6 +412,13 @@ function CustomizeHome({ layout, onClose }: { layout: string[]; onClose: () => v
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal card sheet" role="dialog" aria-modal="true" aria-label="Personalizza la Home" onClick={(e) => e.stopPropagation()}>
         <div className="row between"><h2 className="h2">Personalizza la Home</h2><button className="btn ghost" onClick={onClose}>Fatto</button></div>
+        <span className="label">Riquadro in alto</span>
+        <div className="seg" role="group" aria-label="Stile del riquadro in alto">
+          {([['compact', 'Budget compatto'], ['ring', 'Anello']] as const).map(([k, l]) => (
+            <button key={k} aria-pressed={(store.settings.hero_style ?? 'compact') === k}
+              onClick={async () => { await api('/settings', { method: 'PUT', json: { hero_style: k } }); await store.refresh(); }}>{l}</button>
+          ))}
+        </div>
         <span className="muted" style={{ fontSize: 14 }}>Accendi le schede che vuoi e mettile nell’ordine che preferisci.</span>
         <div className="list" style={{ overflowY: 'auto' }}>
           {order.map((k, i) => (

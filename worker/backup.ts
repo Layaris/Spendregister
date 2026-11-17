@@ -50,13 +50,14 @@ backupApi.get('/export', async (c) => {
   if (!cols) bad('Tabella sconosciuta');
   const u = uid(c);
   if (table === 'settings') {
-    const s = await c.env.DB.prepare('SELECT timezone, display_currency, theme, home_layout, features FROM users WHERE id = ?').bind(u).first<{ timezone: string; display_currency: string; theme: string; home_layout: string | null; features: string | null }>();
+    const s = await c.env.DB.prepare('SELECT timezone, display_currency, theme, home_layout, features, hero_style FROM users WHERE id = ?').bind(u).first<{ timezone: string; display_currency: string; theme: string; home_layout: string | null; features: string | null; hero_style: string | null }>();
     // Chiavi e scelte dell'AI: nel backup, così passano a un altro account o a un'installazione nuova (scelta del proprietario).
     const ai = await c.env.DB.prepare('SELECT enabled, gemini_key, nanogpt_key, gemini_model, nanogpt_model FROM ai_settings WHERE user_id = ?').bind(u).first();
     return c.json({ rows: [
       ...(ai ? [{ key: 'ai', value: JSON.stringify(ai) }] : []),
       { key: 'timezone', value: s?.timezone ?? 'Asia/Makassar' }, { key: 'display_currency', value: s?.display_currency ?? 'EUR' }, { key: 'theme', value: s?.theme ?? 'light' }, { key: 'home_layout', value: s?.home_layout ?? null },
       { key: 'features', value: s?.features ?? null },
+      { key: 'hero_style', value: s?.hero_style ?? null },
     ], next: null });
   }
   const after = Number(c.req.query('after')) || 0;
@@ -202,6 +203,8 @@ backupApi.post('/import/chunk', async (c) => {
       if (typeof home === 'string') {
         try { if (Array.isArray(JSON.parse(home))) await db.prepare('UPDATE users SET home_layout = ? WHERE id = ?').bind(home, u).run(); } catch { /* ignora */ }
       }
+      const hero = get('hero_style');
+      if (hero === 'compact' || hero === 'ring') await db.prepare('UPDATE users SET hero_style = ? WHERE id = ?').bind(hero, u).run();
       const features = get('features');
       if (typeof features === 'string') {
         try { const f = JSON.parse(features); if (f && typeof f === 'object' && !Array.isArray(f)) await db.prepare('UPDATE users SET features = ? WHERE id = ?').bind(JSON.stringify(f), u).run(); } catch { /* ignora */ }

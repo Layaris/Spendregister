@@ -263,20 +263,37 @@ check(made && made.definition.actions.category_id === barCat && !made.definition
 // Home: il riquadro in alto ha speso del mese, saldo totale e altre due cifre.
 await page.goto(`${BASE}/#/`);
 await page.reload(); // i movimenti aggiunti sopra passano dall'API, non dall'app: si ricarica
-await page.waitForSelector('.hero .metric b:not(:has-text("…"))');
-check(await page.locator('.hero .metric').count() === 3 && await page.isVisible('.hero >> text=Saldo di tutti i conti') && await page.isVisible('.hero >> text=Spesa media al giorno'),
-  'la Home mostra speso, saldo di tutti i conti e altre metriche con nomi chiari');
+await page.click('.periodpill-label'); // il periodo è quello scelto prima in Statistiche: si torna al mese
+await page.click('[aria-label="Seleziona periodo"] button:has-text("Questo mese")');
+await page.waitForSelector('.hero .hero-amount:not(:has-text("…"))');
+check(await page.isVisible('.hero >> text=In media') && await page.isVisible('.hero >> text=Imposta un budget mensile'), 'senza budget il riquadro mostra media e invito al budget');
 const sumEur = (await api('/api/bootstrap')).accounts.reduce((t, a) => t + (a.balance_eur ?? 0), 0);
-check((await page.textContent('.hero .metric b')).replace(/\s/g, '').includes((sumEur / 1000).toFixed(2).replace('.', ',').replace('-', '−')), 'il saldo di tutti i conti è la somma dei conti');
+const conti = (await page.textContent('h2:has-text("Conti") >> xpath=..')).replace(/\s/g, '');
+check(conti.includes((Math.abs(sumEur) / 1000).toFixed(2).replace('.', ',')), 'il totale dei conti è la somma dei conti');
 check(!(await page.isVisible('text=Cattura attiva')) && !(await page.isVisible('text=Collega un telefono')), 'lo stato della cattura non è più in Home');
+// Budget compatto (mockup 4): restano, barra con la tacca, quanto al giorno.
+await api('/api/budgets', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ category_id: '*', amount: 5_000_000 }) });
+await page.reload();
+await page.waitForSelector('.hero >> text=ancora disponibili');
+check(await page.isVisible('.hero >> text=Budget') && await page.isVisible('.hero >> text=Puoi spendere'), 'con il budget il riquadro mostra quanto resta e quanto al giorno');
+// Stile "Anello" scelto in Personalizza, poi di nuovo compatto.
+await page.click('button[aria-label="Personalizza la Home"]');
+await page.click('[aria-label="Stile del riquadro in alto"] button:has-text("Anello")');
+await page.click('[aria-label="Personalizza la Home"] button:has-text("Fatto")');
+await page.waitForSelector('.hero-ring >> text=del budget');
+check((await api('/api/bootstrap')).settings.hero_style === 'ring', 'lo stile ad anello si salva nell’account');
+await page.click('button[aria-label="Personalizza la Home"]');
+await page.click('[aria-label="Stile del riquadro in alto"] button:has-text("Budget compatto")');
+await page.click('[aria-label="Personalizza la Home"] button:has-text("Fatto")');
+await page.waitForSelector('.hero >> text=ancora disponibili');
 // Periodo della Home: tocco sul nome → anno, da inizio anno, date a scelta.
 await page.click('.periodpill-label');
 await page.click('[aria-label="Seleziona periodo"] button:has-text("Quest’anno")');
 await page.waitForSelector('.hero >> text=Speso quest’anno');
-check(await page.isVisible('.hero >> text=Spesa prevista a fine anno') && (await page.textContent('.periodpill-title')).includes(String(new Date().getFullYear())), 'sceglie l’anno dalla Home, con previsione a fine anno');
+check(await page.isVisible('.hero >> text=a fine anno') && (await page.textContent('.periodpill-title')).includes(String(new Date().getFullYear())), 'sceglie l’anno dalla Home, con previsione a fine anno');
 await page.click('.periodpill-label');
 await page.click('[aria-label="Seleziona periodo"] button:has-text("Questo mese")');
-await page.waitForSelector('.hero >> text=Speso questo mese');
+await page.waitForSelector('.hero >> text=ancora disponibili');
 await page.goto(`${BASE}/#/altro`);
 check(await page.waitForSelector('a[href="#/cattura"] >> text=/Attiva su|Nessun telefono|nessun segnale/', { timeout: 5000 }).then(() => true, () => false), 'lo stato della cattura è in Altro');
 

@@ -47,7 +47,7 @@ catalogApi.get('/bootstrap', async (c) => {
     categories: categories.results,
     labels: labels.results,
     review_count: review?.n ?? 0,
-    settings: { timezone: account.timezone, recovery_created_at: account.recovery_created_at, display_currency: account.display_currency, theme: account.theme, home_layout: account.home_layout, features: account.features },
+    settings: { timezone: account.timezone, recovery_created_at: account.recovery_created_at, display_currency: account.display_currency, theme: account.theme, home_layout: account.home_layout, features: account.features, hero_style: account.hero_style },
     account: { email: account.email },
   });
 });
@@ -357,7 +357,7 @@ catalogApi.post('/rules/:id/apply', async (c) => {
 
 catalogApi.get('/settings', async (c) => {
   const a = await accountInfo(c.env.DB, uid(c));
-  return c.json({ timezone: a.timezone, recovery_created_at: a.recovery_created_at, display_currency: a.display_currency, theme: a.theme, home_layout: a.home_layout, features: a.features });
+  return c.json({ timezone: a.timezone, recovery_created_at: a.recovery_created_at, display_currency: a.display_currency, theme: a.theme, home_layout: a.home_layout, features: a.features, hero_style: a.hero_style });
 });
 
 /** Valute in cui si possono vedere totali e saldi (Impostazioni). */
@@ -366,7 +366,7 @@ export const DISPLAY_CURRENCIES = ['EUR', 'USD', 'AED', 'PHP', 'IDR', 'SGD', 'CN
 export const HOME_WIDGETS = ['hero', 'alerts', 'week', 'budget', 'review', 'recurring', 'forecast', 'accounts', 'cashflow', 'balance', 'top', 'cards', 'recent'];
 
 catalogApi.put('/settings', async (c) => {
-  const b = await body<{ timezone?: string; display_currency?: string; theme?: string; home_layout?: string[] | null; features?: Record<string, boolean> }>(c);
+  const b = await body<{ timezone?: string; display_currency?: string; theme?: string; home_layout?: string[] | null; features?: Record<string, boolean>; hero_style?: string }>(c);
   const db = c.env.DB;
   if (b.timezone !== undefined) {
     if (!isValidTimeZone(b.timezone)) bad('Fuso orario non valido');
@@ -386,6 +386,10 @@ catalogApi.put('/settings', async (c) => {
     // Schede tolte nel frattempo (es. "capture", passata nelle impostazioni) si scartano senza errore.
     const keep = b.home_layout ? [...new Set(b.home_layout)].filter((k) => HOME_WIDGETS.includes(k)) : null;
     await db.prepare('UPDATE users SET home_layout = ? WHERE id = ?').bind(keep ? JSON.stringify(keep) : null, uid(c)).run();
+  }
+  if (b.hero_style !== undefined) {
+    if (!['compact', 'ring'].includes(b.hero_style)) bad('Stile non valido');
+    await db.prepare('UPDATE users SET hero_style = ? WHERE id = ?').bind(b.hero_style, uid(c)).run();
   }
   if (b.features !== undefined) {
     if (!b.features || typeof b.features !== 'object') bad('Funzioni non valide');
