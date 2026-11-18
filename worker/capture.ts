@@ -5,11 +5,11 @@ import { formatMoney, roundMilli, toMilli } from '../shared/money';
 import { cleanMerchantName, parseNotification, parseWithParser, type AiHint, type ParserDef } from '../shared/notification';
 import { normalizePostedAt } from '../shared/time';
 import { bad, body, getTimeZone, HttpError, newId, notFound, nowIso, randomToken, uid, type AppEnv, type Env } from './lib';
-import { aiCategorizeLater } from './ai';
+import { aiCategorizeLater, applyCategory, WAIT_HINT } from './ai';
 import { learnSource } from './cards';
 import { accountInfo } from './auth';
 import { seedId } from './seed';
-import { classify, convertToEur, defaultAccountId, insertTransaction } from './transactions';
+import { categoryFromWords, classify, convertToEur, defaultAccountId, insertTransaction } from './transactions';
 
 interface CapturePayload {
   text?: string;
@@ -21,6 +21,8 @@ interface CapturePayload {
   currency?: string | null;
   merchant?: string | null;
   category?: string | null;
+  /** Il comando del telefono sa chiedere la categoria ad Apple Intelligence se il server non la trova (comando v3). */
+  can_hint?: string | boolean | null;
 }
 
 export async function loadParsers(db: D1Database, userId: string): Promise<ParserDef[]> {
@@ -53,6 +55,10 @@ export interface CaptureResult {
   notify?: string;
   /** Uso interno: categoria mancante, da chiedere all'AI in background (non va al telefono). */
   needs_ai?: boolean;
+  /** Uso interno: spesa o entrata (per l'elenco di categorie da proporre ad Apple Intelligence). */
+  direction?: 'income' | 'expense';
+  /** Comando v3: categorie tra cui Apple Intelligence deve scegliere (c'è solo se la categoria manca). */
+  hint?: string;
 }
 
 /** Dalla notifica al movimento: lettura, cambio, regole, doppioni. */
@@ -185,7 +191,7 @@ export async function processCapture(db: D1Database, userId: string, deviceId: s
     transaction_id: txId,
     summary,
     ...(status === 'review' ? { notify: `Da rivedere: ${summary}` } : {}),
-    ...(!category && !rules.ask ? { needs_ai: true } : {}),
+    ...(!category && !rules.ask ? { needs_ai: true, direction: parsed.direction === 'income' ? 'income' as const : 'expense' as const } : {}),
   };
 }
 
@@ -224,9 +230,20 @@ async function receive(env: Env, ctx: Pick<ExecutionContext, 'waitUntil'>, token
   const payload = await readPayload(type, raw);
   // Dalla coda: l'ora della spesa è quella in cui la notifica era arrivata, non quella in cui si registra.
   if (receivedAt && !payload.posted_at) payload.posted_at = receivedAt;
-  const { needs_ai, ...result } = await processCapture(env.DB, dev.user_id, dev.id, payload);
-  // Categoria mancante: la chiede all'AI dopo aver risposto, così il comando del telefono non aspetta.
-  if (needs_ai && result.transaction_id) ctx.waitUntil(aiCategorizeLater(env, dev.user_id, result.transaction_id));
+  const { needs_ai, direction, ...result } = await processCapture(env.DB, dev.user_id, dev.id, payload);
+  if (needs_ai && result.transaction_id) {
+    // Categoria mancante. Il comando v3 la chiede ad Apple Intelligence (gratis, sul telefono) scegliendo tra queste
+    // categorie e la rimanda a /hint; se non arriva, l'AI del server la cerca più tardi (pendingHints).
+    if (payload.can_hint && !receivedAt && result.capture_id) {
+      const kind = direction === 'income' ? 'income' : 'expense';
+      const { results } = await env.DB.prepare('SELECT name FROM categories WHERE user_id = ? AND kind = ? AND archived = 0 AND parent_id IS NOT NULL ORDER BY name')
+        .bind(dev.user_id, kind).all<{ name: string }>();
+      await env.DB.prepare("UPDATE captures SET detail = COALESCE(detail, '') || ? WHERE id = ?").bind(WAIT_HINT, result.capture_id).run();
+      return { ...result, hint: results.map((r) => r.name).join(', ') };
+    }
+    // Altrimenti la chiede all'AI dopo aver risposto, così il comando del telefono non aspetta.
+    ctx.waitUntil(aiCategorizeLater(env, dev.user_id, result.transaction_id));
+  }
   return result;
 }
 
@@ -250,6 +267,61 @@ inboundApi.post('/:token', async (c) => {
     return c.json({ status: 'queued', summary: 'Ricevuta: la registro appena il server risponde' }, 202);
   }
 });
+
+/**
+ * Secondo invio del comando v3: negozio e categoria letti da Apple Intelligence per una spesa senza categoria.
+ * Prima il nome esatto di una categoria dell'account, poi lo storico e le parole chiave; se non basta, l'AI del server.
+ */
+inboundApi.post('/:token/hint', async (c) => {
+  const env = c.env;
+  const dev = await deviceByHash(env.DB, await sha256Hex(c.req.param('token')));
+  const b = await body<{ capture_id?: string; merchant?: string | null; category?: string | null }>(c);
+  const t = await env.DB.prepare(`SELECT t.id, t.type, t.merchant, t.merchant_raw, t.category_id, t.review_reason, t.review_choices, t.duplicate_of, t.capture_id
+      FROM captures c JOIN transactions t ON t.id = c.transaction_id WHERE c.id = ? AND c.user_id = ? AND t.deleted_at IS NULL`)
+    .bind(String(b.capture_id ?? ''), dev.user_id)
+    .first<{ id: string; type: string; merchant: string | null; merchant_raw: string | null; category_id: string | null; review_reason: string | null; review_choices: string | null; duplicate_of: string | null; capture_id: string | null }>();
+  if (!t) notFound('Spesa non trovata');
+  if (t.category_id || t.review_choices) return c.json({ status: 'ok' });
+  const kind = t.type === 'income' ? 'income' : 'expense';
+  const clean = (v: unknown) => String(v ?? '').replace(/^["'«\s]+|["'»\s.]+$/g, '').slice(0, 80);
+  const name = clean(b.category);
+  const merchant = clean(b.merchant) || null;
+  let found = name
+    ? (await env.DB.prepare('SELECT id FROM categories WHERE user_id = ? AND kind = ? AND archived = 0 AND name = ? COLLATE NOCASE ORDER BY parent_id IS NULL LIMIT 1')
+      .bind(dev.user_id, kind, name).first<{ id: string }>())?.id ?? null
+    : null;
+  let via = 'Apple Intelligence';
+  if (!found && merchant && merchant.toLowerCase() !== (t.merchant ?? '').toLowerCase()) {
+    // Apple Intelligence ha riconosciuto il negozio con un nome più chiaro: si riprovano storico e regole con quello.
+    const r = await classify(env.DB, dev.user_id, { merchant, merchant_raw: t.merchant_raw, text: null, app: null, currency: 'EUR', account_id: null, amount_eur: 0, occurred_at: nowIso(), source: 'capture' }, kind, [name]);
+    found = r.category_id;
+    if (found) via = `Apple Intelligence e ${r.via}`;
+  }
+  if (!found && name) {
+    found = await categoryFromWords(env.DB, dev.user_id, kind, name);
+    if (found) via = 'Apple Intelligence e parole chiave';
+  }
+  if (found) {
+    await applyCategory(env.DB, dev.user_id, t, found, `categoria da ${via}: ${name || merchant}`);
+    return c.json({ status: 'ok' });
+  }
+  await env.DB.prepare('UPDATE captures SET detail = REPLACE(COALESCE(detail, \'\'), ?, \'\') WHERE id = ?').bind(WAIT_HINT, t.capture_id).run();
+  c.executionCtx.waitUntil(aiCategorizeLater(env, dev.user_id, t.id));
+  return c.json({ status: 'ai' });
+});
+
+/** Spese che aspettavano Apple Intelligence da più di 3 minuti (il comando si è fermato prima): ci pensa l'AI del server. */
+export async function pendingHints(env: Env, ctx: Pick<ExecutionContext, 'waitUntil'>, userId?: string): Promise<void> {
+  const from = new Date(Date.now() - 2 * 86400_000).toISOString();
+  const to = new Date(Date.now() - 3 * 60_000).toISOString();
+  const { results } = await env.DB.prepare(`SELECT id, user_id, transaction_id FROM captures WHERE ${userId ? 'user_id = ? AND ' : ''}received_at >= ? AND received_at < ?
+      AND detail LIKE '%' || ? || '%' AND transaction_id IS NOT NULL LIMIT 10`)
+    .bind(...(userId ? [userId] : []), from, to, WAIT_HINT).all<{ id: string; user_id: string; transaction_id: string }>();
+  for (const r of results) {
+    await env.DB.prepare('UPDATE captures SET detail = REPLACE(detail, ?, \'\') WHERE id = ?').bind(WAIT_HINT, r.id).run();
+    ctx.waitUntil(aiCategorizeLater(env, r.user_id, r.transaction_id).catch(() => {}));
+  }
+}
 
 /** Registra le notifiche rimaste in coda (al massimo 20 per volta, le più vecchie prima). */
 export async function drainInbound(env: Env, ctx: Pick<ExecutionContext, 'waitUntil'>): Promise<number> {

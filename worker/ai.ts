@@ -204,15 +204,27 @@ export async function aiCategorizeLater(env: Env, userId: string, txId: string):
     return; // nessuna chiave, limite, errore: resta "da rivedere"
   }
   if (!r) return;
+  await applyCategory(db, userId, t, r.category_id, `categoria dall'AI (${r.provider}): ${r.reason}`);
+}
+
+/**
+ * Mette la categoria trovata dopo la cattura (AI del server o Apple Intelligence del telefono). Se l'unico motivo
+ * per rivedere il movimento era la categoria, lo conferma; nella notifica ricevuta annota da dove arriva.
+ */
+export async function applyCategory(db: D1Database, userId: string,
+  t: { id: string; review_reason: string | null; duplicate_of: string | null; capture_id: string | null }, categoryId: string, note: string) {
   const reasons = (t.review_reason ?? '').split(' · ').filter((x) => x && x !== 'Categoria da scegliere');
   const done = !reasons.length && !t.duplicate_of;
   await db.batch([
     db.prepare(`UPDATE transactions SET category_id = ?, nature = COALESCE(nature, (SELECT COALESCE(c.nature, p.nature) FROM categories c LEFT JOIN categories p ON p.id = c.parent_id WHERE c.id = ?)),
                   status = ?, review_reason = ?, updated_at = ? WHERE id = ? AND user_id = ?`)
-      .bind(r.category_id, r.category_id, done ? 'confirmed' : 'review', reasons.join(' · ') || null, nowIso(), txId, userId),
-    ...(t.capture_id ? [db.prepare("UPDATE captures SET detail = COALESCE(detail, '') || ? WHERE id = ?").bind(` · categoria dall'AI (${r.provider}): ${r.reason}`, t.capture_id)] : []),
+      .bind(categoryId, categoryId, done ? 'confirmed' : 'review', reasons.join(' · ') || null, nowIso(), t.id, userId),
+    ...(t.capture_id ? [db.prepare(`UPDATE captures SET detail = REPLACE(COALESCE(detail, ''), '${WAIT_HINT}', '') || ? WHERE id = ?`).bind(` · ${note}`, t.capture_id)] : []),
   ]);
 }
+
+/** Segno nella notifica ricevuta: il server aspetta che il telefono chieda la categoria ad Apple Intelligence. */
+export const WAIT_HINT = ' · aspetta Apple Intelligence';
 
 // ---- API: impostazioni e prova ----
 

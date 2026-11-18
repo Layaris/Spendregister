@@ -1846,3 +1846,45 @@ describe('costi bancari, mese per mese, cattura ferma', () => {
     expect(months.categories[0].category_id).toBe(own.cat_food);
   });
 });
+
+describe('comando iPhone v3: Apple Intelligence solo quando serve', () => {
+  const ai = async () => (await fetch(`http://127.0.0.1:${AI_PORT}/stats`)).json() as Promise<{ gemini: number; nanogpt: number }>;
+  it('negozio sconosciuto: il server chiede la categoria al telefono invece di usare Gemini, e la mette quando arriva', async () => {
+    const c = new Client('10.74.0.1');
+    await c.post('/api/guest');
+    const own: Record<string, string> = {};
+    await loadOwn(c, own);
+    await c.put('/api/ai', { gemini_key: 'gemini-ok' });
+    const phone = await newDevice(c);
+    const before = await ai();
+    const r = await c.post(phone, { title: '💳 Card payment', text: '💳 Card payment\n\n150,000.00 IDR | PT SINAR MAKMUR XYZ | Card payment', can_hint: '1' });
+    expect(r.json.hint).toContain('Palestra');
+    expect(r.json.capture_id).toBeTruthy();
+    await new Promise((ok) => setTimeout(ok, 400));
+    expect((await ai()).gemini).toBe(before.gemini); // niente chiamate a Gemini: aspetta il telefono
+    const h = await c.post(`${phone}/hint`, { capture_id: r.json.capture_id, merchant: 'Sinar Makmur Gym', category: 'Palestra' });
+    expect(h.json.status).toBe('ok');
+    const t = (await c.get(`/api/transactions/${r.json.transaction_id}`)).json;
+    expect(t.category_id).toBe(own.cat_care_fitness);
+    expect(t.capture.detail).toContain('Apple Intelligence');
+    expect(t.capture.detail).not.toContain('aspetta');
+  });
+  it('categoria già trovata dal server: nessuna domanda al telefono', async () => {
+    const c = new Client('10.74.0.2');
+    await c.post('/api/guest');
+    const phone = await newDevice(c);
+    const r = await c.post(phone, { title: '💳 Card payment', text: '💳 Card payment\n\n45,000.00 IDR | CK BEDUGUL CANGGU | Card payment', can_hint: '1' });
+    expect(r.json.hint).toBeUndefined();
+  });
+  it('se Apple Intelligence dà un nome che non c\'è, ci pensa l\'AI del server', async () => {
+    const c = new Client('10.74.0.3');
+    await c.post('/api/guest');
+    await c.put('/api/ai', { gemini_key: 'gemini-ok' });
+    const phone = await newDevice(c);
+    const r = await c.post(phone, { title: '💳 Card payment', text: '💳 Card payment\n\n90,000.00 IDR | PT ZQX ABADI | Card payment', can_hint: '1' });
+    const h = await c.post(`${phone}/hint`, { capture_id: r.json.capture_id, merchant: '', category: 'Qualcosa di inventato' });
+    expect(h.json.status).toBe('ai');
+    await new Promise((ok) => setTimeout(ok, 500));
+    expect((await c.get(`/api/transactions/${r.json.transaction_id}`)).json.category_id).toBeTruthy();
+  });
+});

@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { drainInbound } from './capture';
+import { drainInbound, pendingHints } from './capture';
 import { roundMilli, toMilli } from '../shared/money';
 import { evaluateRules, type RuleActions, type RuleDefinition } from '../shared/rules';
 import { isValidTimeZone } from '../shared/time';
@@ -18,6 +18,7 @@ catalogApi.get('/bootstrap', async (c) => {
   const u = uid(c);
   // Notifiche rimaste in coda mentre il database non rispondeva: si registrano ora, dopo la risposta.
   c.executionCtx.waitUntil(drainInbound(c.env, c.executionCtx).catch(() => 0));
+  c.executionCtx.waitUntil(pendingHints(c.env, c.executionCtx, u).catch(() => {}));
   await upgradeCatalog(db, u); // una volta sola, per gli account con le categorie della versione 1
   const [accounts, categories, labels, review, balances, account] = await Promise.all([
     db.prepare('SELECT * FROM accounts WHERE user_id = ? AND archived = 0 ORDER BY position, name').bind(u).all(),

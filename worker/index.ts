@@ -4,7 +4,7 @@ import {
 } from './auth';
 import type { LoginChoice, RegisterChoice } from './guest';
 import { backupApi } from './backup';
-import { captureAdminApi, drainInbound, inboundApi } from './capture';
+import { captureAdminApi, drainInbound, inboundApi, pendingHints } from './capture';
 import { aiApi } from './ai';
 import { cardsApi } from './cards';
 import { catalogApi } from './catalog';
@@ -131,6 +131,7 @@ export default {
   fetch: app.fetch,
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     await drainInbound(env, ctx).catch(() => 0);
+    await pendingHints(env, ctx).catch(() => {});
     // Pulizia notturna: sessioni scadute, tentativi vecchi, notifiche scartate da oltre 90 giorni.
     const now = new Date().toISOString();
     const day = new Date(Date.now() - 86400_000).toISOString();
