@@ -71,7 +71,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 }
 
 /** Temi tra cui scegliere (Personalizza e Altro › Impostazioni): Acqua 1 è la prima versione, Acqua 2 quella della tavola. */
-export const THEMES: Array<[Theme, string]> = [['light', 'Salvia'], ['aqua1', 'Acqua 1'], ['blue', 'Acqua 2'], ['navy', 'Navy'], ['minimal', 'Minimal'], ['dark', 'Scuro'], ['system', 'Auto']];
+export const THEMES: Array<[Theme, string]> = [['light', 'Salvia'], ['aqua1', 'Acqua 1'], ['blue', 'Acqua 2'], ['navy', 'Navy'], ['minimal', 'Minimal']];
 
 /** Colore della fascia della barra di stato (iPhone, Android): uguale alla parte alta della pagina di ogni tema. */
 const TOP_COLOR: Record<string, string> = { light: '#e7eee3', aqua1: '#ebf2f7', blue: '#dceef7', navy: '#182b4d', minimal: '#eceef2', dark: '#111816' };
@@ -83,7 +83,9 @@ export function setThemeColor(theme: Theme) {
 }
 
 /** Applica il tema e lo ricorda per il prossimo avvio (public/theme.js lo legge prima del primo disegno). */
-export function applyTheme(theme: Theme) {
+export function applyTheme(chosen: Theme) {
+  // Scuro e Auto sono tolti finché il tema scuro non viene rifatto (scelta del proprietario): chi li aveva vede Salvia.
+  const theme: Theme = chosen === 'dark' || chosen === 'system' ? 'light' : chosen;
   document.documentElement.dataset.theme = theme;
   setThemeColor(theme);
   try { localStorage.setItem('ledgy-theme', theme); } catch { /* ignora */ }

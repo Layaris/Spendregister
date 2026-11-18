@@ -3,6 +3,8 @@
 (function () {
   var t = 'light';
   try { t = localStorage.getItem('ledgy-theme') || 'light'; } catch (e) { /* niente */ }
+  // Scuro e Auto sono tolti finché il tema scuro non viene rifatto: chi li aveva vede Salvia.
+  if (t === 'dark' || t === 'system') t = 'light';
   document.documentElement.dataset.theme = t;
   var top = { light: '#e7eee3', aqua1: '#ebf2f7', blue: '#dceef7', navy: '#182b4d', minimal: '#eceef2', dark: '#111816' };
   var dark = t === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
