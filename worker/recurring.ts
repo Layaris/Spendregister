@@ -1,6 +1,6 @@
 // Spese ricorrenti: proposte dallo storico (shared/recurring.ts), confermate o scartate dall'utente.
 import { Hono } from 'hono';
-import { detectRecurring, graceDays, nextDate, perMonth, type Occurrence, type Period } from '../shared/recurring';
+import { detectRecurring, graceDays, nextDue, perMonth, type Occurrence, type Period } from '../shared/recurring';
 import { bad, body, newId, notFound, nowIso, uid, type AppEnv } from './lib';
 
 export const recurringApi = new Hono<AppEnv>();
@@ -35,18 +35,10 @@ recurringApi.get('/', async (c) => {
   const confirmed = saved.results.filter((r) => r.status === 'confirmed').map((r) => {
     const every = r.every || 1;
     const l = last.get(r.merchant.trim().toLowerCase());
-    let next: string | null = null;
-    let late = false;
-    const fromTx = l ? nextDate(l.day, r.period, every) : null;
-    if (fromTx && !(r.last_date && r.last_date > fromTx)) {
-      // C'è una spesa di quel negozio: la prossima si conta da lì (salvo una data più avanti scelta a mano).
-      next = fromTx;
-      late = Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${next}T00:00:00Z`)) / 86400_000) > graceDays(r.period, every);
-    } else if (r.last_date) {
-      // Aggiunta a mano (o ancora nessuna spesa): dalla data indicata, la prima da oggi in poi.
-      next = r.last_date;
-      for (let i = 0; i < 600 && next < today; i++) next = nextDate(next, r.period, every);
-    }
+    const due = nextDue(r.period, every, l?.day ?? null, r.last_date, today);
+    const next = due.next;
+    // In ritardo: c'è una spesa del negozio e la successiva non è arrivata entro qualche giorno.
+    const late = due.fromTx && Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${next}T00:00:00Z`)) / 86400_000) > graceDays(r.period, every);
     const changed = l && Math.abs(l.amount_eur - r.amount_eur) > Math.abs(r.amount_eur) * 0.05 ? l.amount_eur : null;
     return { ...r, every, last_date: l?.day ?? null, next_date: next, late, new_amount: changed, per_month: perMonth(r.amount_eur, r.period, every) };
   }).sort((a, b) => (a.next_date ?? '9').localeCompare(b.next_date ?? '9'));

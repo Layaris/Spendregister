@@ -22,7 +22,7 @@ export const TABLES: Record<string, string[]> = {
   devices: ['id', 'name', 'platform', 'method', 'token_hash', 'token_hint', 'created_at', 'last_seen_at', 'last_capture_at', 'revoked_at', 'client_version'],
   transactions: ['id', 'type', 'account_id', 'amount', 'currency', 'amount_eur', 'fx_rate', 'fx_date', 'occurred_at', 'occurred_utc', 'merchant_raw',
     'merchant', 'note', 'category_id', 'nature', 'card', 'source', 'status', 'review_reason', 'review_choices', 'transfer_group', 'duplicate_of',
-    'capture_id', 'rule_ids', 'place', 'lat', 'lng', 'external_id', 'created_at', 'updated_at', 'deleted_at'],
+    'capture_id', 'rule_ids', 'place', 'lat', 'lng', 'external_id', 'created_at', 'updated_at', 'deleted_at', 'split_group'],
   transaction_labels: ['transaction_id', 'label_id'],
   captures: ['id', 'device_id', 'received_at', 'posted_at', 'app', 'title', 'text', 'hint', 'hash', 'status', 'detail', 'transaction_id'],
   favorites: ['id', 'name', 'type', 'amount', 'currency', 'merchant', 'category_id', 'account_id', 'note', 'position', 'created_at'],
@@ -31,9 +31,11 @@ export const TABLES: Record<string, string[]> = {
   trips: ['id', 'name', 'place', 'start_date', 'end_date', 'created_at'],
   trip_items: ['trip_id', 'transaction_id', 'mode'],
   recurring: ['id', 'merchant', 'category_id', 'amount_eur', 'period', 'every', 'status', 'last_date', 'created_at', 'updated_at'],
+  card_settings: ['card', 'currency', 'markup_bp', 'sample_tx_id', 'sample_charged', 'updated_at'],
+  merchant_aliases: ['alias', 'merchant', 'created_at'],
 };
 /** Tabelle dei dati dell'account, nell'ordine in cui si cancellano (prima chi usa le altre). */
-export const ACCOUNT_DATA = ['trip_items', 'trips', 'recurring', 'budgets', 'capture_sources', 'favorites', 'captures', 'transactions', 'rules', 'parsers', 'devices', 'labels', 'categories', 'accounts'];
+export const ACCOUNT_DATA = ['card_settings', 'merchant_aliases', 'trip_items', 'trips', 'recurring', 'budgets', 'capture_sources', 'favorites', 'captures', 'transactions', 'rules', 'parsers', 'devices', 'labels', 'categories', 'accounts'];
 export const TABLE_ORDER = Object.keys(TABLES);
 const OWNED = ['accounts', 'categories', 'labels', 'rules', 'parsers', 'devices', 'transactions', 'captures', 'favorites', 'trips', 'recurring'] as const;
 type Owned = (typeof OWNED)[number];
@@ -304,6 +306,11 @@ backupApi.post('/import/chunk', async (c) => {
     let inserted = 0;
     for (let i = 0; i < stmts.length; i += 50) for (const res of await db.batch(stmts.slice(i, i + 50))) inserted += res.meta.changes ?? 0;
     return c.json({ inserted, skipped: rows.length - inserted });
+  } else if (table === 'card_settings') {
+    const txId = await translator(db, 'transactions', rows.map((r) => r.sample_tx_id), u);
+    out = rows.map((r) => ({ ...r, sample_tx_id: txId(r.sample_tx_id), updated_at: r.updated_at ?? nowIso() }));
+  } else if (table === 'merchant_aliases') {
+    out = rows.filter((r) => r.alias && r.merchant).map((r) => ({ ...r, alias: String(r.alias).toLowerCase(), created_at: r.created_at ?? nowIso() }));
   } else if (table === 'capture_sources') {
     const acc = await accTr(rows.map((r) => r.account_id));
     out = rows.map((r) => ({ ...r, account_id: acc(r.account_id), updated_at: r.updated_at ?? nowIso() }));

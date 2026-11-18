@@ -18,14 +18,14 @@ export async function localData(db: D1Database, userId: string): Promise<LocalDa
 
 export const hasData = (d: LocalData) => d.transactions + d.devices > 0;
 
-const DATA_TABLES = ['trip_items', 'trips', 'recurring', 'budgets', 'capture_sources', 'favorites', 'captures', 'transactions', 'rules', 'parsers', 'devices', 'labels', 'categories', 'accounts'];
+const DATA_TABLES = ['card_settings', 'merchant_aliases', 'trip_items', 'trips', 'recurring', 'budgets', 'capture_sources', 'favorites', 'captures', 'transactions', 'rules', 'parsers', 'devices', 'labels', 'categories', 'accounts'];
 
 /** Cancella tutti i dati di un account; con `andUser` anche sessioni e account. */
 export function deleteUserStatements(db: D1Database, id: string, andUser = true): D1PreparedStatement[] {
   return [
     db.prepare('DELETE FROM transaction_labels WHERE transaction_id IN (SELECT id FROM transactions WHERE user_id = ?)').bind(id),
     ...DATA_TABLES.map((t) => db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(id)),
-    ...(andUser ? [db.prepare('DELETE FROM ai_settings WHERE user_id = ?').bind(id), db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id), db.prepare('DELETE FROM users WHERE id = ?').bind(id)] : []),
+    ...(andUser ? [db.prepare('DELETE FROM ai_settings WHERE user_id = ?').bind(id), db.prepare('DELETE FROM push_subscriptions WHERE user_id = ?').bind(id), db.prepare('DELETE FROM notify_queue WHERE user_id = ?').bind(id), db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id), db.prepare('DELETE FROM users WHERE id = ?').bind(id)] : []),
   ];
 }
 
@@ -52,13 +52,16 @@ interface RuleRow { id: string; definition: string }
  * I telefoni collegati dall'ospite passano all'account e continuano a funzionare.
  */
 export async function adoptGuest(db: D1Database, g: string, a: string, mode: LoginChoice): Promise<void> {
-  if (mode === 'account') return runBatch(db, [aiCopy(db, g, a), ...deleteUserStatements(db, g)]);
+  // Le notifiche attivate su questo telefono restano attive anche dopo l'accesso, in ogni caso.
+  const pushMove = db.prepare('UPDATE push_subscriptions SET user_id = ? WHERE user_id = ?').bind(a, g);
+  if (mode === 'account') return runBatch(db, [aiCopy(db, g, a), pushMove, ...deleteUserStatements(db, g)]);
   const move = (t: string) => db.prepare(`UPDATE ${t} SET user_id = ? WHERE user_id = ?`).bind(a, g);
   if (mode === 'replace') {
     return runBatch(db, [
       ...deleteUserStatements(db, a, false),
       ...DATA_TABLES.slice().reverse().map(move), // prima conti e categorie, poi chi li usa
       aiCopy(db, g, a),
+      pushMove,
       ...deleteUserStatements(db, g),
     ]);
   }
@@ -152,6 +155,9 @@ export async function adoptGuest(db: D1Database, g: string, a: string, mode: Log
   }
   for (const t of ['budgets', 'recurring']) stmts.push(db.prepare(`UPDATE OR IGNORE ${t} SET user_id = ? WHERE user_id = ?`).bind(a, g));
   for (const t of ['trips', 'trip_items']) stmts.push(move(t));
+  // Ricarichi delle carte e nomi uniti dei negozi: se l'account ne ha già uno uguale vince quello dell'account.
+  for (const t of ['card_settings', 'merchant_aliases']) stmts.push(db.prepare(`UPDATE OR IGNORE ${t} SET user_id = ? WHERE user_id = ?`).bind(a, g));
+  stmts.push(pushMove);
   stmts.push(...deleteUserStatements(db, g));
   await runBatch(db, stmts);
 }

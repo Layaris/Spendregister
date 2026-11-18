@@ -1541,7 +1541,7 @@ describe('avvisi, previsione e riepilogo settimanale', () => {
     expect(r.forecast.expected_spend).toBeGreaterThanOrEqual(r.forecast.spent);
     expect(r.week).toBeNull();
     await c.put('/api/settings', { features: { weekly_summary: true, inventata: true } });
-    expect((await c.get('/api/bootstrap')).json.settings.features).toEqual({ alerts: true, forecast: true, weekly_summary: true, atm_transfer: true });
+    expect((await c.get('/api/bootstrap')).json.settings.features).toEqual({ alerts: true, forecast: true, weekly_summary: true, atm_transfer: true, push_budget: true, push_capture: true, push_review: true, sub_reminders: false });
     const w = (await c.get('/api/insights?today=2026-11-17')).json.week;
     expect(w).toMatchObject({ from: '2026-11-11', to: '2026-11-17', spent: 84_000, count: 3 });
     const fresh = new Client('10.56.0.2');
@@ -1900,5 +1900,201 @@ describe('comando iPhone v3: Apple Intelligence solo quando serve', () => {
     expect(h.json.status).toBe('ai');
     await new Promise((ok) => setTimeout(ok, 500));
     expect((await c.get(`/api/transactions/${r.json.transaction_id}`)).json.category_id).toBeTruthy();
+  });
+});
+
+describe('costo del cambio per carta', () => {
+  it('da una spesa con l\'addebito vero calcola il ricarico e lo stima sulle successive', async () => {
+    const c = new Client('10.80.0.1');
+    await c.post('/api/guest');
+    const today = new Date().toISOString().slice(0, 10);
+    const a = (await c.post('/api/transactions', { amount: 100_000, currency: 'IDR', merchant: 'Pepito', occurred_at: `${today}T10:00:00+08:00` })).json.id;
+    expect((await c.post('/api/cards/calibrate', { tx_id: a, charged: 5.6, currency: 'USD' })).status).toBe(400); // senza carta
+    await c.put(`/api/transactions/${a}`, { card: 'Revolut' });
+    expect((await c.post('/api/cards/calibrate', { tx_id: a, charged: 5.6, currency: 'IDR' })).status).toBe(400);
+    expect((await c.post('/api/cards/calibrate', { tx_id: a, charged: 50, currency: 'USD' })).status).toBe(400); // ricarico assurdo
+    // 100.000 IDR = 5 € = 5,5556 $ al cambio ufficiale; la carta ha addebitato 5,60 $: ricarico 0,8%.
+    const cal = (await c.post('/api/cards/calibrate', { tx_id: a, charged: 5.6, currency: 'USD' })).json;
+    expect(cal.markup_bp).toBe(80);
+    const b = (await c.post('/api/transactions', { amount: 200_000, currency: 'IDR', merchant: 'Bintang', occurred_at: `${today}T11:00:00+08:00` })).json.id;
+    await c.put(`/api/transactions/${b}`, { card: 'Revolut' });
+    const d = (await c.get(`/api/transactions/${b}`)).json;
+    expect(d.card_fx).toMatchObject({ card: 'Revolut', currency: 'USD', markup_bp: 80, sample_tx_id: a });
+    expect(d.fx_fee).toBe(80); // 0,8% di 10 €
+    const fees = (await c.get('/api/stats/fees?from=2000-01-01&to=2100-01-01')).json;
+    expect(fees.fx).toBe(120);
+    expect(fees.cards.find((x: any) => x.card === 'Revolut').fx_pct).toBe(0.8);
+    expect((await c.get('/api/cards')).json.items.find((x: any) => x.name === 'Revolut').fx.markup_bp).toBe(80);
+    // Nel backup, con la spesa d'esempio.
+    expect((await c.get('/api/backup/export?table=card_settings')).json.rows[0]).toMatchObject({ card: 'Revolut', markup_bp: 80, sample_tx_id: a });
+  });
+});
+
+describe('negozi con nomi diversi', () => {
+  it('propone, unisce lo storico e dà il nome scelto (e la categoria) alle spese nuove', async () => {
+    const c = new Client('10.80.0.2');
+    await c.post('/api/guest');
+    const o: Record<string, string> = {};
+    await loadOwn(c, o);
+    const day = (d: number) => `2026-10-${String(d).padStart(2, '0')}T09:00:00+08:00`;
+    await c.post('/api/transactions', { amount: 5, currency: 'EUR', merchant: 'Starbucks', category_id: o.cat_food_cafe ?? o.cat_food, occurred_at: day(1) });
+    await c.post('/api/transactions', { amount: 6, currency: 'EUR', merchant: 'Starbucks', category_id: o.cat_food_cafe ?? o.cat_food, occurred_at: day(2) });
+    await c.post('/api/transactions', { amount: 7, currency: 'EUR', merchant: 'STARBUCKS SEMINYAK', occurred_at: day(3) });
+    const list = (await c.get('/api/merchants')).json;
+    const sug = list.suggestions.find((s: any) => s.into === 'Starbucks');
+    expect(sug.names).toHaveLength(2);
+    const other = sug.names.find((n: string) => n !== 'Starbucks');
+    expect((await c.post('/api/merchants/merge', { into: 'Starbucks', names: ['Starbucks'] })).status).toBe(400);
+    expect((await c.post('/api/merchants/merge', { into: 'Starbucks', names: sug.names })).json.changed).toBe(1);
+    const items = (await c.get('/api/transactions?limit=10')).json.items;
+    expect(items.every((t: any) => t.merchant === 'Starbucks')).toBe(true);
+    expect((await c.get('/api/merchants')).json.aliases).toEqual([expect.objectContaining({ alias: other.toLowerCase(), merchant: 'Starbucks' })]);
+    // Spesa nuova col nome vecchio: prende il nome scelto e la categoria del negozio.
+    const id = (await c.post('/api/transactions', { amount: 8, currency: 'EUR', merchant: other, occurred_at: day(4) })).json.id;
+    const t = (await c.get(`/api/transactions/${id}`)).json;
+    expect(t.merchant).toBe('Starbucks');
+    expect(t.category_id).toBe(o.cat_food_cafe ?? o.cat_food);
+    // Separare: le spese nuove tengono il proprio nome.
+    await c.del(`/api/merchants/alias/${encodeURIComponent(other.toLowerCase())}`);
+    expect((await c.get('/api/merchants')).json.aliases).toEqual([]);
+    expect((await c.get('/api/backup/export?table=merchant_aliases')).json.rows).toEqual([]);
+  });
+});
+
+describe('spesa divisa in più categorie', () => {
+  it('divide, tiene saldi e totali, e si riunisce', async () => {
+    const c = new Client('10.80.0.3');
+    await c.post('/api/guest');
+    const o: Record<string, string> = {};
+    await loadOwn(c, o);
+    const id = (await c.post('/api/transactions', { amount: 300_000, currency: 'IDR', merchant: 'Pepito', category_id: o.cat_food_groceries, occurred_at: '2026-10-05T10:00:00+08:00' })).json.id;
+    const balance = async () => (await c.get('/api/bootstrap')).json.accounts.reduce((s: number, a: any) => s + a.balance_eur, 0);
+    const before = await balance();
+    expect((await c.post(`/api/transactions/${id}/split`, { parts: [{ amount: 100_000, category_id: o.cat_food_groceries }, { amount: 100_000, category_id: o.cat_home }] })).status).toBe(400);
+    const r = (await c.post(`/api/transactions/${id}/split`, { parts: [{ amount: '200000', category_id: o.cat_food_groceries }, { amount: 100_000, category_id: o.cat_home }] })).json;
+    expect(r.ids).toHaveLength(2);
+    const d = (await c.get(`/api/transactions/${id}`)).json;
+    expect(d.split.map((p: any) => [p.amount, p.category_id])).toEqual([[-200_000_000, o.cat_food_groceries], [-100_000_000, o.cat_home]]);
+    expect(d.split.reduce((s: number, p: any) => s + p.amount_eur, 0)).toBe(-15_000);
+    const st = (await c.get('/api/stats?from=2026-10-01&to=2026-11-01')).json;
+    expect(st.spent).toBe(15_000);
+    expect(st.by_category.length).toBe(2);
+    expect(await balance()).toBe(before);
+    // La parte nuova non insegna la categoria del negozio (lo storico ignora le spese divise).
+    const again = (await c.post('/api/transactions', { amount: 50_000, currency: 'IDR', merchant: 'Pepito', occurred_at: '2026-10-06T10:00:00+08:00' })).json.id;
+    expect((await c.get(`/api/transactions/${again}`)).json.category_id).not.toBe(o.cat_home);
+    const back = (await c.post(`/api/transactions/${r.ids[1]}/unsplit`)).json;
+    expect(back.id).toBe(id);
+    const one = (await c.get(`/api/transactions/${id}`)).json;
+    expect(one).toMatchObject({ amount: -300_000_000, amount_eur: -15_000, split_group: null });
+    expect((await c.get('/api/stats?from=2026-10-01&to=2026-10-06')).json.spent).toBe(15_000);
+    expect(await balance()).toBe(before - 2_500); // meno la spesa da 50.000 IDR aggiunta sopra
+  });
+});
+
+describe('spese per paese', () => {
+  it('casa dalla valuta più usata, soggiorni all\'estero trovati da soli, filtri per valuta', async () => {
+    const c = new Client('10.80.0.4');
+    await c.post('/api/guest');
+    for (let d = 1; d <= 6; d++) await c.post('/api/transactions', { amount: 100_000, currency: 'IDR', merchant: `Warung ${d}`, occurred_at: `2026-10-0${d}T10:00:00+08:00` });
+    for (const d of ['2026-10-10', '2026-10-11', '2026-10-12']) await c.post('/api/transactions', { amount: 300, currency: 'THB', merchant: 'Pad thai', occurred_at: `${d}T12:00:00+07:00` });
+    await c.post('/api/transactions', { amount: 10, currency: 'USD', merchant: 'Netflix', occurred_at: '2026-10-20T10:00:00+08:00' });
+    const r = (await c.get('/api/stats/countries?from=2026-10-01&to=2026-11-01')).json;
+    expect(r.home).toBe('IDR');
+    const idr = r.countries.find((x: any) => x.currency === 'IDR');
+    expect(idr).toMatchObject({ name: 'Indonesia', home: true, days: 6, spent: 30_000, stays: [] });
+    expect(r.countries.find((x: any) => x.currency === 'THB').stays).toEqual([{ from: '2026-10-10', to: '2026-10-12', days: 3, spent: 0, count: 3 }]
+      .map((s) => ({ ...s, spent: expect.any(Number) })));
+    expect(r.countries.find((x: any) => x.currency === 'USD').stays).toEqual([]);
+    expect((await c.get('/api/stats?from=2026-10-01&to=2026-11-01&currency=IDR')).json.spent).toBe(30_000);
+    expect((await c.get('/api/transactions?currency=THB')).json.items).toHaveLength(3);
+  });
+});
+
+describe('notifiche dell\'app installata', () => {
+  const pushLog = async () => (await (await fetch(`http://127.0.0.1:${AI_PORT}/push-log`)).json()) as Array<{ path: string; auth: string; ttl: string }>;
+  const pending = async (endpoint: string) => (await (await fetch(`${BASE}/api/push-public/pending`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ endpoint }) })).json()).items as any[];
+  const waitFor = async <T>(fn: () => Promise<T>, ok: (v: T) => boolean): Promise<T> => {
+    let v = await fn();
+    for (let i = 0; i < 40 && !ok(v); i++) { await new Promise((r) => setTimeout(r, 100)); v = await fn(); }
+    return v;
+  };
+
+  it('spinta firmata VAPID senza contenuto, avvisi letti dal telefono una volta sola, iscrizioni scadute tolte', async () => {
+    const c = new Client('10.80.0.5');
+    await c.post('/api/guest');
+    const { key } = (await c.get('/api/push/key')).json;
+    expect(key).toMatch(/^[A-Za-z0-9_-]{87}$/);
+    expect((await c.get('/api/push/key')).json.key).toBe(key); // chiavi del server stabili
+    expect((await c.post('/api/push/subscribe', { endpoint: 'ftp://x' })).status).toBe(400);
+    const ep = `http://127.0.0.1:${AI_PORT}/push/telefono-1`;
+    await c.post('/api/push/subscribe', { endpoint: ep });
+    await c.post('/api/push/subscribe', { endpoint: `http://127.0.0.1:${AI_PORT}/push/scaduta` });
+    expect((await c.get('/api/push/status')).json.devices).toBe(2);
+    expect((await c.post('/api/push/test')).json.ok).toBe(true);
+    const log = (await pushLog()).filter((p) => p.path === '/push/telefono-1');
+    expect(log.length).toBeGreaterThan(0);
+    const auth = log.at(-1)!.auth;
+    expect(auth).toContain(`k=${key}`);
+    // La firma ES256 del JWT si verifica con la chiave pubblica.
+    const jwt = auth.match(/t=([^,]+)/)![1];
+    const [h, p, s] = jwt.split('.');
+    const bytes = (b: string) => Buffer.from(b.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+    const pub = await crypto.subtle.importKey('raw', bytes(key), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+    expect(await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, pub, bytes(s), new TextEncoder().encode(`${h}.${p}`))).toBe(true);
+    expect(JSON.parse(bytes(p).toString())).toMatchObject({ aud: `http://127.0.0.1:${AI_PORT}` });
+    expect((await c.get('/api/push/status')).json.devices).toBe(1); // la scaduta (410) è stata tolta
+    expect((await pending(ep)).map((n) => n.title)).toEqual(['Notifiche attive']);
+    expect(await pending(ep)).toEqual([]);
+    expect(await pending('https://sconosciuto.example/x')).toEqual([]);
+
+    // Budget: all'80% e superato, una volta sola ciascuno.
+    const month = new Date().toISOString().slice(0, 10);
+    await c.put('/api/budgets', { category_id: '*', amount: 10_000 });
+    await c.post('/api/transactions', { amount: 8.5, currency: 'EUR', merchant: 'Pepito', occurred_at: `${month}T10:00:00+08:00` });
+    let got = await waitFor(() => pending(ep), (v) => v.length > 0);
+    expect(got.map((n) => n.title)).toEqual(["Budget del mese all'80%"]);
+    await c.post('/api/transactions', { amount: 0.5, currency: 'EUR', merchant: 'Pepito', occurred_at: `${month}T10:05:00+08:00` });
+    await new Promise((r) => setTimeout(r, 400));
+    expect(await pending(ep)).toEqual([]);
+    await c.post('/api/transactions', { amount: 2, currency: 'EUR', merchant: 'Pepito', occurred_at: `${month}T10:10:00+08:00` });
+    got = await waitFor(() => pending(ep), (v) => v.length > 0);
+    expect(got[0]).toMatchObject({ title: 'Budget del mese superato', url: '/#/budget' });
+    expect(got[0].body).toContain('11,00\u00a0€');
+  });
+
+  it('al mattino: abbonamento di domani (se acceso) e movimenti da rivedere', async () => {
+    const c = new Client('10.80.0.6');
+    await c.post('/api/guest');
+    const ep = `http://127.0.0.1:${AI_PORT}/push/telefono-2`;
+    await c.post('/api/push/subscribe', { endpoint: ep });
+    const tz = 'Asia/Makassar';
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
+    const tomorrow = new Date(Date.parse(`${today}T12:00:00Z`) + 86400_000).toISOString().slice(0, 10);
+    await c.post('/api/recurring', { merchant: 'Netflix', period: 'month', amount_eur: -12_990, status: 'confirmed', next_date: tomorrow });
+    expect((await c.get(`/api/recurring?today=${today}`)).json.confirmed[0].next_date).toBe(tomorrow);
+    expect((await fetch(`${BASE}/__scheduled?cron=0+1+*+*+*`)).status).toBe(200);
+    let got = await waitFor(() => pending(ep), (v) => v.length > 0);
+    expect(got.map((n) => n.title)).not.toContain('Domani: Netflix'); // promemoria spento di base
+    await c.put('/api/settings', { features: { sub_reminders: true } });
+    expect((await fetch(`${BASE}/__scheduled?cron=0+1+*+*+*`)).status).toBe(200);
+    got = await waitFor(() => pending(ep), (v) => v.length > 0);
+    expect(got[0]).toMatchObject({ title: 'Domani: Netflix', url: '/#/ricorrenti' });
+    expect(got[0].body).toContain('12,99\u00a0€');
+    // Una volta sola.
+    expect((await fetch(`${BASE}/__scheduled?cron=0+1+*+*+*`)).status).toBe(200);
+    expect(await pending(ep)).toEqual([]);
+  });
+});
+
+describe('MacroDroid', () => {
+  it('il corpo a righe della macro registra la spesa con app e titolo', async () => {
+    const c = new Client('10.80.0.7');
+    await c.post('/api/guest');
+    const phone = (await c.post('/api/capture/devices', { name: 'Galaxy', platform: 'android', method: 'macrodroid' })).json.url.replace(BASE, '');
+    const r = await c.req('POST', phone, 'ledgy-md1\ncom.revolut.revolut\nRevolut\nPaid 55,600 IDR at Pepito "Canggu" & co', { 'content-type': 'text/plain' });
+    expect(r.json.status).toBe('created');
+    const t = (await c.get('/api/transactions?limit=1')).json.items[0];
+    expect(t).toMatchObject({ amount: -55_600_000, currency: 'IDR', card: 'Revolut' });
   });
 });

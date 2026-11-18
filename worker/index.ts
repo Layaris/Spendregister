@@ -7,6 +7,8 @@ import { backupApi } from './backup';
 import { captureAdminApi, drainInbound, inboundApi, pendingHints } from './capture';
 import { aiApi } from './ai';
 import { cardsApi } from './cards';
+import { merchantsApi } from './merchants';
+import { dailyPush, pushApi, pushPublicApi } from './push';
 import { catalogApi } from './catalog';
 import { configureFixedRates } from './fx';
 import { body, HttpError, type AppEnv, type Env } from './lib';
@@ -72,6 +74,7 @@ app.post('/api/password/recover', async (c) => {
 
 // Ingresso dei telefoni: protetto dal token nell'indirizzo, non dalla sessione.
 app.route('/api/in', inboundApi);
+app.route('/api/push-public', pushPublicApi);
 
 // ---- Tutto il resto: solo con un account e solo sui suoi dati ----
 const priv = new Hono<AppEnv>();
@@ -115,6 +118,8 @@ priv.route('/transactions', transactionsApi);
 priv.route('/stats', statsApi);
 priv.route('/capture', captureAdminApi);
 priv.route('/cards', cardsApi);
+priv.route('/merchants', merchantsApi);
+priv.route('/push', pushApi);
 priv.route('/ai', aiApi);
 priv.route('/backup', backupApi);
 priv.route('/import/wallet', walletApi);
@@ -132,6 +137,7 @@ export default {
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     await drainInbound(env, ctx).catch(() => 0);
     await pendingHints(env, ctx).catch(() => {});
+    await dailyPush(env).catch(() => {});
     // Pulizia notturna: sessioni scadute, tentativi vecchi, notifiche scartate da oltre 90 giorni.
     const now = new Date().toISOString();
     const day = new Date(Date.now() - 86400_000).toISOString();
@@ -147,7 +153,7 @@ export default {
       (u.created_at < ?1 AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.id))
       OR (u.created_at < ?2 AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.user_id = u.id)
           AND NOT EXISTS (SELECT 1 FROM devices d WHERE d.user_id = u.id AND d.revoked_at IS NULL)))`;
-    const tables = ['ai_settings', 'trip_items', 'trips', 'recurring', 'budgets', 'capture_sources', 'favorites', 'captures', 'transactions', 'rules', 'parsers', 'devices', 'labels', 'categories', 'accounts', 'sessions'];
+    const tables = ['ai_settings', 'card_settings', 'merchant_aliases', 'push_subscriptions', 'notify_queue', 'trip_items', 'trips', 'recurring', 'budgets', 'capture_sources', 'favorites', 'captures', 'transactions', 'rules', 'parsers', 'devices', 'labels', 'categories', 'accounts', 'sessions'];
     await env.DB.batch([
       env.DB.prepare(`DELETE FROM transaction_labels WHERE transaction_id IN (SELECT id FROM transactions WHERE user_id IN (${doomed}))`).bind(day, week),
       ...tables.map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE user_id IN (${doomed})`).bind(day, week)),

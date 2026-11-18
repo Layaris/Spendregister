@@ -2,6 +2,9 @@ import { Hono } from 'hono';
 import { appLabel, guessAppFromTitle, sourceKey } from '../shared/apps';
 import { isLikelyDuplicate, sha256Hex } from '../shared/dedupe';
 import { formatMoney, roundMilli, toMilli } from '../shared/money';
+import { canonicalMerchant } from './merchants';
+import { parseMacroBody } from '../shared/macrodroid';
+import { budgetPush } from './push';
 import { cleanMerchantName, parseNotification, parseWithParser, type AiHint, type ParserDef } from '../shared/notification';
 import { normalizePostedAt } from '../shared/time';
 import { bad, body, getTimeZone, HttpError, newId, notFound, nowIso, randomToken, uid, type AppEnv, type Env } from './lib';
@@ -108,7 +111,7 @@ export async function processCapture(db: D1Database, userId: string, deviceId: s
   const amount = roundMilli(toMilli(parsed.amount), parsed.currency) * sign;
   const conv = await convertToEur(db, amount, parsed.currency, occurred);
   const merchantRaw = parsed.merchant;
-  const merchant = cleanMerchantName(merchantRaw);
+  const merchant = await canonicalMerchant(db, userId, cleanMerchantName(merchantRaw));
   // Carta e conto imparati per questa fonte (titolo o app), altrimenti il nome dell'app se si conosce.
   const key = sourceKey(p.app, p.title);
   const source = key
@@ -219,7 +222,7 @@ async function readPayload(type: string, raw: string): Promise<CapturePayload> {
     try { payload = JSON.parse(raw) as CapturePayload; } catch { throw new HttpError(400, 'JSON non valido'); }
   } else if (type.includes('form')) {
     payload = Object.fromEntries((await new Request('https://x/', { method: 'POST', headers: { 'content-type': type }, body: raw }).formData()).entries()) as unknown as CapturePayload;
-  } else payload = { text: raw };
+  } else payload = (parseMacroBody(raw) as CapturePayload | null) ?? { text: raw };
   if (typeof payload.hint === 'string') {
     try { payload.hint = JSON.parse(payload.hint); } catch { payload.hint = null; }
   }
@@ -236,6 +239,8 @@ async function receive(env: Env, ctx: Pick<ExecutionContext, 'waitUntil'>, token
   // Dalla coda: l'ora della spesa è quella in cui la notifica era arrivata, non quella in cui si registra.
   if (receivedAt && !payload.posted_at) payload.posted_at = receivedAt;
   const { needs_ai, direction, ...result } = await processCapture(env.DB, dev.user_id, dev.id, payload);
+  // Budget all'80% o superato: avviso sul telefono (solo per chi ha attivato le notifiche).
+  if (result.transaction_id && direction !== 'income') ctx.waitUntil(budgetPush(env, dev.user_id).catch(() => {}));
   if (needs_ai && result.transaction_id) {
     // Categoria mancante. Il comando v3 la chiede ad Apple Intelligence (gratis, sul telefono) scegliendo tra queste
     // categorie e la rimanda a /hint; se non arriva, l'AI del server la cerca più tardi (pendingHints).

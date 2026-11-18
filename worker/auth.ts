@@ -294,7 +294,11 @@ export async function recoverWithCode(c: AppContext, emailIn: unknown, code: str
 }
 
 /** Funzioni facoltative (Impostazioni › Funzioni) e se sono accese all'inizio. */
-export const FEATURE_DEFAULTS: Record<string, boolean> = { alerts: true, forecast: true, weekly_summary: false, atm_transfer: true };
+export const FEATURE_DEFAULTS: Record<string, boolean> = {
+  alerts: true, forecast: true, weekly_summary: false, atm_transfer: true,
+  // Notifiche dell'app installata (valgono solo sui telefoni dove sono attivate) e promemoria degli abbonamenti.
+  push_budget: true, push_capture: true, push_review: true, sub_reminders: false,
+};
 
 export async function accountInfo(db: D1Database, userId: string) {
   const u = await userById(db, userId);

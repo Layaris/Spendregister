@@ -39,6 +39,7 @@ function Delta({ now, before, up }: { now: number; before: number; up: 'good' | 
 
 export function Stats({ view }: { view?: string }) {
   if (view === 'mesi') return <Months />;
+  if (view === 'paesi') return <Countries />;
   if (view === 'spese' || view === 'flusso' || view === 'entrate' || view === 'saldo') return <Detail view={view} />;
   return <Overview />;
 }
@@ -78,6 +79,7 @@ function Overview() {
             </span>
             <Icon name="next" size={18} />
           </a>
+          <CountriesTile from={period.from} to={period.to} />
           <FeesCard from={period.from} to={period.to} />
         </>
       )}
@@ -433,20 +435,21 @@ export function PeriodBar() {
 /** Commissioni e prelievi del periodo, per carta. Nascosta se non ce ne sono. */
 function FeesCard({ from, to }: { from: string; to: string }) {
   const store = useStore();
-  const r = useApi<{ cards: Array<{ card: string; fees: number; fees_n: number; cash: number; cash_n: number }>; fees: number; cash: number }>(`/stats/fees?from=${from}&to=${to}`, [store.review_count]);
+  const r = useApi<{ cards: Array<{ card: string; fees: number; fees_n: number; cash: number; cash_n: number; fx: number; fx_pct: number | null }>; fees: number; cash: number; fx: number }>(`/stats/fees?from=${from}&to=${to}`, [store.review_count]);
   if (!r.data || !r.data.cards.length) return null;
   return (
     <section className="card" style={{ padding: '16px 18px', gap: 10 }}>
       <div className="row between">
         <span className="label">Costi bancari</span>
-        <b className="num money">{eur(r.data.fees)}</b>
+        <b className="num money">{eur(r.data.fees + r.data.fx)}</b>
       </div>
-      <span className="muted" style={{ fontSize: 13, marginTop: -4 }}>Commissioni pagate e contanti prelevati, per carta.</span>
+      <span className="muted" style={{ fontSize: 13, marginTop: -4 }}>Commissioni, costo del cambio stimato e contanti prelevati, per carta. Il costo del cambio si stima dalle carte di cui hai scritto un addebito.</span>
       {r.data.cards.map((c) => (
         <div key={c.card} className="row between" style={{ fontSize: 15, alignItems: 'flex-start' }}>
           <span>{c.card || <span className="muted">Senza carta</span>}</span>
           <span className="stack" style={{ gap: 2, alignItems: 'flex-end' }}>
             {c.fees > 0 && <span className="num money">{eur(c.fees)} <span className="muted" style={{ fontSize: 13 }}>{c.fees_n === 1 ? 'commissione' : `${c.fees_n} commissioni`}</span></span>}
+            {c.fx > 0 && <span className="num money">{eur(c.fx)} <span className="muted" style={{ fontSize: 13 }}>cambio ({(c.fx_pct ?? 0).toLocaleString('it-IT', { maximumFractionDigits: 2 })}%)</span></span>}
             {c.cash > 0 && <span className="num money muted" style={{ fontSize: 13 }}>{c.cash_n === 1 ? '1 prelievo' : `${c.cash_n} prelievi`} · {eur(c.cash)}</span>}
           </span>
         </div>
@@ -500,6 +503,92 @@ function Months() {
           <p className="muted" style={{ fontSize: 12.5, margin: 0, padding: '0 14px 12px' }}>* mese in corso. “Ultimo” confronta l’ultimo mese intero con la media dei mesi prima.</p>
         </section>
       )}
+    </div>
+  );
+}
+
+interface CountriesData {
+  home: string | null;
+  countries: Array<{ currency: string; name: string; flag: string; home: boolean; spent: number; count: number; days: number; per_day: number; stays: Array<{ from: string; to: string; days: number; spent: number; count: number }> }>;
+}
+
+const dayShort = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString('it-IT', { day: 'numeric', month: 'short', timeZone: 'UTC' }).replace('.', '');
+
+/** Riquadro in Statistiche: i paesi del periodo, se ce n'è più di uno. */
+function CountriesTile({ from, to }: { from: string; to: string }) {
+  const store = useStore();
+  const r = useApi<CountriesData>(`/stats/countries?from=${from}&to=${to}`, [store.review_count]);
+  const list = r.data?.countries ?? [];
+  if (list.length < 2) return null;
+  return (
+    <a href="#/statistiche/paesi" className="card" style={{ textDecoration: 'none', color: 'inherit', padding: '16px 18px', gap: 8 }}>
+      <span className="row between"><span className="label">Per paese</span><Icon name="next" size={18} /></span>
+      {list.slice(0, 3).map((c) => (
+        <span key={c.currency} className="row between" style={{ fontSize: 15 }}>
+          <span>{c.flag} {c.name}{c.home ? <span className="muted"> · casa</span> : ''}</span>
+          <b className="num money">{eur(c.spent)}</b>
+        </span>
+      ))}
+    </a>
+  );
+}
+
+/** Statistiche › Paesi: spese per paese (dalla valuta) e soggiorni all'estero trovati da soli. */
+function Countries() {
+  const store = useStore();
+  const spec = usePeriodSpec();
+  const period = periodOf(spec);
+  const r = useApi<CountriesData>(`/stats/countries?from=${period.from}&to=${period.to}`, [store.review_count]);
+  const [open, setOpen] = useState<string | null>(null);
+  const showMovements = (currency: string, from?: string, to?: string) => {
+    try { sessionStorage.setItem('ledgy-filters', JSON.stringify({ currency, type: 'expense', ...(from ? { from, to } : { from: period.from, to: localDay(new Date(Date.parse(`${period.to}T12:00:00Z`) - 86400_000)) }) })); } catch { /* ignora */ }
+    go('/movimenti');
+  };
+  return (
+    <div className={`stack ${store.discreet ? 'discreet' : ''}`} style={{ gap: 12, paddingBottom: 72 }}>
+      <TopBar title="Per paese" backTo="/statistiche" />
+      <p className="lead">Il paese viene dalla valuta della spesa, anche per quelle arrivate dalle notifiche. I giorni all'estero vicini diventano un soggiorno.</p>
+      <ErrorBox error={r.error} />
+      {!r.data ? <Loading /> : !r.data.countries.length ? <p className="empty">Nessuna spesa in questo periodo.</p> : r.data.countries.map((c) => (
+        <section key={c.currency} className="card" style={{ gap: 8 }}>
+          <button className="row between" style={{ background: 'none', border: 0, padding: 0, color: 'inherit', textAlign: 'left' }} onClick={() => setOpen(open === c.currency ? null : c.currency)} aria-expanded={open === c.currency}>
+            <span className="stack" style={{ gap: 2 }}>
+              <b style={{ fontSize: 17 }}>{c.flag} {c.name}{c.home && <span className="muted" style={{ fontWeight: 400 }}> · casa</span>}</b>
+              <span className="muted" style={{ fontSize: 13 }}>{c.days} {c.days === 1 ? 'giorno' : 'giorni'} con spese · {eur(c.per_day)} al giorno · {c.count} spese</span>
+            </span>
+            <b className="num money" style={{ fontSize: 18 }}>{eur(c.spent)}</b>
+          </button>
+          {c.stays.length > 0 && (
+            <div className="stack" style={{ gap: 4 }}>
+              {c.stays.map((st) => (
+                <button key={st.from} className="row between chip-row" style={{ background: 'var(--sunken)', border: 0, borderRadius: 10, padding: '8px 10px', color: 'inherit' }} onClick={() => showMovements(c.currency, st.from, st.to)}>
+                  <span style={{ fontSize: 14 }}>{dayShort(st.from)} – {dayShort(st.to)} · {st.days} giorni</span>
+                  <span className="num money" style={{ fontSize: 14 }}>{eur(st.spent)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {open === c.currency && <CountryDetail currency={c.currency} from={period.from} to={period.to} />}
+          <button className="btn ghost" style={{ alignSelf: 'flex-start' }} onClick={() => showMovements(c.currency)}>Vedi le spese</button>
+        </section>
+      ))}
+      <PeriodBar />
+    </div>
+  );
+}
+
+function CountryDetail({ currency, from, to }: { currency: string; from: string; to: string }) {
+  const store = useStore();
+  const r = useApi<StatsData>(`/stats?from=${from}&to=${to}&currency=${currency}`, [store.review_count]);
+  if (!r.data) return <Loading />;
+  return (
+    <div className="stack" style={{ gap: 6 }}>
+      {r.data.by_category.filter((x) => x.total > 0).slice(0, 8).map((x) => (
+        <span key={x.category_id ?? 'none'} className="row between" style={{ fontSize: 14 }}>
+          <span>{store.catName(x.category_id)}</span>
+          <span className="num money">{eur(x.total)} <span className="muted">{Math.round((x.total / Math.max(1, r.data!.spent)) * 100)}%</span></span>
+        </span>
+      ))}
     </div>
   );
 }

@@ -142,7 +142,7 @@ export function CategorySheet({ value, kind, onPick, onClose }: { value: string 
   );
 }
 
-export interface CardInfo { name: string; count: number; month_spent: number; sources: string[] }
+export interface CardInfo { name: string; count: number; month_spent: number; sources: string[]; fx?: { currency: string | null; markup_bp: number | null; sample_tx_id: string | null } | null }
 
 /** Scelta della carta o banca: quelle già conosciute con un tocco, oppure una nuova. */
 export function CardSheet({ value, onPick, onClose, extra }: { value: string | null; onPick: (card: string | null) => void; onClose: () => void; extra?: ReactNode }) {

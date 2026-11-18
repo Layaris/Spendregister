@@ -1,3 +1,4 @@
+import { countryOf } from '../../shared/countries';
 import { useEffect, useState } from 'react';
 import { parseAmount } from '../../shared/money';
 import { api, type Tx } from '../api';
@@ -9,7 +10,7 @@ import { displayCurrency, eur, formatDayShort, formatWhen, fromDisplay, localDay
 const PAGE = 60;
 
 /** Filtri dei movimenti: tutti facoltativi. Importi scritti nella valuta di visualizzazione. */
-export interface Filters { type?: string; from?: string; to?: string; category?: string; account?: string; card?: string; label?: string; min?: string; max?: string; trip?: string }
+export interface Filters { type?: string; from?: string; to?: string; category?: string; account?: string; card?: string; label?: string; min?: string; max?: string; trip?: string; currency?: string }
 interface Summary { count: number; spent: number; income: number }
 interface Trip { id: string; name: string; start_date: string; end_date: string }
 
@@ -40,7 +41,7 @@ export function Movements({ category }: { category?: string }) {
   const load = async (offset = 0) => {
     const params = new URLSearchParams({ limit: String(PAGE), offset: String(offset), sum: '1' });
     if (q.trim()) params.set('q', q.trim());
-    for (const k of ['type', 'from', 'to', 'category', 'account', 'card', 'label', 'trip'] as const) if (f[k]) params.set(k, f[k]!);
+    for (const k of ['type', 'from', 'to', 'category', 'account', 'card', 'label', 'trip', 'currency'] as const) if (f[k]) params.set(k, f[k]!);
     // "Fino al" incluso: il server vuole il giorno dopo.
     if (f.to) params.set('to', localDay(new Date(new Date(`${f.to}T12:00:00`).getTime() + 86400_000)));
     const min = toMilliEur(f.min);
@@ -83,6 +84,7 @@ export function Movements({ category }: { category?: string }) {
   if (filters.card) chips.push(['card', filters.card === '-' ? 'Senza carta' : filters.card]);
   if (filters.label) chips.push(['label', store.labels.find((l) => l.id === filters.label)?.name ?? 'Etichetta']);
   if (filters.min || filters.max) chips.push(['amount', `${filters.min || '0'} – ${filters.max || '…'} ${displayCurrency()}`]);
+  if (filters.currency) chips.push(['currency', `${countryOf(filters.currency).flag} ${countryOf(filters.currency).name}`]);
   if (filters.trip) chips.push(['trip', trips.data?.items.find((t) => t.id === filters.trip)?.name ?? 'Viaggio']);
   const drop = (k: string) => {
     const next = { ...filters };

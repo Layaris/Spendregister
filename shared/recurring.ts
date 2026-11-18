@@ -103,3 +103,16 @@ export function detectRecurring(rows: Occurrence[], today: string, skip: Set<str
   }
   return out.sort((a, b) => perMonth(a.amount_eur, a.period, a.every) - perMonth(b.amount_eur, b.period, b.every));
 }
+
+/**
+ * Prossimo addebito di una spesa ricorrente confermata: dall'ultima spesa del negozio (`lastDay`), salvo una data più
+ * avanti scelta a mano (`anchor`); senza spese, dalla data scelta a mano, la prima da oggi in poi.
+ */
+export function nextDue(period: Period, every: number, lastDay: string | null, anchor: string | null, today: string): { next: string | null; fromTx: boolean } {
+  const fromTx = lastDay ? nextDate(lastDay, period, every) : null;
+  if (fromTx && !(anchor && anchor > fromTx)) return { next: fromTx, fromTx: true };
+  if (!anchor) return { next: null, fromTx: false };
+  let next = anchor;
+  for (let i = 0; i < 600 && next < today; i++) next = nextDate(next, period, every);
+  return { next, fromTx: false };
+}

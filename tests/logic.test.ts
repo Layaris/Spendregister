@@ -315,3 +315,47 @@ describe('spese ricorrenti proposte', () => {
     expect(nextDate('2024-02-29', 'year')).toBe('2025-02-28');
   });
 });
+
+describe('negozi con nomi diversi', () => {
+  it('propone di unire la stessa catena scritta in modi diversi, non i warung diversi', async () => {
+    const { merchantKey, suggestMerges } = await import('../shared/merchants');
+    expect(merchantKey('PT. Starbucks Coffee 0231')).toBe('starbucks coffee');
+    const s = suggestMerges([
+      { merchant: 'Starbucks', n: 9 }, { merchant: 'STARBUCKS SEMINYAK', n: 3 }, { merchant: 'Starbucks Coffee', n: 2 },
+      { merchant: 'Warung Made', n: 5 }, { merchant: 'Warung Babi Guling', n: 4 }, { merchant: 'Pepito Market', n: 6 }, { merchant: 'PEPITO', n: 1 },
+    ]);
+    expect(s).toEqual([
+      { into: 'Starbucks', names: ['Starbucks', 'STARBUCKS SEMINYAK', 'Starbucks Coffee'], n: 14 },
+      { into: 'Pepito Market', names: ['Pepito Market', 'PEPITO'], n: 7 },
+    ]);
+  });
+});
+
+describe('paesi dalla valuta', () => {
+  it('trova i soggiorni e ignora un abbonamento isolato', async () => {
+    const { countryOf, staysOf } = await import('../shared/countries');
+    expect(countryOf('THB')).toEqual({ name: 'Thailandia', flag: '🇹🇭' });
+    expect(countryOf('xyz').name).toBe('XYZ');
+    const days = [
+      { currency: 'THB', day: '2026-10-01', spent: 10_000, count: 3 }, { currency: 'THB', day: '2026-10-03', spent: 5_000, count: 2 },
+      { currency: 'THB', day: '2026-10-20', spent: 2_000, count: 1 },
+    ];
+    expect(staysOf(days)).toEqual([{ from: '2026-10-01', to: '2026-10-03', days: 2, spent: 15_000, count: 5 }]);
+  });
+});
+
+describe('macro per MacroDroid', () => {
+  it('il file ha trigger notifica e richiesta HTTP con il corpo a righe, che il server rilegge', async () => {
+    const { buildMacro, parseMacroBody } = await import('../shared/macrodroid');
+    const m = JSON.parse(buildMacro('https://ledgy.example/api/in/abc'));
+    expect(m.macroExportVersion).toBe(1);
+    expect(m.macro.m_triggerList[0].m_classType).toBe('NotificationTrigger');
+    expect(m.macro.m_triggerList[0].m_packageNameList).toContain('com.revolut.revolut');
+    expect(m.macro.m_triggerList[0].m_packageNameList).not.toContain('com.apple.Passbook');
+    const req = m.macro.m_actionList[0].requestConfig;
+    expect(req).toMatchObject({ requestType: 1, urlToOpen: 'https://ledgy.example/api/in/abc', contentType: 'text/plain' });
+    const body = req.contentBodyText.replace('{not_app_package}', 'com.revolut.revolut').replace('{not_title}', 'Revolut').replace('{notification}', 'Paid 50,000 IDR at "Pepito" & co\nsecond line');
+    expect(parseMacroBody(body)).toEqual({ app: 'com.revolut.revolut', title: 'Revolut', text: 'Paid 50,000 IDR at "Pepito" & co\nsecond line', source: 'macrodroid' });
+    expect(parseMacroBody('Paid 5 EUR')).toBeNull();
+  });
+});

@@ -5,7 +5,7 @@ import { api, type TxDetail as Detail } from '../api';
 import { back } from '../router';
 import { useApi, useStore } from '../store';
 import { Icon } from '../icons';
-import { CategoryIcon, CategorySheet, ErrorBox, Loading, TopBar, type CardInfo } from '../ui';
+import { CategoryIcon, CategorySelect, CategorySheet, ErrorBox, Loading, TopBar, type CardInfo } from '../ui';
 import { parseAmount } from '../../shared/money';
 import { eur, fitSize, formatMoney, formatWhen, NATURE_LABEL } from '../util';
 
@@ -133,6 +133,9 @@ export function TxDetail({ id }: { id: string }) {
             : 'Soldi spostati tra i tuoi conti: non contano come spesa né come entrata.'}</span>
         </section>
       )}
+
+      {t.card && t.amount < 0 && <FxCard t={t} onSaved={reload} />}
+      {t.type !== 'transfer' && <SplitCard t={t} onSaved={reload} />}
 
       <span className="section-title">Essenziale</span>
       <div className="list">
@@ -263,5 +266,197 @@ export function TxDetail({ id }: { id: string }) {
         <button className="btn ghost" style={{ color: 'var(--danger)', alignSelf: 'center' }} onClick={() => setConfirmDelete(true)}>Elimina movimento</button>
       )}
     </div>
+  );
+}
+
+/**
+ * Costo del cambio di questa spesa. Se la carta ha già un ricarico calcolato si mostra la stima; altrimenti (o per
+ * ricalcolarlo) si scrive quanto ha addebitato la carta nella sua valuta e Ledgy ricava il ricarico dal cambio ufficiale.
+ */
+function FxCard({ t, onSaved }: { t: Detail; onSaved: () => void }) {
+  const store = useStore();
+  const fx = t.card_fx;
+  const [open, setOpen] = useState(false);
+  const [charged, setCharged] = useState('');
+  const [currency, setCurrency] = useState(fx?.currency ?? (t.currency === 'USD' ? 'EUR' : 'USD'));
+  const [err, setErr] = useState<string | null>(null);
+  const known = fx && fx.markup_bp != null;
+  const same = known && fx!.currency === t.currency;
+  const isSample = known && fx!.sample_tx_id === t.id;
+  const pct = known ? (fx!.markup_bp! / 100).toLocaleString('it-IT', { maximumFractionDigits: 2 }) : '';
+  const send = async () => {
+    setErr(null);
+    const v = parseAmount(charged, currency)?.value;
+    if (!v) { setErr("Scrivi l'importo addebitato"); return; }
+    try {
+      const r = await api<{ markup_bp: number }>('/cards/calibrate', { method: 'POST', json: { tx_id: t.id, charged: v, currency } });
+      store.toast(`${t.card}: ricarico sul cambio ${(r.markup_bp / 100).toLocaleString('it-IT', { maximumFractionDigits: 2 })}%`);
+      setOpen(false);
+      onSaved();
+    } catch (e) { setErr((e as Error).message); }
+  };
+  if (same && !open) return null; // spesa nella valuta della carta: niente cambio
+  if (!known && !open) {
+    return (
+      <div className="list">
+        <button className="lrow" onClick={() => setOpen(true)}>
+          <span className="lrow-ic" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}><Icon name="card" size={18} /></span>
+          <span className="grow stack" style={{ gap: 0, textAlign: 'left', minWidth: 0 }}>
+            <span style={{ fontWeight: 600 }}>Costo del cambio di {t.card}</span>
+            <span className="muted" style={{ fontSize: 13 }}>Scrivi quanto ha addebitato la carta nella sua valuta</span>
+          </span>
+          <Icon name="next" size={18} />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <section className="card" style={{ gap: 8 }}>
+      <div className="row between">
+        <b>Costo del cambio</b>
+        {known && !same && t.fx_fee != null && <b className="num money" style={{ color: 'var(--neg)' }}>{eur(t.fx_fee)}</b>}
+      </div>
+      {known && !same ? (
+        <span className="muted" style={{ fontSize: 14 }}>
+          {isSample
+            ? <>Qui {t.card} ha addebitato <b style={{ color: 'var(--ink)' }}>{formatMoney(fx!.sample_charged ?? 0, fx!.currency!)}</b>: il suo ricarico sul cambio è {pct}%.</>
+            : <>Stima: {t.card} ricarica circa il {pct}% sul cambio ufficiale (in {fx!.currency}). Calcolato da una tua spesa.</>}
+        </span>
+      ) : (
+        <span className="muted" style={{ fontSize: 14 }}>Quanto ti ha addebitato {t.card} nella sua valuta? Scrivilo una volta: Ledgy calcola il ricarico della carta e lo stima su tutte le spese successive.</span>
+      )}
+      {open ? (
+        <div className="stack" style={{ gap: 8 }}>
+          <div className="row" style={{ gap: 8 }}>
+            <input className="input grow num" inputMode="decimal" placeholder="Es. 12,47" aria-label="Importo addebitato dalla carta" value={charged} onChange={(e) => setCharged(e.target.value)} />
+            <select className="input" style={{ width: 96 }} aria-label="Valuta della carta" value={currency} onChange={(e) => setCurrency(e.target.value)}>
+              {['USD', 'EUR', 'IDR', 'SGD', 'AUD', 'GBP', 'THB', 'MYR', 'AED', 'CHF', 'JPY'].filter((c) => c !== t.currency).map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <ErrorBox error={err} />
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn primary grow" onClick={send}>Calcola il ricarico</button>
+            <button className="btn" onClick={() => setOpen(false)}>Annulla</button>
+          </div>
+        </div>
+      ) : (
+        <button className="btn ghost" style={{ alignSelf: 'flex-start' }} onClick={() => setOpen(true)}>{known ? 'Ricalcola con questa spesa' : `Scrivi quanto ha addebitato ${t.card}`}</button>
+      )}
+    </section>
+  );
+}
+
+/** Spesa divisa in più categorie: elenco delle parti, oppure l'editor per dividerla. */
+function SplitCard({ t, onSaved }: { t: Detail; onSaved: () => void }) {
+  const store = useStore();
+  const kind = t.amount < 0 ? 'expense' : 'income';
+  const fmt = (milli: number) => new Intl.NumberFormat('it-IT', { maximumFractionDigits: 3 }).format(Math.abs(milli) / 1000);
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<Array<{ amount: string; category_id: string | null }>>([]);
+  const [err, setErr] = useState<string | null>(null);
+  const parts = t.split ?? [];
+  const start = () => {
+    setRows([{ amount: fmt(t.amount), category_id: t.category_id }, { amount: '', category_id: null }]);
+    setErr(null);
+    setOpen(true);
+  };
+  const values = rows.map((r) => parseAmount(r.amount, t.currency)?.value ?? 0);
+  const total = Math.abs(t.amount) / 1000;
+  const used = values.reduce((a, v) => a + v, 0);
+  const rest = Math.round((total - used) * 1000) / 1000;
+  const setRow = (i: number, patch: Partial<{ amount: string; category_id: string | null }>) => setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  // Scrivendo una parte nuova, la prima si riduce da sola finché la somma torna.
+  const setAmount = (i: number, v: string) => {
+    const next = rows.map((r, j) => (j === i ? { ...r, amount: v } : r));
+    if (i > 0) {
+      const others = next.slice(1).reduce((a, r) => a + (parseAmount(r.amount, t.currency)?.value ?? 0), 0);
+      const first = Math.round((total - others) * 1000) / 1000;
+      if (first > 0) next[0] = { ...next[0], amount: new Intl.NumberFormat('it-IT', { maximumFractionDigits: 3 }).format(first) };
+    }
+    setRows(next);
+  };
+  const save = async () => {
+    setErr(null);
+    const filled = rows.map((r, i) => ({ amount: values[i], category_id: r.category_id })).filter((r) => r.amount > 0);
+    if (filled.length < 2) { setErr('Servono almeno due parti con un importo'); return; }
+    if (Math.abs(rest) > 0.0005) { setErr(`Le parti devono fare ${formatMoney(Math.abs(t.amount), t.currency)}`); return; }
+    try {
+      await api(`/transactions/${t.id}/split`, { method: 'POST', json: { parts: filled } });
+      store.toast(`Spesa divisa in ${filled.length} parti`);
+      setOpen(false);
+      onSaved();
+      await store.refresh();
+    } catch (e) { setErr((e as Error).message); }
+  };
+  const unsplit = async () => {
+    try {
+      const r = await api<{ id: string }>(`/transactions/${t.id}/unsplit`, { method: 'POST' });
+      store.toast('Parti riunite in una spesa');
+      if (r.id !== t.id) location.hash = `#/m/${r.id}`;
+      else onSaved();
+      await store.refresh();
+    } catch (e) { setErr((e as Error).message); }
+  };
+
+  if (parts.length > 1) {
+    const sum = parts.reduce((a, p) => a + Math.abs(p.amount), 0);
+    return (
+      <section className="card" style={{ gap: 8 }}>
+        <div className="row between">
+          <b>Spesa divisa in {parts.length} parti</b>
+          <span className="num money muted">{formatMoney(sum, t.currency)}</span>
+        </div>
+        <div className="stack" style={{ gap: 6 }}>
+          {parts.map((p) => (
+            <a key={p.id} href={`#/m/${p.id}`} className="row" style={{ gap: 10, textDecoration: 'none', color: 'inherit', fontWeight: p.id === t.id ? 700 : 400 }}>
+              <CategoryIcon id={p.category_id} size={28} />
+              <span className="grow">{store.catName(p.category_id)}</span>
+              <span className="num money">{formatMoney(Math.abs(p.amount), t.currency)}</span>
+            </a>
+          ))}
+        </div>
+        <ErrorBox error={err} />
+        <button className="btn ghost" style={{ alignSelf: 'flex-start' }} onClick={unsplit}>Riunisci in una spesa</button>
+      </section>
+    );
+  }
+  if (!open) {
+    return (
+      <div className="list">
+        <button className="lrow" onClick={start}>
+          <span className="lrow-ic" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}><Icon name="inout" size={18} /></span>
+          <span className="grow stack" style={{ gap: 0, textAlign: 'left', minWidth: 0 }}>
+            <span style={{ fontWeight: 600 }}>Dividi in più categorie</span>
+            <span className="muted" style={{ fontSize: 13 }}>Es. supermercato: una parte cibo, una parte casa</span>
+          </span>
+          <Icon name="next" size={18} />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <section className="card" style={{ gap: 10 }}>
+      <b>Dividi {formatMoney(Math.abs(t.amount), t.currency)}</b>
+      {rows.map((r, i) => (
+        <div key={i} className="stack" style={{ gap: 6 }}>
+          <div className="row" style={{ gap: 8 }}>
+            <input className="input num" style={{ width: 130 }} inputMode="decimal" aria-label={`Importo della parte ${i + 1}`} placeholder="0" value={r.amount} onChange={(e) => setAmount(i, e.target.value)} />
+            <div className="grow"><CategorySelect value={r.category_id} onChange={(v) => setRow(i, { category_id: v })} kind={kind} id={`split-cat-${i}`} /></div>
+            {i > 1 && <button className="btn ghost" aria-label={`Togli la parte ${i + 1}`} onClick={() => setRows(rows.filter((_, j) => j !== i))}><Icon name="close" size={16} /></button>}
+          </div>
+        </div>
+      ))}
+      <div className="row between">
+        <button className="btn ghost" disabled={rows.length >= 10} onClick={() => setRows([...rows, { amount: '', category_id: null }])}>+ Aggiungi una parte</button>
+        <span className="muted" style={{ fontSize: 13, color: Math.abs(rest) > 0.0005 ? 'var(--neg)' : undefined }}>
+          {Math.abs(rest) > 0.0005 ? `${rest > 0 ? 'Mancano' : 'Troppo di'} ${formatMoney(Math.round(Math.abs(rest) * 1000), t.currency)}` : 'Somma giusta'}
+        </span>
+      </div>
+      <ErrorBox error={err} />
+      <div className="row" style={{ gap: 8 }}>
+        <button className="btn primary grow" onClick={save}>Dividi</button>
+        <button className="btn" onClick={() => setOpen(false)}>Annulla</button>
+      </div>
+    </section>
   );
 }

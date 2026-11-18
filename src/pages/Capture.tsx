@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { suggestPattern } from '../../shared/notification';
 import { api } from '../api';
 import { Icon } from '../icons';
+import { buildMacro } from '../../shared/macrodroid';
 import { useApi, useStore } from '../store';
 import { CardSheet, ErrorBox, Loading, TopBar } from '../ui';
 import { relativeTime } from '../util';
@@ -218,7 +219,33 @@ function IosSteps({ url, hasShortcut }: { url: string; hasShortcut: boolean }) {
   );
 }
 
+function downloadMacro(url: string) {
+  const blob = new Blob([buildMacro(url)], { type: 'application/octet-stream' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'Ledgy.macro';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
 function AndroidSteps({ url }: { url: string }) {
+  return (
+    <div className="stack" style={{ gap: 10 }}>
+      <button className="btn primary" onClick={() => downloadMacro(url)}><Icon name="download" size={18} />Scarica la macro per MacroDroid</button>
+      <span className="muted" style={{ fontSize: 13 }}>
+        La macro ha già dentro l'indirizzo di questo telefono. Aprila con MacroDroid (oppure MacroDroid › Esporta/Importa › Importa) e salvala.
+        Ascolta Revolut, Wise, Jago, SeaBank, BCA, Grab, Gojek e Google Wallet: aggiungi o togli app toccando il trigger. Prova nuova: se l'importazione non va, segui i passi qui sotto.
+      </span>
+      <span className="muted" style={{ fontSize: 13 }}>Batteria: togli MacroDroid dall'ottimizzazione batteria (Xiaomi: Avvio automatico e “Nessuna restrizione”; Samsung: “App mai in sospensione”).</span>
+      <details>
+        <summary className="muted" style={{ fontSize: 14, cursor: 'pointer' }}>Passi a mano</summary>
+        <AndroidManual url={url} />
+      </details>
+    </div>
+  );
+}
+
+function AndroidManual({ url }: { url: string }) {
   return (
     <ol style={{ margin: 0, paddingLeft: 20, display: 'grid', gap: 8, fontSize: 14 }}>
       <li>Installa <b>MacroDroid</b> dal Play Store e concedigli l'accesso alle notifiche.</li>

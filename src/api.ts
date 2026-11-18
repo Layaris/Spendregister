@@ -123,9 +123,17 @@ export interface Tx {
   place: string | null;
 }
 
+export interface CardFx { card: string; currency: string | null; markup_bp: number | null; sample_tx_id: string | null; sample_charged: number | null; updated_at: string }
 export interface TxDetail extends Tx {
   capture: { id: string; app: string | null; title: string | null; text: string; received_at: string; detail: string | null } | null;
   rules: Array<{ id: string; name: string }>;
+  /** Ricarico sul cambio della carta di questa spesa, se calcolato. */
+  card_fx: CardFx | null;
+  /** Costo del cambio stimato, millesimi di euro. */
+  fx_fee: number | null;
+  split_group: string | null;
+  /** Le parti, se la spesa è divisa in più categorie. */
+  split: Array<{ id: string; amount: number; currency: string; amount_eur: number; category_id: string | null }> | null;
 }
 
 export interface Stats {

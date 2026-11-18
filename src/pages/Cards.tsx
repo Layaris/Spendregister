@@ -57,6 +57,11 @@ export function Cards() {
                 </button>
                 {open === c.name && (
                   <div className="stack" style={{ gap: 8, padding: '4px 16px 16px 60px' }}>
+                    <span className="muted" style={{ fontSize: 13 }}>
+                      {c.fx?.markup_bp != null
+                        ? <>Ricarico sul cambio: <b style={{ color: 'var(--ink)' }}>{(c.fx.markup_bp / 100).toLocaleString('it-IT', { maximumFractionDigits: 2 })}%</b> (carta in {c.fx.currency}). {c.fx.sample_tx_id && <a href={`#/m/${c.fx.sample_tx_id}`}>Spesa usata per il calcolo</a>}</>
+                        : <>Costo del cambio: apri una spesa in un'altra valuta pagata con {c.name} e scrivi quanto ha addebitato la carta.</>}
+                    </span>
                     <div className="row" style={{ gap: 6 }}>
                       <input className="input grow" aria-label={`Nuovo nome per ${c.name}`} value={name} onChange={(e) => setName(e.target.value)} />
                       <button className="btn primary" disabled={!name.trim() || name.trim() === c.name} onClick={() => rename(c.name, name.trim())}>Rinomina</button>

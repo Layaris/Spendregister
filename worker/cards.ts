@@ -3,7 +3,9 @@
 // stesso totale delle spese, non si somma ad esso.
 import { Hono } from 'hono';
 import { appLabel } from '../shared/apps';
-import { body, nowIso, uid, type AppEnv } from './lib';
+import { bad, body, notFound, nowIso, uid, type AppEnv } from './lib';
+import { getEurRate } from './fx';
+import { roundMilli, toMilli } from '../shared/money';
 
 const clean = (v: string | null | undefined) => (v == null ? null : v.trim().slice(0, 60) || null);
 
@@ -50,7 +52,8 @@ cardsApi.get('/', async (c) => {
   const add = (name: string, key: string) => { const x = get(name); const label = appLabel(key) ?? key; if (!x.sources.includes(label)) x.sources.push(label); };
   for (const s of sources.results) add(s.card, s.key);
   for (const p of parsers.results) add(p.name, p.app.toLowerCase());
-  return c.json({ items: [...map.values()].sort((a, b) => b.month_spent - a.month_spent || b.count - a.count || a.name.localeCompare(b.name)) });
+  const fx = new Map((await cardFxAll(db, u)).map((f) => [f.card, f]));
+  return c.json({ items: [...map.values()].map((x) => ({ ...x, fx: fx.get(x.name) ?? null })).sort((a, b) => b.month_spent - a.month_spent || b.count - a.count || a.name.localeCompare(b.name)) });
 });
 
 /** Rinomina una carta ovunque (movimenti, fonti, lettori). Con `to` vuoto la carta si toglie. */
@@ -65,6 +68,61 @@ cardsApi.post('/rename', async (c) => {
     db.prepare('UPDATE transactions SET card = ? WHERE user_id = ? AND card = ?').bind(to, u, from),
     db.prepare('UPDATE capture_sources SET card = ?, updated_at = ? WHERE user_id = ? AND card = ?').bind(to, nowIso(), u, from),
     ...(to ? [db.prepare('UPDATE parsers SET name = ? WHERE user_id = ? AND name = ?').bind(to, u, from)] : []),
+    to ? db.prepare('UPDATE OR IGNORE card_settings SET card = ? WHERE user_id = ? AND card = ?').bind(to, u, from) : db.prepare('DELETE FROM card_settings WHERE user_id = ? AND card = ?').bind(u, from),
   ]);
   return c.json({ ok: true, changed: res[0].meta.changes ?? 0 });
+});
+
+// ---- Costo del cambio di ogni carta ----
+// La notifica dice quanto hai pagato in rupie, non quanto ti ha addebitato la carta. Basta scriverlo una volta su una
+// spesa: confrontando con il cambio ufficiale di quel giorno si ricava il ricarico della carta e si stima per le altre.
+
+export interface CardFx { card: string; currency: string | null; markup_bp: number | null; sample_tx_id: string | null; sample_charged: number | null; updated_at: string }
+
+export async function cardFxAll(db: D1Database, u: string): Promise<CardFx[]> {
+  return (await db.prepare('SELECT card, currency, markup_bp, sample_tx_id, sample_charged, updated_at FROM card_settings WHERE user_id = ?').bind(u).all<CardFx>()).results;
+}
+
+/** Costo del cambio stimato (millesimi di euro) di un movimento pagato con una carta di cui si conosce il ricarico. */
+export function fxFeeEstimate(fx: CardFx | null | undefined, currency: string, amountEur: number): number | null {
+  if (!fx || fx.markup_bp == null || !fx.currency || fx.currency === currency) return null;
+  return Math.round((Math.abs(amountEur) * Math.max(0, fx.markup_bp)) / 10000);
+}
+
+/** Su una spesa: quanto ha addebitato la carta nella sua valuta → ricarico della carta. */
+cardsApi.post('/calibrate', async (c) => {
+  const b = await body<{ tx_id?: string; charged?: number; currency?: string }>(c);
+  const db = c.env.DB;
+  const u = uid(c);
+  const tx = await db.prepare('SELECT id, card, amount, currency, amount_eur, occurred_at FROM transactions WHERE id = ? AND user_id = ? AND deleted_at IS NULL')
+    .bind(String(b.tx_id ?? ''), u).first<{ id: string; card: string | null; amount: number; currency: string; amount_eur: number; occurred_at: string }>();
+  if (!tx) notFound('Movimento non trovato');
+  if (!tx.card) bad('Prima scegli la carta di questa spesa');
+  const cur = String(b.currency ?? '').toUpperCase();
+  if (!/^[A-Z]{3}$/.test(cur)) bad('Valuta non valida');
+  if (cur === tx.currency) bad(`La spesa è già in ${cur}: serve una spesa in un'altra valuta`);
+  const charged = roundMilli(toMilli(Math.abs(Number(b.charged))), cur);
+  if (!charged) bad("Scrivi quanto ha addebitato la carta");
+  // Importo al cambio ufficiale di quel giorno, nella valuta della carta.
+  let official: number;
+  if (cur === 'EUR') official = Math.abs(tx.amount_eur);
+  else {
+    const rate = await getEurRate(db, cur, tx.occurred_at.slice(0, 10));
+    if (!rate?.eurPerUnit) bad(`Cambio ufficiale ${cur} non disponibile per quel giorno`);
+    official = Math.abs(tx.amount_eur) / rate.eurPerUnit;
+  }
+  if (!official) bad('Importo della spesa non valido');
+  const markup = Math.round((charged / official - 1) * 10000);
+  if (markup < -500 || markup > 2000) bad(`Il ricarico verrebbe ${(markup / 100).toFixed(1)}%: controlla l'importo e la valuta`);
+  await db.prepare(`INSERT INTO card_settings (user_id, card, currency, markup_bp, sample_tx_id, sample_charged, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (user_id, card) DO UPDATE SET currency = excluded.currency, markup_bp = excluded.markup_bp, sample_tx_id = excluded.sample_tx_id, sample_charged = excluded.sample_charged, updated_at = excluded.updated_at`)
+    .bind(u, tx.card, cur, markup, tx.id, charged, nowIso()).run();
+  return c.json({ card: tx.card, currency: cur, markup_bp: markup, official: Math.round(official) });
+});
+
+/** Toglie il ricarico calcolato di una carta. */
+cardsApi.post('/fx/forget', async (c) => {
+  const b = await body<{ card?: string }>(c);
+  await c.env.DB.prepare('DELETE FROM card_settings WHERE user_id = ? AND card = ?').bind(uid(c), clean(b.card) ?? '').run();
+  return c.json({ ok: true });
 });

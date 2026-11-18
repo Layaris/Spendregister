@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { parseAmount } from '../../shared/money';
 import { TIMEZONES } from '../../shared/time';
 import { api, clearCache } from '../api';
@@ -8,7 +8,7 @@ import { Icon } from '../icons';
 import { applyTheme, THEMES, useApi, useStore } from '../store';
 import { AiSettings } from './AiSettings';
 import type { Theme } from '../api';
-import { ErrorBox } from '../ui';
+import { ErrorBox, Loading } from '../ui';
 import { CURRENCIES, formatMoney, relativeTime } from '../util';
 
 const DISPLAY_CURRENCIES: Array<[string, string]> = [
@@ -22,7 +22,8 @@ const LINKS: Array<[string, string, string, string]> = [
   ['#/viaggi', 'plane', 'Viaggi', 'Quanto spendi in ogni viaggio'],
   ['#/ricorrenti', 'repeat', 'Spese ricorrenti', 'Abbonamenti e spese fisse, con la prossima data'],
   ['#/cattura', 'bolt', 'Cattura automatica', 'Telefoni collegati, notifiche ricevute, lettori'],
-  ['#/carte', 'card', 'Carte e banche', 'Con quale carta paghi, quanto per carta'],
+  ['#/carte', 'card', 'Carte e banche', 'Con quale carta paghi, quanto per carta, costo del cambio'],
+  ['#/negozi', 'store', 'Negozi', 'Unisci lo stesso negozio scritto in modi diversi'],
   ['#/importa-wallet', 'download', 'Importa da Wallet', 'Movimenti, conti, categorie ed etichette da Wallet by BudgetBakers'],
   ['#/regole', 'rules', 'Regole', 'Categoria in base a merchant, importo, ora'],
   ['#/assistente', 'sparkle', 'Assistente AI', 'Domande sulle spese, scontrini, screenshot'],
@@ -82,6 +83,7 @@ export function More({ onAuthChange }: { onAuthChange: () => void }) {
       <BackupSection />
       <WipeBalance />
       <AiSettings />
+      <NotificationsSection />
       <FeaturesSection />
       <SettingsSection />
       {!guest && <button className="btn" onClick={logout}>Esci</button>}
@@ -377,10 +379,16 @@ const FEATURES: Array<[string, string, string]> = [
   ['forecast', 'Previsione di fine mese', 'Spese, entrate e saldo previsti, dalla media degli ultimi mesi'],
   ['weekly_summary', 'Riepilogo settimanale', 'Una scheda in Home con la tua settimana: speso, confronto, categorie principali'],
   ['atm_transfer', 'Prelievi verso i contanti', 'Un prelievo al bancomat sposta i soldi nel conto Contanti della sua valuta (es. Contanti IDR) e non conta come spesa: la spesa la registri quando paghi in contanti. Spento: il prelievo resta una spesa in Prelievi e cambio valuta'],
+  ['sub_reminders', 'Promemoria degli abbonamenti', 'Il giorno prima di una spesa ricorrente confermata arriva una notifica, così puoi disdire in tempo (servono le notifiche attive)'],
 ];
 
-/** Impostazioni › Funzioni: le funzioni facoltative si accendono e si spengono qui (sincronizzate con l'account). */
-function FeaturesSection() {
+const PUSH_KINDS: Array<[string, string, string]> = [
+  ['push_budget', 'Budget', "Quando arrivi all'80% del budget del mese e quando lo superi"],
+  ['push_capture', 'Cattura ferma', 'Se un telefono non manda spese da 2 giorni'],
+  ['push_review', 'Da rivedere', 'Al mattino, se ci sono movimenti che aspettano una categoria'],
+];
+
+function FeatureRows({ items }: { items: Array<[string, string, string]> }) {
   const store = useStore();
   const on = store.settings.features ?? {};
   const toggle = async (k: string) => {
@@ -388,19 +396,108 @@ function FeaturesSection() {
     await store.refresh();
   };
   return (
+    <div className="list">
+      {items.map(([k, title, text]) => (
+        <div key={k} className="lrow" style={{ cursor: 'default' }}>
+          <span className="grow stack" style={{ gap: 0, minWidth: 0 }}><span style={{ fontWeight: 600 }}>{title}</span><span className="muted" style={{ fontSize: 13 }}>{text}</span></span>
+          <button role="switch" aria-checked={!!on[k]} aria-label={`${on[k] ? 'Spegni' : 'Accendi'} ${title}`} onClick={() => toggle(k)}
+            style={{ width: 51, height: 31, borderRadius: 16, border: 0, position: 'relative', flexShrink: 0, cursor: 'pointer', background: on[k] ? 'var(--accent)' : 'var(--line)' }}>
+            <span style={{ position: 'absolute', top: 2, left: on[k] ? 22 : 2, width: 27, height: 27, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,.2)', transition: 'left .15s' }} />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Impostazioni › Funzioni: le funzioni facoltative si accendono e si spengono qui (sincronizzate con l'account). */
+function FeaturesSection() {
+  return (
     <section className="stack" style={{ gap: 8 }}>
       <span className="section-title">Funzioni</span>
-      <div className="list">
-        {FEATURES.map(([k, title, text]) => (
-          <div key={k} className="lrow" style={{ cursor: 'default' }}>
-            <span className="grow stack" style={{ gap: 0, minWidth: 0 }}><span style={{ fontWeight: 600 }}>{title}</span><span className="muted" style={{ fontSize: 13 }}>{text}</span></span>
-            <button role="switch" aria-checked={!!on[k]} aria-label={`${on[k] ? 'Spegni' : 'Accendi'} ${title}`} onClick={() => toggle(k)}
-              style={{ width: 51, height: 31, borderRadius: 16, border: 0, position: 'relative', flexShrink: 0, cursor: 'pointer', background: on[k] ? 'var(--accent)' : 'var(--line)' }}>
-              <span style={{ position: 'absolute', top: 2, left: on[k] ? 22 : 2, width: 27, height: 27, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,.2)', transition: 'left .15s' }} />
-            </button>
-          </div>
-        ))}
+      <FeatureRows items={FEATURES} />
+    </section>
+  );
+}
+
+const pushSupported = () => typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+
+function b64ToBytes(b64: string): Uint8Array {
+  const s = atob(b64.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (b64.length % 4)) % 4));
+  return Uint8Array.from(s, (ch) => ch.charCodeAt(0));
+}
+
+/** Notifiche dell'app installata, attivate telefono per telefono. Cosa avvisa si sceglie per tutto l'account. */
+function NotificationsSection() {
+  const store = useStore();
+  const [sub, setSub] = useState<PushSubscription | null | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const supported = pushSupported();
+  const ios = /iPhone|iPad/.test(navigator.userAgent);
+  const standalone = window.matchMedia?.('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
+
+  useEffect(() => {
+    if (!supported) { setSub(null); return; }
+    navigator.serviceWorker.getRegistration().then((r) => r?.pushManager.getSubscription() ?? null).then((s) => setSub(s ?? null)).catch(() => setSub(null));
+  }, [supported]);
+
+  const enable = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') throw new Error('Permesso negato: riattivalo nelle impostazioni del telefono per questa app');
+      const reg = await navigator.serviceWorker.ready;
+      const { key } = await api<{ key: string }>('/push/key');
+      const s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) as BufferSource });
+      await api('/push/subscribe', { method: 'POST', json: { endpoint: s.endpoint } });
+      await api('/push/test', { method: 'POST' });
+      setSub(s);
+      store.toast('Notifiche attive su questo telefono');
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const disable = async () => {
+    if (!sub) return;
+    setBusy(true);
+    try {
+      await api('/push/unsubscribe', { method: 'POST', json: { endpoint: sub.endpoint } }).catch(() => {});
+      await sub.unsubscribe();
+      setSub(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="stack" style={{ gap: 8 }}>
+      <span className="section-title">Notifiche</span>
+      <div className="card" style={{ gap: 8 }}>
+        {!supported ? (
+          <span className="muted" style={{ fontSize: 14 }}>{ios && !standalone
+            ? 'Su iPhone le notifiche funzionano solo con Ledgy aggiunta alla schermata Home: Condividi › Aggiungi alla schermata Home, poi aprila da lì.'
+            : 'Questo browser non riceve notifiche dalle app web.'}</span>
+        ) : sub === undefined ? <Loading /> : sub ? (
+          <>
+            <span style={{ fontSize: 15 }}><b>Attive su questo telefono.</b> <span className="muted">Scegli qui sotto per cosa.</span></span>
+            <div className="row" style={{ gap: 8 }}>
+              <button className="btn" disabled={busy} onClick={() => api('/push/test', { method: 'POST' }).then(() => store.toast('Notifica di prova mandata'))}>Prova</button>
+              <button className="btn ghost" disabled={busy} onClick={disable}>Disattiva qui</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <span className="muted" style={{ fontSize: 14 }}>Ledgy può avvisarti sul telefono: budget, cattura ferma, movimenti da rivedere e, se lo accendi in Funzioni, abbonamenti in arrivo.</span>
+            <button className="btn primary" style={{ alignSelf: 'flex-start' }} disabled={busy} onClick={enable}>Attiva le notifiche</button>
+          </>
+        )}
+        <ErrorBox error={error} />
       </div>
+      <FeatureRows items={PUSH_KINDS} />
     </section>
   );
 }

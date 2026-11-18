@@ -30,6 +30,7 @@ export const V1_CATEGORIES: Array<{ id: string; name: string; parent: string | n
 /** Testo che, in una notifica, fa finta che il database non risponda (prova della coda delle notifiche). */
 export const TEST_DB_DOWN = 'SIMULA-DATABASE-GIU';
 
+const pushLog: Array<{ path: string; auth: string; ttl: string }> = [];
 let proc: ChildProcess | null = null;
 let ai: Server | null = null;
 
@@ -63,6 +64,12 @@ function fakeAi(): Server {
     req.on('end', () => {
       const send = (status: number, obj: unknown) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
       if (req.url === '/stats') return send(200, stats);
+      // Servizio di push finto: registra le spinte (con la firma VAPID); /push/scaduta risponde 410 come un'iscrizione tolta.
+      if (req.url === '/push-log') return send(200, pushLog);
+      if (req.url?.startsWith('/push/')) {
+        pushLog.push({ path: req.url, auth: String(req.headers.authorization ?? ''), ttl: String(req.headers.ttl ?? '') });
+        return send(req.url === '/push/scaduta' ? 410 : 201, {});
+      }
       if (req.url?.startsWith('/wallet/')) return walletFake(req, res);
       const b = data ? JSON.parse(data) : {};
       if (req.url?.startsWith('/gemini/')) {
@@ -167,7 +174,7 @@ export default async function setup(project: TestProject) {
   proc = spawn('npx', [
     'wrangler', 'dev', '--port', String(PORT), '--ip', '127.0.0.1', '--persist-to', dir, '--env-file', join(dir, 'none.env'),
     '--test-scheduled', '--var', `AI_ENDPOINTS:${JSON.stringify({ gemini: `http://127.0.0.1:${AI_PORT}/gemini`, nanogpt: `http://127.0.0.1:${AI_PORT}/nanogpt` })}`, '--var', 'FX_FIXED:IDR:0.00005,SGD:0.7,USD:0.9,AED:0.25', '--var', `WALLET_API:http://127.0.0.1:${AI_PORT}/wallet/v1/api`,
-    '--var', 'D1_ROWS:1', '--var', `TEST_DB_DOWN:${TEST_DB_DOWN}`,
+    '--var', 'D1_ROWS:1', '--var', `TEST_DB_DOWN:${TEST_DB_DOWN}`, '--var', 'PUSH_HTTP:1',
   ], { stdio: 'ignore', env: { ...process.env, CI: '1' }, detached: true });
   const base = `http://127.0.0.1:${PORT}`;
   let ready = false;

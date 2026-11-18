@@ -14,6 +14,8 @@ export interface Env {
   D1_ROWS?: string;
   /** Solo per i test: una notifica con questo testo fa finta che il database non risponda. */
   TEST_DB_DOWN?: string;
+  /** Solo per i test: accetta iscrizioni alle notifiche su http (servizio di push finto). */
+  PUSH_HTTP?: string;
 }
 
 export async function getSetting(db: D1Database, key: string): Promise<string | null> {

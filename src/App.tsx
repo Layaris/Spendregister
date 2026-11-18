@@ -4,6 +4,7 @@ import { flushOutbox, onOutbox, pending } from './outbox';
 import { Icon } from './icons';
 import { Add } from './pages/Add';
 import { Capture } from './pages/Capture';
+import { Merchants } from './pages/Merchants';
 import { Cards } from './pages/Cards';
 import { Categories } from './pages/Categories';
 import { Home } from './pages/Home';
@@ -118,6 +119,7 @@ function Shell({ onAuthChange }: { onAuthChange: () => void }) {
     case 'cattura': content = <Capture />; break;
     case 'categorie': content = <Categories />; break;
     case 'carte': content = <Cards />; break;
+    case 'negozi': content = <Merchants />; break;
     case 'importa-wallet': content = <WalletImport />; break;
     case 'budget': content = <Budget />; break;
     case 'ricorrenti': content = <Recurring />; break;

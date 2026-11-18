@@ -1,9 +1,12 @@
 import { Hono } from 'hono';
 import { roundMilli, toMilli } from '../shared/money';
 import { cleanMerchantName } from '../shared/notification';
+import { canonicalMerchant } from './merchants';
+import { budgetPush } from './push';
 import { evaluateRules, type Rule, type RuleDefinition, type RuleInput } from '../shared/rules';
 import { getEurRate } from './fx';
 import { normalizePostedAt } from '../shared/time';
+import { fxFeeEstimate, type CardFx } from './cards';
 import { bad, body, getTimeZone, HttpError, newId, notFound, nowIso, parseJson, runBatch, uid, type AppEnv } from './lib';
 import { seedId } from './seed';
 import { categoryFromKeywords } from '../shared/keywords';
@@ -32,6 +35,7 @@ export interface TxRow {
   review_reason: string | null;
   review_choices: string | null;
   transfer_group: string | null;
+  split_group: string | null;
   duplicate_of: string | null;
   capture_id: string | null;
   rule_ids: string | null;
@@ -103,7 +107,7 @@ export async function categoryFromHistory(db: D1Database, userId: string, mercha
   if (!merchant) return null;
   const row = await db
     .prepare(`SELECT t.category_id FROM transactions t JOIN categories c ON c.id = t.category_id AND c.archived = 0
-              WHERE t.user_id = ? AND t.merchant = ? COLLATE NOCASE AND t.status = 'confirmed' AND t.deleted_at IS NULL
+              WHERE t.user_id = ? AND t.merchant = ? COLLATE NOCASE AND t.status = 'confirmed' AND t.deleted_at IS NULL AND t.split_group IS NULL
               ORDER BY t.updated_at DESC LIMIT 1`)
     .bind(userId, merchant)
     .first<{ category_id: string }>();
@@ -261,6 +265,7 @@ transactionsApi.get('/', async (c) => {
   if (q.account) { where.push('t.account_id = ?'); args.push(q.account); }
   if (q.category) { where.push('(t.category_id = ? OR t.category_id IN (SELECT id FROM categories WHERE parent_id = ? AND user_id = ?))'); args.push(q.category, q.category, uid(c)); }
   if (q.merchant) { where.push('t.merchant = ?'); args.push(q.merchant); }
+  if (q.currency && /^[A-Z]{3}$/.test(q.currency)) { where.push('t.currency = ?'); args.push(q.currency); }
   if (q.q) {
     where.push('(t.merchant LIKE ? OR t.merchant_raw LIKE ? OR t.note LIKE ? OR t.card LIKE ? OR t.place LIKE ?)');
     args.push(...Array(5).fill(`%${q.q}%`));
@@ -306,7 +311,12 @@ transactionsApi.get('/:id', async (c) => {
   const ruleNames = tx.rule_ids.length
     ? (await c.env.DB.prepare(`SELECT id, name FROM rules WHERE user_id = ? AND id IN (${tx.rule_ids.map(() => '?').join(',')})`).bind(uid(c), ...tx.rule_ids).all()).results
     : [];
-  return c.json({ ...tx, capture, rules: ruleNames });
+  const fx = row.card ? await c.env.DB.prepare('SELECT card, currency, markup_bp, sample_tx_id, sample_charged, updated_at FROM card_settings WHERE user_id = ? AND card = ?').bind(uid(c), row.card).first<CardFx>() : null;
+  // Parti di una spesa divisa: le altre righe dello stesso gruppo.
+  const split = row.split_group
+    ? (await c.env.DB.prepare('SELECT id, amount, currency, amount_eur, category_id FROM transactions WHERE user_id = ? AND split_group = ? AND deleted_at IS NULL ORDER BY created_at, id').bind(uid(c), row.split_group).all()).results
+    : null;
+  return c.json({ ...tx, capture, rules: ruleNames, card_fx: fx, fx_fee: fxFeeEstimate(fx, row.currency, row.amount_eur), split });
 });
 
 interface TxInput {
@@ -345,7 +355,7 @@ transactionsApi.post('/', async (c) => {
   const occurred = normalizePostedAt(b.occurred_at, await getTimeZone(c.env.DB, userId));
   const milli = roundMilli(toMilli(b.amount), currency) * (type === 'income' ? 1 : -1);
   const merchantRaw = b.merchant?.trim() || null;
-  const merchant = cleanMerchantName(merchantRaw);
+  const merchant = await canonicalMerchant(c.env.DB, userId, cleanMerchantName(merchantRaw));
   let category = b.category_id ?? null;
   let nature = b.nature ?? null;
   let labels = b.labels ?? [];
@@ -364,6 +374,7 @@ transactionsApi.post('/', async (c) => {
     merchant: merchant ?? merchantRaw, note: b.note ?? null, category_id: category, nature, source: 'manual', labels, rule_ids: ruleIds, place: b.place ?? null,
     external_id: externalId,
   });
+  if (type === 'expense') c.executionCtx.waitUntil(budgetPush(c.env, userId).catch(() => {}));
   return c.json({ id }, 201);
 });
 
@@ -459,6 +470,82 @@ transactionsApi.post('/recategorize', async (c) => {
 transactionsApi.delete('/:id', async (c) => {
   await c.env.DB.prepare('UPDATE transactions SET deleted_at = ?, updated_at = ? WHERE id = ? AND user_id = ?').bind(nowIso(), nowIso(), c.req.param('id'), uid(c)).run();
   return c.json({ ok: true });
+});
+
+/**
+ * Divide una spesa in più categorie (es. supermercato: 30 cibo, 12 casa). Il movimento resta come prima parte;
+ * le altre sono movimenti nuovi con la stessa data, conto, carta, negozio ed etichette, legati da `split_group`.
+ * La somma delle parti deve essere l'importo originale; il valore in euro si divide in proporzione.
+ */
+transactionsApi.post('/:id/split', async (c) => {
+  const db = c.env.DB;
+  const id = c.req.param('id');
+  const userId = uid(c);
+  const b = await body<{ parts?: Array<{ amount?: number | string; category_id?: string | null }> }>(c);
+  const row = await db.prepare('SELECT * FROM transactions WHERE id = ? AND user_id = ? AND deleted_at IS NULL').bind(id, userId).first<TxRow>();
+  if (!row) notFound();
+  if (row.type === 'transfer') bad('Gli spostamenti tra conti non si dividono');
+  const parts = b.parts ?? [];
+  if (parts.length < 2 || parts.length > 10) bad('Servono da 2 a 10 parti');
+  const sign = row.amount < 0 ? -1 : 1;
+  const amounts = parts.map((p) => roundMilli(toMilli(typeof p.amount === 'string' ? Number(p.amount.replace(',', '.')) : p.amount ?? 0), row.currency));
+  if (amounts.some((a) => !Number.isFinite(a) || a <= 0)) bad('Ogni parte deve avere un importo');
+  if (amounts.reduce((a, x) => a + x, 0) !== Math.abs(row.amount)) bad('La somma delle parti deve essere uguale alla spesa');
+  for (const p of parts) await checkOwned(db, 'categories', p.category_id ?? null, userId);
+  const natures = await Promise.all(parts.map((p) => defaultNature(db, p.category_id ?? null)));
+  // Euro in proporzione; l'ultima parte prende il resto, così la somma resta esatta.
+  let restEur = row.amount_eur;
+  const eurs = amounts.map((a, i) => {
+    if (i === amounts.length - 1) return restEur;
+    const e = Math.round((row.amount_eur * a) / Math.abs(row.amount));
+    restEur -= e;
+    return e;
+  });
+  const group = row.split_group ?? row.id;
+  const now = nowIso();
+  const stmts: D1PreparedStatement[] = [
+    db.prepare(`UPDATE transactions SET amount = ?, amount_eur = ?, category_id = ?, nature = ?, split_group = ?,
+                status = CASE WHEN ? IS NOT NULL AND duplicate_of IS NULL THEN 'confirmed' ELSE status END,
+                review_reason = CASE WHEN ? IS NOT NULL AND duplicate_of IS NULL THEN NULL ELSE review_reason END, updated_at = ?
+                WHERE id = ? AND user_id = ?`)
+      .bind(amounts[0] * sign, eurs[0], parts[0].category_id ?? null, natures[0], group, parts[0].category_id ?? null, parts[0].category_id ?? null, now, id, userId),
+  ];
+  const ids: string[] = [id];
+  for (let i = 1; i < parts.length; i++) {
+    const nid = newId('tx');
+    ids.push(nid);
+    stmts.push(
+      db.prepare(`INSERT INTO transactions (id, user_id, type, account_id, amount, currency, amount_eur, fx_rate, fx_date, occurred_at, occurred_utc, merchant_raw, merchant,
+                  note, category_id, nature, card, source, status, place, lat, lng, split_group, created_at, updated_at)
+                  SELECT ?, user_id, type, account_id, ?, currency, ?, fx_rate, fx_date, occurred_at, occurred_utc, merchant_raw, merchant,
+                  note, ?, ?, card, source, CASE WHEN ? IS NULL THEN 'review' ELSE 'confirmed' END, place, lat, lng, ?, ?, ?
+                  FROM transactions WHERE id = ? AND user_id = ?`)
+        .bind(nid, amounts[i] * sign, eurs[i], parts[i].category_id ?? null, natures[i], parts[i].category_id ?? null, group, now, now, id, userId),
+      db.prepare('INSERT OR IGNORE INTO transaction_labels (transaction_id, label_id) SELECT ?, label_id FROM transaction_labels WHERE transaction_id = ?').bind(nid, id),
+      db.prepare('INSERT OR IGNORE INTO trip_items (user_id, trip_id, transaction_id, mode) SELECT user_id, trip_id, ?, mode FROM trip_items WHERE transaction_id = ? AND user_id = ?').bind(nid, id, userId),
+    );
+  }
+  await db.batch(stmts);
+  return c.json({ ids, split_group: group });
+});
+
+/** Riunisce una spesa divisa: torna un movimento solo, con la categoria della prima parte. */
+transactionsApi.post('/:id/unsplit', async (c) => {
+  const db = c.env.DB;
+  const userId = uid(c);
+  const row = await db.prepare('SELECT split_group FROM transactions WHERE id = ? AND user_id = ? AND deleted_at IS NULL').bind(c.req.param('id'), userId).first<{ split_group: string | null }>();
+  if (!row?.split_group) bad('Questa spesa non è divisa');
+  const parts = (await db.prepare('SELECT id, amount, amount_eur FROM transactions WHERE user_id = ? AND split_group = ? AND deleted_at IS NULL ORDER BY created_at, id')
+    .bind(userId, row.split_group).all<{ id: string; amount: number; amount_eur: number }>()).results;
+  const keep = parts.find((p) => p.id === row.split_group) ?? parts[0];
+  const now = nowIso();
+  const stmts = [
+    db.prepare('UPDATE transactions SET amount = ?, amount_eur = ?, split_group = NULL, updated_at = ? WHERE id = ? AND user_id = ?')
+      .bind(parts.reduce((a, p) => a + p.amount, 0), parts.reduce((a, p) => a + p.amount_eur, 0), now, keep.id, userId),
+    ...parts.filter((p) => p.id !== keep.id).map((p) => db.prepare('UPDATE transactions SET deleted_at = ?, split_group = NULL, updated_at = ? WHERE id = ? AND user_id = ?').bind(now, now, p.id, userId)),
+  ];
+  await db.batch(stmts);
+  return c.json({ id: keep.id });
 });
 
 /** Conferma un movimento da rivedere, con la categoria scelta. */
