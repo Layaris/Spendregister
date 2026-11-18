@@ -421,7 +421,7 @@ catalogApi.put('/settings', async (c) => {
     await db.prepare('UPDATE users SET display_currency = ? WHERE id = ?').bind(b.display_currency, uid(c)).run();
   }
   if (b.theme !== undefined) {
-    if (!['light', 'blue', 'dark', 'system'].includes(b.theme)) bad('Tema non valido');
+    if (!['light', 'blue', 'navy', 'dark', 'system'].includes(b.theme)) bad('Tema non valido');
     await db.prepare('UPDATE users SET theme = ? WHERE id = ?').bind(b.theme, uid(c)).run();
   }
   if (b.home_layout !== undefined) {

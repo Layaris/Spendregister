@@ -29,7 +29,7 @@ page.on('console', (m) => { if (m.type() === 'error' && !/\b(401|409)\b/.test(m.
 await page.goto(BASE);
 await page.waitForSelector('.tabbar');
 check(await page.isVisible('text=Stai usando Ledgy senza account'), "si usa subito, senza account, con l'invito a crearlo");
-check(await page.evaluate(() => getComputedStyle(document.body).backgroundColor) === 'rgb(241, 244, 242)', 'tema chiaro del mockup anche col telefono in modalità scura');
+check(await page.evaluate(() => getComputedStyle(document.body).backgroundColor) === 'rgb(238, 243, 238)', 'tema chiaro (Salvia) anche col telefono in modalità scura');
 
 // Dati di prova inviati come farebbe un telefono.
 const api = (path, init) => page.evaluate(async ([p, i]) => { const r = await fetch(p, i); return r.json(); }, [path, init]);
@@ -142,12 +142,10 @@ await page.click('button:has-text("Salva lettore")');
 await page.waitForTimeout(800);
 check((await api('/api/capture/parsers')).items.some((p) => p.name === 'Carta E2E'), 'salva il lettore');
 
-// Home: si spegne l'andamento e si accende "Entrate e uscite", nell'ordine scelto.
+// Home: si spegne il saldo totale e "Entrate e uscite" sale sopra i conti, nell'ordine scelto.
 await page.goto(`${BASE}/#/`);
 await page.click('button[aria-label="Personalizza la Home"]');
-await page.click('[aria-label="Personalizza la Home"] button[aria-label="Mostra Andamento del saldo"]');
-await page.waitForTimeout(500);
-await page.click('[aria-label="Personalizza la Home"] button[aria-label="Nascondi Andamento del saldo"]');
+await page.click('[aria-label="Personalizza la Home"] button[aria-label="Nascondi Saldo totale dei conti"]');
 await page.click('[aria-label="Personalizza la Home"] button[aria-label="Sposta su Entrate e uscite"]');
 await page.waitForTimeout(500);
 await page.click('[aria-label="Personalizza la Home"] button:has-text("Fatto")');
@@ -265,35 +263,25 @@ await page.goto(`${BASE}/#/`);
 await page.reload(); // i movimenti aggiunti sopra passano dall'API, non dall'app: si ricarica
 await page.click('.periodpill-label'); // il periodo è quello scelto prima in Statistiche: si torna al mese
 await page.click('[aria-label="Seleziona periodo"] button:has-text("Questo mese")');
-await page.waitForSelector('.hero .hero-amount:not(:has-text("…"))');
-check(await page.isVisible('.hero >> text=In media') && await page.isVisible('.hero >> text=Imposta un budget mensile'), 'senza budget il riquadro mostra media e invito al budget');
+await page.waitForSelector('.hero-card >> text=Al giorno');
+check(await page.isVisible('.hero-card >> text=Spesa del mese') && await page.isVisible('.hero-card >> text=Imposta un budget mensile'), 'senza budget il riquadro mostra spesa, media e invito al budget');
 const sumEur = (await api('/api/bootstrap')).accounts.reduce((t, a) => t + (a.balance_eur ?? 0), 0);
-const conti = (await page.textContent('h2:has-text("Conti") >> xpath=..')).replace(/\s/g, '');
+const conti = (await page.textContent('h2:has-text("Conti") >> xpath=../..')).replace(/\s/g, '');
 check(conti.includes((Math.abs(sumEur) / 1000).toFixed(2).replace('.', ',')), 'il totale dei conti è la somma dei conti');
 check(!(await page.isVisible('text=Cattura attiva')) && !(await page.isVisible('text=Collega un telefono')), 'lo stato della cattura non è più in Home');
 // Budget compatto (mockup 4): restano, barra con la tacca, quanto al giorno.
 await api('/api/budgets', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ category_id: '*', amount: 5_000_000 }) });
 await page.reload();
-await page.waitForSelector('.hero >> text=ancora disponibili');
-check(await page.isVisible('.hero >> text=Budget') && await page.isVisible('.hero >> text=Puoi spendere'), 'con il budget il riquadro mostra quanto resta e quanto al giorno');
-// Stile "Anello" scelto in Personalizza, poi di nuovo compatto.
-await page.click('button[aria-label="Personalizza la Home"]');
-await page.click('[aria-label="Stile del riquadro in alto"] button:has-text("Anello")');
-await page.click('[aria-label="Personalizza la Home"] button:has-text("Fatto")');
-await page.waitForSelector('.hero-ring >> text=del budget');
-check((await api('/api/bootstrap')).settings.hero_style === 'ring', 'lo stile ad anello si salva nell’account');
-await page.click('button[aria-label="Personalizza la Home"]');
-await page.click('[aria-label="Stile del riquadro in alto"] button:has-text("Budget compatto")');
-await page.click('[aria-label="Personalizza la Home"] button:has-text("Fatto")');
-await page.waitForSelector('.hero >> text=ancora disponibili');
+await page.waitForSelector('.hero-card >> text=Disponibili');
+check(await page.isVisible('.hero-card >> text=Budget mensile') && await page.isVisible('.hero-card >> text=del budget') && await page.isVisible('.hero-card >> text=Puoi ancora spendere'), 'con il budget il riquadro mostra anello, quanto resta e quanto al giorno');
 // Periodo della Home: tocco sul nome → anno, da inizio anno, date a scelta.
 await page.click('.periodpill-label');
 await page.click('[aria-label="Seleziona periodo"] button:has-text("Quest’anno")');
-await page.waitForSelector('.hero >> text=Speso quest’anno');
-check(await page.isVisible('.hero >> text=a fine anno') && (await page.textContent('.periodpill-title')).includes(String(new Date().getFullYear())), 'sceglie l’anno dalla Home, con previsione a fine anno');
+await page.waitForSelector('.hero-card >> text=Speso quest’anno');
+check(await page.isVisible('.hero-card >> text=a fine anno') && (await page.textContent('.periodpill-title')).includes(String(new Date().getFullYear())), 'sceglie l’anno dalla Home, con previsione a fine anno');
 await page.click('.periodpill-label');
 await page.click('[aria-label="Seleziona periodo"] button:has-text("Questo mese")');
-await page.waitForSelector('.hero >> text=ancora disponibili');
+await page.waitForSelector('.hero-card >> text=Disponibili');
 await page.goto(`${BASE}/#/altro`);
 check(await page.waitForSelector('a[href="#/cattura"] >> text=/Attiva su|Nessun telefono|nessun segnale/', { timeout: 5000 }).then(() => true, () => false), 'lo stato della cattura è in Altro');
 

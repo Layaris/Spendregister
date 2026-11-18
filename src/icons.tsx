@@ -1,7 +1,7 @@
 // Icone dell'app: set Lucide (licenza ISC), tutte con lo stesso tratto. I nomi restano quelli salvati nel database
 // (categorie: food, home, car…) e usati nelle pagine; qui si traducono nell'icona Lucide giusta.
 import {
-  ArrowLeftRight, BadgeCheck, Banknote, Bell, Bike, BookOpen, Briefcase, Calendar, Camera, Car, ChartColumn, ChartPie, Check,
+  ArrowLeftRight, ArrowUpDown, BadgeCheck, CalendarDays, ChartColumnIncreasing, Coins, HandCoins, Leaf, PiggyBank, User, Banknote, Bell, Bike, BookOpen, Briefcase, Calendar, Camera, Car, ChartColumn, ChartPie, Check,
   ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Copy, CreditCard, Download, Ellipsis, Eye, Gift, HandHeart, House, Inbox,
   Landmark, List, Mic, NotebookPen, PawPrint, Plane, Plus, Repeat, Settings, ShoppingBag, SlidersHorizontal, Smartphone, Sparkles,
   Star, Stethoscope, Store, Tag, Ticket, Trash2, TrendingUp, TriangleAlert, Users, UtensilsCrossed, Wallet, WifiOff, X, Zap,
@@ -14,6 +14,7 @@ const ICONS: Record<string, LucideIcon> = {
   eye: Eye, sparkle: Sparkles, bolt: Zap, check: Check, verified: BadgeCheck, camera: Camera, phone: Smartphone,
   download: Download, mic: Mic, rules: SlidersHorizontal, gear: Settings, inbox: Inbox, trash: Trash2, copy: Copy,
   warn: TriangleAlert, bell: Bell, offline: WifiOff, cash: Banknote,
+  coins: Coins, leaf: Leaf, user: User, inout: ArrowUpDown, moneybag: HandCoins, growth: ChartColumnIncreasing, days: CalendarDays, piggy: PiggyBank,
   // Categorie
   food: UtensilsCrossed, bag: ShoppingBag, car: Car, scooter: Bike, heart: HandHeart, bank: Landmark, income: TrendingUp,
   transfer: ArrowLeftRight, question: CircleHelp, repeat: Repeat, health: Stethoscope, ticket: Ticket, plane: Plane,

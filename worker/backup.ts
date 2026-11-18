@@ -198,7 +198,7 @@ backupApi.post('/import/chunk', async (c) => {
       const cur = get('display_currency');
       if (typeof cur === 'string' && /^[A-Z]{3}$/.test(cur)) await db.prepare('UPDATE users SET display_currency = ? WHERE id = ?').bind(cur, u).run();
       const theme = get('theme');
-      if (typeof theme === 'string' && ['light', 'blue', 'dark', 'system'].includes(theme)) await db.prepare('UPDATE users SET theme = ? WHERE id = ?').bind(theme, u).run();
+      if (typeof theme === 'string' && ['light', 'blue', 'navy', 'dark', 'system'].includes(theme)) await db.prepare('UPDATE users SET theme = ? WHERE id = ?').bind(theme, u).run();
       const home = get('home_layout');
       if (typeof home === 'string') {
         try { if (Array.isArray(JSON.parse(home))) await db.prepare('UPDATE users SET home_layout = ? WHERE id = ?').bind(home, u).run(); } catch { /* ignora */ }

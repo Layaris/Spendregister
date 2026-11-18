@@ -447,7 +447,7 @@ function SettingsSection() {
       <div className="field">
         <span>Tema</span>
         <div className="seg" role="group" aria-label="Tema">
-          {([['light', 'Chiaro'], ['blue', 'Azzurro'], ['dark', 'Scuro'], ['system', 'Auto']] as Array<[Theme, string]>).map(([t, label]) => (
+          {([['light', 'Salvia'], ['blue', 'Acqua'], ['navy', 'Navy'], ['dark', 'Scuro'], ['system', 'Auto']] as Array<[Theme, string]>).map(([t, label]) => (
             <button key={t} aria-pressed={store.settings.theme === t} onClick={() => { applyTheme(t); saveSetting({ theme: t }, 'Tema salvato'); }}>{label}</button>
           ))}
         </div>
