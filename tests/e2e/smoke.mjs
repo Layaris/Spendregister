@@ -29,7 +29,7 @@ page.on('console', (m) => { if (m.type() === 'error' && !/\b(401|409)\b/.test(m.
 await page.goto(BASE);
 await page.waitForSelector('.tabbar');
 check(await page.isVisible('text=Stai usando Ledgy senza account'), "si usa subito, senza account, con l'invito a crearlo");
-check(await page.evaluate(() => getComputedStyle(document.body).backgroundColor) === 'rgb(238, 243, 238)', 'tema chiaro (Salvia) anche col telefono in modalità scura');
+check(await page.evaluate(() => getComputedStyle(document.body).backgroundColor) === 'rgb(228, 235, 220)', 'tema chiaro (Salvia) anche col telefono in modalità scura');
 
 // Dati di prova inviati come farebbe un telefono.
 const api = (path, init) => page.evaluate(async ([p, i]) => { const r = await fetch(p, i); return r.json(); }, [path, init]);

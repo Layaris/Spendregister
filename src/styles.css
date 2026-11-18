@@ -49,8 +49,9 @@
   --f-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   color-scheme: light;
 }
-/* Acqua: il mockup principale. Azzurro chiaro, verde per i soldi, blu petrolio per i comandi. */
-:root[data-theme='blue'], :root[data-theme='navy'] {
+/* Acqua: il mockup principale. Azzurro chiaro, verde per i soldi, blu petrolio per i comandi.
+   "aqua1" = Acqua 1, la prima versione (questi colori); "blue" = Acqua 2, con le finiture della tavola più sotto. */
+:root[data-theme='blue'], :root[data-theme='navy'], :root[data-theme='aqua1'] {
   --bg: #e2ecf3;
   --bg-grad: linear-gradient(180deg, #ebf2f7 0%, #dce7f0 100%);
   --card-grad: linear-gradient(180deg, rgba(255, 255, 255, 0.95) 0%, rgba(248, 251, 253, 0.88) 100%);
@@ -236,7 +237,7 @@ textarea.input { min-height: 90px; resize: vertical; }
 .home-head { display: flex; align-items: center; gap: 6px; }
 .home-head .periodpill .iconbtn { width: 30px; }
 .home-head .periodpill-title { font-size: 15px; }
-@media (max-width: 380px) { .home-head .opt, .home-head .vdiv { display: none; } }
+@media (max-width: 380px) { .home-head .vdiv { display: none; } }
 .logo { width: 42px; height: 42px; border-radius: 14px; background: var(--primary-grad); color: #ffffff; display: grid; place-items: center; flex-shrink: 0; box-shadow: 0 6px 16px rgba(15, 34, 51, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.25); }
 .vdiv { width: 1px; height: 34px; background: color-mix(in srgb, var(--head-ink) 18%, transparent); flex-shrink: 0; }
 .head-btn { width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--card-border); background: var(--head-btn); color: var(--head-ink); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; position: relative; box-shadow: var(--shadow-card); text-decoration: none; }
@@ -359,3 +360,120 @@ textarea.input { min-height: 90px; resize: vertical; }
 
 /* Gli importi non vanno mai a capo ("687.069,15 $" su una riga sola). */
 .money { white-space: nowrap; }
+
+/* Finiture della tavola Salvia / Acqua / Navy. */
+:root {
+  --switch-thumb: #fff;
+  --budget-warning: #bf7619;
+  --ring-track: color-mix(in srgb, var(--pos) 23%, var(--card));
+  --wave: color-mix(in srgb, var(--accent) 20%, transparent);
+  --glass-edge: color-mix(in srgb, var(--card) 86%, transparent);
+  --tile-end: color-mix(in srgb, var(--tile) 72%, var(--accent-soft));
+  --income-bar: color-mix(in srgb, var(--pos) 77%, var(--ink));
+  --bg: #e4ebdc;
+  --bg-grad: radial-gradient(ellipse at top right, #d2e3cf, transparent 53%), linear-gradient(#edf1e8, #e5e9db 65%, #f2eee2);
+  --card-grad: linear-gradient(155deg, #fffffbf5, #f8f7eced);
+  --hero-bg: linear-gradient(118deg, #fffffc, #eef4e6);
+  --primary-grad: linear-gradient(150deg, #8dc9a0, #297746 55%, #085636);
+  --shadow-card: inset 0 1px 0 var(--glass-edge), 0 1px 2px #26372318, 0 4px 10px #48594420;
+}
+:root[data-theme='blue'], :root[data-theme='navy'] {
+  --bg: #dfebf3;
+  --bg-grad: radial-gradient(ellipse at top right, #c8e4f3, transparent 55%), linear-gradient(#e3eef5, #d3e5f0 65%, #e6eff5);
+  --card-grad: linear-gradient(145deg, #fffffff5, #f7fafbee 64%, #edf4f8f0);
+  --hero-bg: linear-gradient(125deg, #fafdff, #e6f4fb 62%, #cee6f3);
+  --tile-end: #e7f1f7;
+  --wave: #91cbeb6b;
+  --primary-grad: linear-gradient(150deg, #5fb6c9, #146f87 53%, #084359);
+  --income-bar: #09664e;
+  --shadow-card: inset 0 1px 0 var(--glass-edge), 0 1px 2px #1733481c, 0 4px 10px #385f7924;
+}
+:root[data-theme='navy'] {
+  --bg: #e4e7ec;
+  --bg-grad: linear-gradient(#eeeff2, #dce1e8);
+  --home-sky: radial-gradient(ellipse at top left, #264674, #101f39 85%);
+  --card-grad: linear-gradient(150deg, #fffefa, #f7f5f0);
+  --hero-bg: linear-gradient(145deg, #244578, #092845 72%, #10405b);
+  --wave: #588aa647;
+  --tile-end: #f3f1ec;
+  --hero-line: #4fd29a;
+  --ring-track: #d5d5cf;
+  --primary-grad: linear-gradient(145deg, #8bbfeb, #4c83bb 60%, #274c79);
+  --tabbar-bg: linear-gradient(110deg, #233c65, #112340);
+}
+:root[data-theme='navy'] body:has(.home) {
+  background: var(--home-sky) top center / 100% calc(200px + env(safe-area-inset-top, 0px)) no-repeat, var(--bg-grad);
+}
+.app {
+  padding-inline: max(10px, env(safe-area-inset-left)) max(10px, env(safe-area-inset-right));
+  padding-top: calc(12px + env(safe-area-inset-top));
+}
+.home { gap: 9px; }
+.widget { min-width: 0; }
+.card, .list, .amount-card {
+  border-radius: 16px;
+  border: 1px solid var(--card-border);
+  background: var(--card-grad);
+  box-shadow: var(--shadow-card);
+}
+.card { padding: 13px 14px; }
+.widget > .card { gap: 8px; }
+.card.saldo { background: var(--hero-bg); gap: 2px; padding: 12px 15px 9px; isolation: isolate; }
+.saldo::before, [data-widget='forecast'] > .card::before {
+  content: ''; position: absolute; pointer-events: none; z-index: -1;
+  inset: 0 0 auto auto; width: 64%; height: 44px; background: linear-gradient(180deg, var(--wave), transparent);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 44' preserveAspectRatio='none'%3E%3Cpath d='M0 30C35 32 53 3 89 8S151 35 179 17S215 2 240 6V44H0Z'/%3E%3C/svg%3E") center / 100% 100%;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 44' preserveAspectRatio='none'%3E%3Cpath d='M0 30C35 32 53 3 89 8S151 35 179 17S215 2 240 6V44H0Z'/%3E%3C/svg%3E") center / 100% 100%;
+}
+[data-widget='forecast'] > .card { position: relative; isolation: isolate; overflow: hidden; }
+.saldo-title { margin: 0; font-size: 13px; line-height: 1.4; }
+.saldo-sub { font-size: 11px; }
+.saldo > .row { flex-wrap: wrap; }
+:root[data-theme='navy'] .saldo { border-color: var(--head-btn); }
+:root[data-theme='navy'] .saldo .chip.pos { background: #0d6555; color: #e4fff0; }
+.home-head { gap: 7px; min-height: 46px; padding: 0 3px; }
+.logo { width: 37px; height: 37px; border-radius: 11px; }
+.logo svg { fill: currentColor; stroke: var(--accent); }
+.head-btn { width: 34px; height: 34px; }
+.periodpill-title, .periodpill-sub { white-space: normal; overflow: visible; text-align: center; line-height: 1.2; }
+.home-head .periodpill .iconbtn { width: 21px; height: 36px; padding: 0; }
+.ctitle { gap: 8px; }
+.ctitle .h2 { font-size: 16px; line-height: 1.2; letter-spacing: -.025em; }
+.ctitle > svg { width: 20px; height: 20px; }
+.hero-card { line-height: 1.25; }
+.bud-top { align-items: center; gap: 5px; }
+.daypill { padding: 4px 8px; border-radius: 12px; font-size: 10.5px; background: linear-gradient(125deg, var(--pos-soft), var(--accent-soft)); }
+.daypill b { font-size: 13px; }
+.daypill small { display: block; font-size: inherit; }
+.bud-body { gap: 12px; }
+.budget-ring { width: clamp(74px, 20vw, 90px); height: auto; }
+.bstats { display: flex; flex-wrap: wrap; row-gap: 4px; }
+.bstats > div { flex: 1 0 max-content; padding: 0 6px; }
+.bstats span { font-size: 12px; }
+.budget-caption { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 5px; font-size: 11px; color: var(--muted); }
+.budget-caption span:last-child:not(:first-of-type) { margin-left: auto; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, max(94px, 28%)), 1fr)); gap: 7px; overflow: visible; padding: 0; margin: 0; }
+.tile { min-width: min-content; padding: 7px 6px; gap: 1px; border-radius: 11px; background: linear-gradient(145deg, var(--card), var(--tile-end)); box-shadow: var(--shadow-card); }
+.tile > svg { height: 19px; width: 19px; margin-bottom: 2px; }
+.tile span { font-size: 12px; white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+.iorow { grid-template-columns: 54px minmax(24px, 1fr) minmax(8ch, max-content); font-size: 13px; gap: 8px; }
+.iorow b { text-align: right; }
+.iorow .bar { height: 8px; }
+.frow { padding: 4px 0; font-size: 13px; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 7px; }
+.frow b { font-size: 15px; }
+.frow b:not(.money) { white-space: normal; }
+.frow > svg { height: 17px; color: var(--pos); }
+.chip.pos, .chip.neg { font-size: 12px; padding: 2px 8px; }
+.tabbar { box-shadow: 0 -2px 9px color-mix(in srgb, var(--ink) 7%, transparent); }
+.tab { border-radius: 14px; }
+.fab { width: 48px; height: 48px; }
+.txrow + .txrow { border-top: 1px solid var(--line); padding-top: 8px; }
+.seg, .input, .pad button { border: 1px solid var(--line); }
+.padsheet { background: var(--card-grad), var(--card); }
+
+/* Le due barre condividono la stessa scala anche con importi di lunghezze diverse. */
+@supports (grid-template-columns: subgrid) {
+[data-widget='cashflow'] > .card { display: grid; grid-template-columns: auto minmax(20px, 1fr) auto; }
+[data-widget='cashflow'] > .card > .row { grid-column: 1 / -1; }
+.iorow { grid-column: 1 / -1; grid-template-columns: subgrid; }
+}

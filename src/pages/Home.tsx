@@ -3,7 +3,7 @@ import { api, type Stats, type Theme, type Tx } from '../api';
 import { Icon } from '../icons';
 import { setPeriod, usePeriodSpec } from '../period';
 import { PeriodSheet, periodArrows } from '../PeriodSheet';
-import { applyTheme, useApi, useStore } from '../store';
+import { applyTheme, THEMES, useApi, useStore } from '../store';
 import { CategoryIcon, TxRow } from '../ui';
 import { eur, fitSize, formatDayShort, formatMoney, localDay, monthPeriod, pct, periodOf } from '../util';
 import { BudgetBar, budgetTone, type BudgetView } from './Budget';
@@ -36,7 +36,7 @@ const MOCKUP_TOP = ['balance', 'hero', 'accounts', 'cashflow', 'forecast'];
 /** Titolo di un riquadro: icona, nome e (a destra) un dato o un link. */
 function CardTitle({ icon, title, right }: { icon: string; title: ReactNode; right?: ReactNode }) {
   return (
-    <div className="row between" style={{ gap: 8 }}>
+    <div className="row between" style={{ gap: 8, flexWrap: 'wrap' }}>
       <div className="ctitle"><Icon name={icon} size={23} /><h2 className="h2">{title}</h2></div>
       {right}
     </div>
@@ -118,8 +118,8 @@ export function Home() {
       const dayPct = s && ongoing ? (s.days.elapsed / s.days.total) * 100 : undefined;
       const C = 2 * Math.PI * 42;
       const ring = (pct: number, color: string, big: string, small: string) => (
-        <svg width="100" height="100" viewBox="0 0 100 100" aria-hidden="true" style={{ flexShrink: 0 }}>
-          <circle cx="50" cy="50" r="42" fill="none" stroke="var(--sunken)" strokeWidth="9" />
+        <svg className="budget-ring" width="100" height="100" viewBox="0 0 100 100" aria-hidden="true" style={{ flexShrink: 0 }}>
+          <circle cx="50" cy="50" r="42" fill="none" stroke="var(--ring-track)" strokeWidth="9" />
           <circle cx="50" cy="50" r="42" fill="none" stroke={color} strokeWidth="9" strokeLinecap="round"
             strokeDasharray={C} strokeDashoffset={C * (1 - Math.max(0, Math.min(pct, 100)) / 100)} transform="rotate(-90 50 50)" />
           <text x="50" y="52" textAnchor="middle" style={{ fontFamily: 'var(--f-display)' }} fontWeight="700" fontSize="22" fill="var(--ink)">{big}</text>
@@ -127,7 +127,7 @@ export function Home() {
         </svg>
       );
       const stat = (label: string, value: string, color?: string) => (
-        <div><span>{label}</span><b className="money" style={{ color, fontSize: fitSize(value, 18) }}>{value}</b></div>
+        <div><span>{label}</span><b className="money" style={{ color, fontSize: fitSize(value, 17) }}>{value}</b></div>
       );
       if (bud) {
         const pct = Math.round((bud.spent / Math.max(bud.amount, 1)) * 100);
@@ -136,19 +136,19 @@ export function Home() {
             <div className="bud-top" style={{ flexWrap: 'wrap' }}>
               <div className="ctitle"><Icon name="wallet" size={23} /><h2 className="h2">Budget mensile</h2></div>
               {bud.left > 0 && dayPct != null && (
-                <div className="daypill"><Icon name="days" size={20} /><span>Puoi ancora spendere<br /><b className="num money">{eur(bud.per_day)}</b> al giorno</span></div>
+                <div className="daypill"><Icon name="days" size={18} /><span>Puoi ancora spendere<br /><b className="num money">{eur(bud.per_day)}</b> al giorno<small>fino a fine mese</small></span></div>
               )}
             </div>
             <div className="bud-body">
               {ring(pct, budgetTone(pct), `${pct}%`, 'del budget')}
               <div className="grow stack" style={{ gap: 10, minWidth: 0 }}>
-                <div className="bstats" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+                <div className="bstats">
                   {stat('Speso', eur(bud.spent))}
                   {stat(bud.left < 0 ? 'Oltre il budget' : 'Disponibili', eur(Math.abs(bud.left)), bud.left < 0 ? 'var(--neg)' : 'var(--pos)')}
                 </div>
                 <BudgetBar spent={bud.spent} amount={bud.amount} dayPct={dayPct} />
-                <span className="row muted" style={{ gap: 6, fontSize: 12.5, flexWrap: 'wrap' }}>
-                  <Icon name="calendar" size={15} />Budget: <b className="num money" style={{ color: 'var(--ink)' }}>{eur(bud.amount)}</b>{s && dayPct != null ? <> · Giorno {s.days.elapsed} di {s.days.total}</> : null}
+                <span className="budget-caption">
+                  <Icon name="calendar" size={15} /><span>Budget: <b className="num money" style={{ color: 'var(--ink)' }}>{eur(bud.amount)}</b></span>{s && dayPct != null ? <span>Giorno {s.days.elapsed} di {s.days.total}</span> : null}
                 </span>
               </div>
             </div>
@@ -163,7 +163,7 @@ export function Home() {
           <div className="bud-body">
             {ring(dayPct ?? 100, 'var(--accent)', s ? `${s.days.elapsed}/${s.days.total}` : '…', 'giorni')}
             <div className="grow stack" style={{ gap: 10, minWidth: 0 }}>
-              <div className="bstats" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+              <div className="bstats">
                 {stat(ongoing ? 'Speso finora' : 'Speso', s ? eur(spent) : '…')}
                 {stat('Al giorno', s ? eur(perDay) : '…')}
               </div>
@@ -255,11 +255,11 @@ export function Home() {
         <section className="card" style={{ gap: 6 }}>
           <CardTitle icon="days" title={`Come finirà ${month}`} />
           <div>
-            <div className="frow"><Icon name="moneybag" size={21} /><span>Spese previste</span><b className="num money">{eur(f.expected_spend)}</b></div>
-            <div className="frow"><Icon name="income" size={21} /><span>Entrate previste</span><b className="num money pos">{eur(f.expected_income)}</b></div>
-            <div className="frow"><Icon name="growth" size={21} /><b style={{ fontSize: 15 }}>Saldo a fine mese</b><b className={`num money ${end < 0 ? 'neg' : ''}`}>{eur(end)}</b></div>
+            <div className="frow"><Icon name="moneybag" size={21} /><span>Spese previste</span><b className="num money" style={{ fontSize: fitSize(eur(f.expected_spend), 16) }}>{eur(f.expected_spend)}</b></div>
+            <div className="frow"><Icon name="income" size={21} /><span>Entrate previste</span><b className="num money pos" style={{ fontSize: fitSize(eur(f.expected_income), 16) }}>{eur(f.expected_income)}</b></div>
+            <div className="frow"><Icon name="growth" size={21} /><b style={{ fontSize: 15 }}>Saldo a fine mese</b><b className={`num money ${end < 0 ? 'neg' : ''}`} style={{ fontSize: fitSize(eur(end), 16) }}>{eur(end)}</b></div>
           </div>
-          <span className="muted" style={{ fontSize: 12.5 }}>Dalla media degli ultimi {f.months} mesi · finora {eur(f.spent)} di spese e {eur(f.income)} di entrate</span>
+          <span className="muted" style={{ fontSize: 12.5 }}>Dalla media degli ultimi {f.months} mesi · finora <span className="money">{eur(f.spent)}</span> di spese e <span className="money">{eur(f.income)}</span> di entrate</span>
         </section>
       );
     })() : null,
@@ -305,7 +305,7 @@ export function Home() {
       <section className="card">
         <CardTitle icon="bank" title="Conti" right={
           <a href="#/altro" className="row" style={{ gap: 4, textDecoration: 'none', color: 'var(--muted)', fontSize: 14 }}>
-            Totale <b className={`num money ${total < 0 ? 'neg' : ''}`} style={{ color: total < 0 ? undefined : 'var(--ink)', fontSize: 16 }}>{eur(total)}</b><Icon name="next" size={16} />
+            Totale <b className={`num money ${total < 0 ? 'neg' : ''}`} style={{ color: total < 0 ? undefined : 'var(--ink)', fontSize: fitSize(eur(total), 16) }}>{eur(total)}</b><Icon name="next" size={16} />
           </a>} />
         <div className="tiles">
           {store.accounts.map((a) => (
@@ -322,11 +322,11 @@ export function Home() {
       <a href="#/statistiche/flusso" className="card" style={{ textDecoration: 'none', color: 'inherit' }}>
         <CardTitle icon="inout" title="Entrate e uscite"
           right={<span className={`chip ${s.income - s.spent >= 0 ? 'pos' : 'neg'}`}>Netto <span className="num money">{eur(s.income - s.spent, true)}</span></span>} />
-        {([['Entrate', s.income, 'var(--pos)'], ['Uscite', s.spent, 'var(--out)']] as Array<[string, number, string]>).map(([label, v, color]) => (
+        {([['Entrate', s.income, 'var(--income-bar)'], ['Uscite', s.spent, 'var(--out)']] as Array<[string, number, string]>).map(([label, v, color]) => (
           <div key={label} className="iorow">
             <span>{label}</span>
             <div className="bar"><div style={{ width: `${Math.max(2, (v / Math.max(s.income, s.spent, 1)) * 100)}%`, background: color }} /></div>
-            <b className="num money">{eur(v)}</b>
+            <b className="num money" style={{ fontSize: fitSize(eur(v), 15) }}>{eur(v)}</b>
           </div>
         ))}
       </a>
@@ -344,7 +344,7 @@ export function Home() {
               <span>{store.catName(c.category_id)}</span>
               <span className="num money" style={{ fontWeight: 600 }}>{eur(c.total)}</span>
             </div>
-            <div className="bar"><div style={{ width: `${pct(c.total, s.by_category[0].total)}%`, background: store.cat(c.category_id)?.color ?? '#7D8790' }} /></div>
+            <div className="bar"><div style={{ width: `${pct(c.total, s.by_category[0].total)}%`, background: store.cat(c.category_id)?.color ?? 'var(--muted)' }} /></div>
           </a>
         ))}
       </section>
@@ -359,7 +359,7 @@ export function Home() {
               <span>{x.card ?? <span className="muted">Senza carta</span>}</span>
               <span className="num money" style={{ fontWeight: 600 }}>{eur(x.total)} <span className="muted" style={{ fontWeight: 400 }}>· {Math.round((x.total / s.spent) * 100)}%</span></span>
             </span>
-            <div className="bar"><div style={{ width: `${(x.total / s.spent) * 100}%`, background: x.card ? 'var(--accent)' : '#A9B6C7' }} /></div>
+            <div className="bar"><div style={{ width: `${(x.total / s.spent) * 100}%`, background: x.card ? 'var(--accent)' : 'var(--line)' }} /></div>
           </div>
         ))}
       </a>
@@ -375,7 +375,7 @@ export function Home() {
   };
 
   return (
-    <div className={`stack ${store.discreet ? 'discreet' : ''}`} style={{ gap: 16 }}>
+    <div className={`home stack ${store.discreet ? 'discreet' : ''}`}>
       <div className="home-head">
         <span className="logo" aria-hidden="true"><Icon name="leaf" size={22} stroke={2.2} /></span>
         <span className="vdiv" aria-hidden="true" />
@@ -399,7 +399,7 @@ export function Home() {
         </a>
       )}
 
-      {layout.map((k) => widgets[k] ? <div key={k} className="stack" style={{ gap: 0 }}>{widgets[k]}</div> : null)}
+      {layout.map((k) => widgets[k] ? <div key={k} className="widget stack" data-widget={k}>{widgets[k]}</div> : null)}
 
       {picker && <PeriodSheet onClose={() => setPicker(false)} />}
       {customize && <CustomizeHome layout={layout} onClose={() => setCustomize(false)} />}
@@ -452,8 +452,8 @@ function CustomizeHome({ layout, onClose }: { layout: string[]; onClose: () => v
       <div className="modal card sheet" role="dialog" aria-modal="true" aria-label="Personalizza la Home" onClick={(e) => e.stopPropagation()}>
         <div className="row between"><h2 className="h2">Personalizza la Home</h2><button className="btn ghost" onClick={onClose}>Fatto</button></div>
         <span className="label">Tema</span>
-        <div className="seg" role="group" aria-label="Tema">
-          {([['light', 'Salvia'], ['blue', 'Acqua'], ['navy', 'Navy'], ['dark', 'Scuro'], ['system', 'Auto']] as Array<[Theme, string]>).map(([t, l]) => (
+        <div className="seg" role="group" aria-label="Tema" style={{ gridAutoFlow: 'row', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+          {THEMES.map(([t, l]) => (
             <button key={t} aria-pressed={store.settings.theme === t}
               onClick={async () => { applyTheme(t); await api('/settings', { method: 'PUT', json: { theme: t } }); await store.refresh(); }}>{l}</button>
           ))}
@@ -462,7 +462,7 @@ function CustomizeHome({ layout, onClose }: { layout: string[]; onClose: () => v
           <span className="grow" style={{ fontWeight: 600 }}>Nascondi gli importi</span>
           <button role="switch" aria-checked={store.discreet} aria-label="Nascondi gli importi" onClick={() => store.setDiscreet(!store.discreet)}
             style={{ width: 44, height: 27, borderRadius: 14, border: 0, position: 'relative', flexShrink: 0, cursor: 'pointer', background: store.discreet ? 'var(--accent)' : 'var(--line)' }}>
-            <span style={{ position: 'absolute', top: 2, left: store.discreet ? 19 : 2, width: 23, height: 23, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,0.25)' }} />
+            <span style={{ position: 'absolute', top: 2, left: store.discreet ? 19 : 2, width: 23, height: 23, borderRadius: '50%', background: 'var(--switch-thumb)', boxShadow: 'var(--shadow-card)' }} />
           </button>
         </div>
         <span className="muted" style={{ fontSize: 14 }}>Accendi le schede che vuoi e mettile nell’ordine che preferisci.</span>
@@ -472,7 +472,7 @@ function CustomizeHome({ layout, onClose }: { layout: string[]; onClose: () => v
               <button role="switch" aria-checked={enabled.has(k)} aria-label={`${enabled.has(k) ? 'Nascondi' : 'Mostra'} ${label[k]}`}
                 onClick={() => { const n = new Set(enabled); if (n.has(k)) n.delete(k); else n.add(k); save(order, n); }}
                 style={{ width: 44, height: 27, borderRadius: 14, border: 0, position: 'relative', flexShrink: 0, cursor: 'pointer', background: enabled.has(k) ? 'var(--accent)' : 'var(--line)' }}>
-                <span style={{ position: 'absolute', top: 2, left: enabled.has(k) ? 19 : 2, width: 23, height: 23, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,0.25)' }} />
+                <span style={{ position: 'absolute', top: 2, left: enabled.has(k) ? 19 : 2, width: 23, height: 23, borderRadius: '50%', background: 'var(--switch-thumb)', boxShadow: 'var(--shadow-card)' }} />
               </button>
               <span className="grow" style={{ fontWeight: 600 }}>{label[k]}</span>
               <button className="iconbtn" style={{ width: 36, height: 36 }} aria-label={`Sposta su ${label[k]}`} disabled={i === 0} onClick={() => move(i, -1)}><Icon name="income" size={18} /></button>
@@ -520,9 +520,9 @@ function BalanceCard({ series, total }: { series: Array<{ day: string; balance: 
   }
   return (
     <a href="#/statistiche/saldo" className="card saldo" style={{ textDecoration: 'none' }}>
-      <span className="saldo-title">Saldo totale dei conti</span>
+      <h2 className="saldo-title">Saldo totale dei conti</h2>
       <div className="row" style={{ gap: 10, alignItems: 'center' }}>
-        <span className="saldo-amount money" style={{ fontSize: fitSize(eur(total), 26) }}>{eur(total)}</span>
+        <span className="saldo-amount money" style={{ fontSize: eur(total).length <= 13 ? 26 : fitSize(eur(total), 26) }}>{eur(total)}</span>
         {pct != null && <span className={`chip ${pct >= 0 ? 'pos' : 'neg'}`}>{pct > 0 ? '+' : ''}{pct}%</span>}
       </div>
       {chart}

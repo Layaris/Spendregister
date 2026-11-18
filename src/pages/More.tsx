@@ -5,7 +5,7 @@ import { api, clearCache } from '../api';
 import { pending } from '../outbox';
 import { backupToCsv, downloadFile, exportBackup, importBackup, parseBackup, summarize, type Backup } from '../backup';
 import { Icon } from '../icons';
-import { applyTheme, useApi, useStore } from '../store';
+import { applyTheme, THEMES, useApi, useStore } from '../store';
 import { AiSettings } from './AiSettings';
 import type { Theme } from '../api';
 import { ErrorBox } from '../ui';
@@ -446,8 +446,8 @@ function SettingsSection() {
       <h2 className="h2">Impostazioni</h2>
       <div className="field">
         <span>Tema</span>
-        <div className="seg" role="group" aria-label="Tema">
-          {([['light', 'Salvia'], ['blue', 'Acqua'], ['navy', 'Navy'], ['dark', 'Scuro'], ['system', 'Auto']] as Array<[Theme, string]>).map(([t, label]) => (
+        <div className="seg" role="group" aria-label="Tema" style={{ gridAutoFlow: 'row', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+          {THEMES.map(([t, label]) => (
             <button key={t} aria-pressed={store.settings.theme === t} onClick={() => { applyTheme(t); saveSetting({ theme: t }, 'Tema salvato'); }}>{label}</button>
           ))}
         </div>

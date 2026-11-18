@@ -18,7 +18,7 @@ export interface BudgetView {
 }
 
 /** Colore della barra: verde, arancio dall'80%, rosso oltre il 100%. */
-export const budgetTone = (pct: number) => (pct > 100 ? 'var(--neg)' : pct >= 80 ? '#c77a12' : 'var(--pos)');
+export const budgetTone = (pct: number) => (pct > 100 ? 'var(--neg)' : pct >= 80 ? 'var(--budget-warning)' : 'var(--pos)');
 
 export function useBudget(month?: string) {
   const store = useStore();

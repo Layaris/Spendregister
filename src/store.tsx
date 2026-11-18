@@ -70,6 +70,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** Temi tra cui scegliere (Personalizza e Altro › Impostazioni): Acqua 1 è la prima versione, Acqua 2 quella della tavola. */
+export const THEMES: Array<[Theme, string]> = [['light', 'Salvia'], ['aqua1', 'Acqua 1'], ['blue', 'Acqua 2'], ['navy', 'Navy'], ['dark', 'Scuro'], ['system', 'Auto']];
+
 /** Applica il tema e lo ricorda per il prossimo avvio (public/theme.js lo legge prima del primo disegno). */
 export function applyTheme(theme: Theme) {
   document.documentElement.dataset.theme = theme;
