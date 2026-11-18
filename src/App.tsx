@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, ApiError, setUnauthorizedHandler } from './api';
+import { api, ApiError, clearCache, getOffline, onOffline, setUnauthorizedHandler } from './api';
+import { flushOutbox, onOutbox, pending } from './outbox';
 import { Icon } from './icons';
 import { Add } from './pages/Add';
 import { Capture } from './pages/Capture';
@@ -61,11 +62,43 @@ export function App() {
     );
   }
   // Dopo accesso, registrazione o uscita si ricarica tutto da capo.
-  const changed = () => { go('/'); enter(); };
+  const changed = () => { clearCache(); go('/'); enter(); };
   return (
     <StoreProvider key={generation}>
       <Shell onAuthChange={changed} />
     </StoreProvider>
+  );
+}
+
+/** Avviso in alto quando il server non risponde o ci sono spese in attesa di invio; invia la coda appena può. */
+function ConnectionBanner() {
+  const store = useStore();
+  const [conn, setConn] = useState(getOffline());
+  const [waiting, setWaiting] = useState(pending().length);
+  useEffect(() => onOffline(setConn), []);
+  useEffect(() => onOutbox(setWaiting), []);
+  useEffect(() => {
+    const send = async () => {
+      if (!pending().length) return;
+      const sent = await flushOutbox((msg) => store.toast(msg));
+      if (sent) { store.toast(sent === 1 ? 'Inviata la spesa in attesa' : `Inviate ${sent} spese in attesa`); await store.refresh().catch(() => {}); }
+    };
+    send();
+    const t = setInterval(send, 30_000);
+    window.addEventListener('online', send);
+    return () => { clearInterval(t); window.removeEventListener('online', send); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  if (!conn.offline && !waiting) return null;
+  const time = conn.since ? new Date(conn.since).toLocaleString('it-IT', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : null;
+  return (
+    <div className="conn" role="status">
+      <Icon name="offline" size={18} />
+      <span>
+        {conn.offline ? <>Server non raggiungibile{time ? <>: dati del {time}</> : null}.</> : null}
+        {waiting ? <> {waiting === 1 ? '1 spesa in attesa' : `${waiting} spese in attesa`}: parte da sola appena il server risponde.</> : conn.offline ? ' Le spese che aggiungi restano sul telefono e partono da sole.' : null}
+      </span>
+    </div>
   );
 }
 
@@ -99,7 +132,7 @@ function Shell({ onAuthChange }: { onAuthChange: () => void }) {
 
   return (
     <>
-      <main className="app">{content}</main>
+      <main className="app"><ConnectionBanner />{content}</main>
       {!hideTabs && (
         <nav className="tabbar" aria-label="Sezioni">
           <a href="#/" className="tab" aria-current={current('') ? 'page' : undefined}><Icon name="home" size={24} />Home</a>

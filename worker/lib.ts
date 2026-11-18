@@ -12,6 +12,8 @@ export interface Env {
   WALLET_API?: string;
   /** Solo per le prove: conta le righe lette da D1 (intestazione x-d1-rows). */
   D1_ROWS?: string;
+  /** Solo per i test: una notifica con questo testo fa finta che il database non risponda. */
+  TEST_DB_DOWN?: string;
 }
 
 export async function getSetting(db: D1Database, key: string): Promise<string | null> {

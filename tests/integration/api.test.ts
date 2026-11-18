@@ -3,7 +3,7 @@
 // creati "a gennaio" (vedi server.ts), per la pulizia notturna.
 import { beforeAll, describe, expect, inject, it } from 'vitest';
 import { suggestPattern } from '../../shared/notification';
-import { AI_PORT, OLD, V1_CATEGORIES } from './server';
+import { AI_PORT, OLD, TEST_DB_DOWN, V1_CATEGORIES } from './server';
 
 const BASE = inject('baseUrl');
 const EMAIL = 'anna@example.com';
@@ -33,7 +33,7 @@ class Client {
     const text = await res.text();
     let json: any = null;
     try { json = JSON.parse(text); } catch { json = text; }
-    return { status: res.status, json };
+    return { status: res.status, json, rows: Number(res.headers.get('x-d1-rows') ?? 0) };
   }
   get = (p: string) => this.req('GET', p);
   post = (p: string, b?: unknown, h?: Record<string, string>) => this.req('POST', p, b ?? {}, h);
@@ -1170,7 +1170,8 @@ describe('regole predefinite per chi viaggia', () => {
     expect(await cap('You paid 8.00 USD to UBER *EATS PENDING')).toMatchObject({ merchant: 'Uber Eats', category_id: own.cat_food_delivery });
     expect(await cap('You paid 9.00 USD to Airalo eSIM')).toMatchObject({ category_id: own.cat_subs_phone });
     expect(await cap('You paid 45.00 USD to SafetyWing')).toMatchObject({ category_id: own.cat_health_insurance });
-    expect(await cap('Cash withdrawal 1,000,000 IDR at ATM BCA')).toMatchObject({ category_id: own.cat_fin_atm });
+    // Riconosciuto come prelievo: diventa uno spostamento verso i Contanti IDR (funzione atm_transfer, accesa di base).
+    expect(await cap('Cash withdrawal 1,000,000 IDR at ATM BCA')).toMatchObject({ type: 'transfer', amount: 1_000_000_000, category_id: null });
     expect(await cap('You paid 20.00 EUR to AMZN Mktp DE')).toMatchObject({ merchant: 'Amazon', category_id: own.cat_shop_other });
   });
   it('la tua correzione su un negozio vince sulla regola predefinita', async () => {
@@ -1540,7 +1541,7 @@ describe('avvisi, previsione e riepilogo settimanale', () => {
     expect(r.forecast.expected_spend).toBeGreaterThanOrEqual(r.forecast.spent);
     expect(r.week).toBeNull();
     await c.put('/api/settings', { features: { weekly_summary: true, inventata: true } });
-    expect((await c.get('/api/bootstrap')).json.settings.features).toEqual({ alerts: true, forecast: true, weekly_summary: true });
+    expect((await c.get('/api/bootstrap')).json.settings.features).toEqual({ alerts: true, forecast: true, weekly_summary: true, atm_transfer: true });
     const w = (await c.get('/api/insights?today=2026-11-17')).json.week;
     expect(w).toMatchObject({ from: '2026-11-11', to: '2026-11-17', spent: 84_000, count: 3 });
     const fresh = new Client('10.56.0.2');
@@ -1721,5 +1722,127 @@ describe('pulizia notturna', () => {
     expect((await ping(OLD.registeredPhone)).status).toBe(200);
     expect((await fresh.get('/api/me')).status).toBe(200);
     expect((await new Client('10.30.0.4').post('/api/login', { email: EMAIL, password: 'recuperata-con-il-codice-789' })).status).toBe(200);
+  });
+});
+
+describe('righe lette dal database (limite gratuito: 5 milioni al giorno per tutto l\'account Cloudflare)', () => {
+  // Archivio da 5.000 movimenti in 7 anni (tests/integration/server.ts). Se una modifica fa leggere molto di più,
+  // la pubblicazione si ferma qui: il 17 novembre una Home leggeva centinaia di migliaia di righe e il limite è saltato.
+  const c = new Client('10.70.0.1');
+  c.cookie = `ledgy_session=${OLD.perfSession}`;
+  const today = new Date().toISOString().slice(0, 10);
+  const month = today.slice(0, 7);
+  const rows = async (path: string) => {
+    const r = await c.get(path);
+    expect(r.status, path).toBe(200);
+    return r.rows;
+  };
+  beforeAll(async () => { await rows('/api/bootstrap'); }); // primo avvio: crea le categorie dell'account
+
+  it('aprire la Home legge poche migliaia di righe', async () => {
+    const paths = [
+      '/api/bootstrap', `/api/stats?from=${month}-01&to=${today}`, `/api/budgets?today=${today}`, `/api/insights?today=${today}`,
+      '/api/stats/balance?days=30', '/api/transactions?limit=5', '/api/transactions?status=review&limit=1', `/api/recurring?today=${today}`,
+    ];
+    const each: Record<string, number> = {};
+    for (const p of paths) each[p] = await rows(p);
+    const total = Object.values(each).reduce((a, b) => a + b, 0);
+    expect(total, JSON.stringify(each)).toBeLessThan(8000);
+    expect(each['/api/bootstrap']).toBeLessThan(1000);
+  });
+  it('statistiche: un mese, un anno e tutto lo storico restano sotto soglia', async () => {
+    const y = Number(today.slice(0, 4));
+    expect(await rows(`/api/stats?from=${month}-01&to=${today}`)).toBeLessThan(2000);
+    expect(await rows(`/api/stats?from=${y}-01-01&to=${y + 1}-01-01`)).toBeLessThan(10_000);
+    expect(await rows(`/api/stats?from=${y - 8}-01-01&to=${y + 1}-01-01`)).toBeLessThan(45_000);
+    expect(await rows(`/api/stats/balance?from=${y}-01-01&to=${y + 1}-01-01`)).toBeLessThan(5000);
+  });
+  it('liste di movimenti: prima pagina, un mese vecchio e quelli da rivedere', async () => {
+    expect(await rows('/api/transactions?limit=100')).toBeLessThan(1000);
+    expect(await rows(`/api/transactions?from=${Number(today.slice(0, 4)) - 3}-10-01&to=${Number(today.slice(0, 4)) - 3}-11-01&sum=1&limit=100`)).toBeLessThan(1000);
+    expect(await rows('/api/transactions?status=review&limit=100')).toBeLessThan(200);
+  });
+  it('il saldo del conto non somma tutto lo storico a ogni apertura', async () => {
+    const b = (await c.get('/api/bootstrap')).json;
+    // 5.000 movimenti: 125 entrate da 2.000 € e 4.875 spese; il saldo viene dalla tabella dei totali.
+    expect(b.accounts[0].balance).toBe((await c.get('/api/stats?from=2000-01-01&to=2100-01-01')).json.income - (await c.get('/api/stats?from=2000-01-01&to=2100-01-01')).json.spent);
+  });
+});
+
+describe('se il server non risponde, le spese non si perdono', () => {
+  it('una notifica arrivata col database giù resta in coda e si registra appena torna, con la sua ora', async () => {
+    const c = new Client('10.71.0.1');
+    await c.post('/api/guest');
+    const phone = await newDevice(c);
+    const r = await c.post(phone, { title: 'Jago', text: `Pembayaran Rp 85.000 di WARUNG MAKAN ${TEST_DB_DOWN}`, posted_at: '2026-11-17T12:30:00+08:00' });
+    expect(r.status).toBe(202);
+    expect(r.json.status).toBe('queued');
+    expect(await count(c)).toBe(0);
+    await c.get('/api/bootstrap'); // all'apertura dell'app la coda si svuota
+    await new Promise((ok) => setTimeout(ok, 500));
+    const items = (await c.get('/api/transactions?limit=10')).json.items;
+    expect(items).toHaveLength(1);
+    expect(items[0].occurred_at.slice(0, 16)).toBe('2026-11-17T12:30');
+    await c.get('/api/bootstrap');
+    await new Promise((ok) => setTimeout(ok, 300));
+    expect(await count(c)).toBe(1); // non si registra due volte
+  });
+  it('una spesa rimandata dall\'app con lo stesso client_id crea un solo movimento', async () => {
+    const c = new Client('10.71.0.2');
+    await c.post('/api/guest');
+    const body = { amount: 12.5, currency: 'EUR', merchant: 'Pepito', client_id: 'a1b2c3d4-coda-0001' };
+    const first = await c.post('/api/transactions', body);
+    const again = await c.post('/api/transactions', body);
+    expect(first.status).toBe(201);
+    expect(again.json.id).toBe(first.json.id);
+    expect(await count(c)).toBe(1);
+  });
+});
+
+describe('prelievi al bancomat', () => {
+  it('un prelievo sposta i soldi nei Contanti della sua valuta e non conta come spesa', async () => {
+    const c = new Client('10.72.0.1');
+    await c.post('/api/guest');
+    const phone = await newDevice(c);
+    const before = (await c.get('/api/bootstrap')).json.accounts;
+    const r = await c.post(phone, { title: '💳 Cash withdrawal', text: '💳 Cash withdrawal\n\n1,000,000.00 IDR | ATM BCA CANGGU | Cash withdrawal' });
+    expect(r.json.status).toBe('created');
+    const items = (await c.get('/api/transactions?limit=10')).json.items;
+    expect(items).toHaveLength(2);
+    expect(items.every((t: { type: string }) => t.type === 'transfer')).toBe(true);
+    const after = (await c.get('/api/bootstrap')).json.accounts;
+    const cash = after.find((a: { name: string }) => a.name === 'Contanti IDR');
+    expect(cash.balance).toBe(1_000_000_000);
+    expect(after.length).toBe(before.length + 1);
+    expect((await c.get('/api/stats?from=2000-01-01&to=2100-01-01')).json.spent).toBe(0);
+  });
+  it('con la funzione spenta il prelievo resta una spesa', async () => {
+    const c = new Client('10.72.0.2');
+    await c.post('/api/guest');
+    await c.put('/api/settings', { features: { atm_transfer: false } });
+    const phone = await newDevice(c);
+    await c.post(phone, { title: '💳 Cash withdrawal', text: '💳 Cash withdrawal\n\n1,000,000.00 IDR | ATM BCA CANGGU | Cash withdrawal' });
+    const items = (await c.get('/api/transactions?limit=10')).json.items;
+    expect(items).toHaveLength(1);
+    expect(items[0].type).toBe('expense');
+  });
+});
+
+describe('costi bancari, mese per mese, cattura ferma', () => {
+  it('costi bancari per carta e confronto mese per mese', async () => {
+    const c = new Client('10.73.0.1');
+    await c.post('/api/guest');
+    const own: Record<string, string> = {};
+    await loadOwn(c, own);
+    const today = new Date().toISOString().slice(0, 10);
+    await c.post('/api/transactions', { amount: 2.5, currency: 'EUR', merchant: 'Biaya admin', category_id: own.cat_fin_fees, occurred_at: `${today}T10:00:00+08:00` });
+    await c.post('/api/transactions', { amount: 30, currency: 'EUR', merchant: 'Pepito', category_id: own.cat_food_groceries, occurred_at: `${today}T11:00:00+08:00` });
+    const fees = (await c.get(`/api/stats/fees?from=2000-01-01&to=2100-01-01`)).json;
+    expect(fees.fees).toBe(2500);
+    const months = (await c.get(`/api/stats/months?months=3&today=${today}`)).json;
+    expect(months.months).toHaveLength(3);
+    expect(months.months.at(-1)).toBe(today.slice(0, 7));
+    expect(months.totals.at(-1)).toBe(32_500);
+    expect(months.categories[0].category_id).toBe(own.cat_food);
   });
 });

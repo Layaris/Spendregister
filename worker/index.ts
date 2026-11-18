@@ -4,7 +4,7 @@ import {
 } from './auth';
 import type { LoginChoice, RegisterChoice } from './guest';
 import { backupApi } from './backup';
-import { captureAdminApi, inboundApi } from './capture';
+import { captureAdminApi, drainInbound, inboundApi } from './capture';
 import { aiApi } from './ai';
 import { cardsApi } from './cards';
 import { catalogApi } from './catalog';
@@ -25,7 +25,7 @@ const app = new Hono<AppEnv>();
 app.use('*', async (c, next) => {
   configureFixedRates(c.env.FX_FIXED);
   if (!c.env.D1_ROWS) return next();
-  const n = { rows: 0 };
+  const n = { rows: 0, verbose: c.env.D1_ROWS === 'verbose' };
   c.env = { ...c.env, DB: countingDb(c.env.DB, n) };
   await next();
   c.res.headers.set('x-d1-rows', String(n.rows));
@@ -129,7 +129,8 @@ app.all('/api/*', (c) => c.json({ error: 'Percorso non trovato' }, 404));
 
 export default {
   fetch: app.fetch,
-  async scheduled(_controller: ScheduledController, env: Env) {
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    await drainInbound(env, ctx).catch(() => 0);
     // Pulizia notturna: sessioni scadute, tentativi vecchi, notifiche scartate da oltre 90 giorni.
     const now = new Date().toISOString();
     const day = new Date(Date.now() - 86400_000).toISOString();

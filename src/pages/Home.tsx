@@ -9,7 +9,7 @@ import { eur, fitSize, formatDayShort, formatMoney, localDay, monthPeriod, pct, 
 import { BudgetBar, budgetTone, type BudgetView } from './Budget';
 import { SuggestionCard, useRecurring } from './Recurring';
 
-interface Alert { id: string; kind: 'unusual' | 'duplicate' | 'fees' | 'budget'; tx?: string; amount?: number; avg?: number; merchant?: string | null; category_id?: string; pct?: number; cards?: Array<{ card: string; total: number }> }
+interface Alert { id: string; kind: 'unusual' | 'duplicate' | 'fees' | 'budget' | 'capture_silent'; days?: number; device?: string; tx?: string; amount?: number; avg?: number; merchant?: string | null; category_id?: string; pct?: number; cards?: Array<{ card: string; total: number }> }
 interface Forecast { months: number; spent: number | null; expected_spend?: number; income?: number; expected_income?: number }
 interface Insights { alerts: Alert[]; forecast: Forecast | null; week: { from: string; to: string; spent: number; count: number; previous: number; top: Array<{ category_id: string | null; total: number }> } | null }
 
@@ -17,6 +17,7 @@ interface Insights { alerts: Alert[]; forecast: Forecast | null; week: { from: s
 function alertText(a: Alert, catName: (id: string | null | undefined) => string): { title: string; text: string; href: string } {
   if (a.kind === 'unusual') return { title: `Spesa insolita: ${a.merchant}`, text: `${eur(a.amount ?? 0)}, di solito circa ${eur(a.avg ?? 0)}`, href: `#/m/${a.tx}` };
   if (a.kind === 'duplicate') return { title: `Possibile doppione${a.merchant ? `: ${a.merchant}` : ''}`, text: `Due movimenti da ${eur(a.amount ?? 0)} a meno di un’ora. Se è lo stesso, eliminane uno.`, href: `#/m/${a.tx}` };
+  if (a.kind === 'capture_silent') return { title: `Nessuna spesa dal telefono da ${a.days} giorni`, text: `${a.device ?? 'Il telefono'} non manda notifiche: controlla la batteria, i permessi o il comando. Se non hai speso con la carta, ignora.`, href: '#/cattura' };
   if (a.kind === 'fees') return { title: `Commissioni bancarie: ${eur(a.amount ?? 0)} questo mese`, text: a.cards?.length ? a.cards.map((c) => `${c.card} ${eur(c.total)}`).join(' · ') : 'Guarda quali carte le addebitano', href: '#/statistiche/spese' };
   const name = a.category_id === '*' ? 'Budget del mese' : `Budget ${catName(a.category_id)}`;
   const left = a.amount ?? 0;
@@ -298,7 +299,8 @@ export function Home() {
           <h2 className="h2">Conti</h2>
           <span className="muted" style={{ fontSize: 14 }}>Totale <b className={`num money ${total < 0 ? 'neg' : ''}`} style={{ color: total < 0 ? undefined : 'var(--ink)' }}>{eur(total)}</b></span>
         </div>
-        <div className="pills" style={{ gap: 10 }}>
+        {/* Margine dentro la fila che scorre: altrimenti l'ombra dei riquadri verrebbe tagliata. */}
+        <div className="pills" style={{ gap: 10, padding: '4px 6px 16px', margin: '-4px -6px -12px' }}>
           {store.accounts.map((a) => (
             <div key={a.id} className="card" style={{ minWidth: 150, gap: 4 }}>
               <span className="muted" style={{ fontSize: 13 }}>{a.name}</span>
@@ -325,7 +327,10 @@ export function Home() {
     balance: balance.data && balance.data.series.length > 1 ? <BalanceCard series={balance.data.series} /> : null,
     top: s && s.by_category.length > 0 ? (
       <section className="card">
-        <h2 className="h2">Spese principali</h2>
+        <a href="#/statistiche/spese" className="row between" style={{ textDecoration: 'none', color: 'inherit' }} aria-label="Apri tutte le spese per categoria">
+          <h2 className="h2">Spese principali</h2>
+          <span className="row" style={{ gap: 2, color: 'var(--accent)', fontSize: 14, fontWeight: 600 }}>Tutte <Icon name="next" size={16} /></span>
+        </a>
         {s.by_category.slice(0, 4).map((c) => (
           <a key={c.category_id ?? 'none'} href={c.category_id ? `#/movimenti/${c.category_id}` : '#/movimenti'} className="stack" style={{ gap: 6, textDecoration: 'none', color: 'inherit' }}>
             <div className="row between" style={{ fontSize: 14 }}>

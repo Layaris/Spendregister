@@ -13,17 +13,80 @@ export function setUnauthorizedHandler(fn: () => void) {
   onUnauthorized = fn;
 }
 
+// ---- Copia locale delle letture: se il server non risponde, l'app si apre con gli ultimi dati visti ----
+const CACHE = 'ledgy-c:';
+/** La data di oggi cambia la chiave ogni giorno: per la copia locale non conta. */
+const cacheKey = (path: string) => CACHE + path.replace(/([?&])today=[^&]*&?/, '$1').replace(/[?&]$/, '');
+
+function cacheWrite(path: string, data: unknown) {
+  try {
+    const text = JSON.stringify({ at: new Date().toISOString(), data });
+    if (text.length > 400_000) return;
+    try { localStorage.setItem(cacheKey(path), text); } catch {
+      clearCache(); // spazio pieno: si ricomincia da capo
+      localStorage.setItem(cacheKey(path), text);
+    }
+  } catch { /* senza copia locale si va avanti lo stesso */ }
+}
+
+function cacheRead<T>(path: string): { at: string; data: T } | null {
+  try {
+    const t = localStorage.getItem(cacheKey(path));
+    return t ? JSON.parse(t) : null;
+  } catch { return null; }
+}
+
+/** Da chiamare all'uscita e al cambio di account: i dati di un account non restano sul telefono. */
+export function clearCache() {
+  try {
+    for (const k of Object.keys(localStorage)) if (k.startsWith(CACHE)) localStorage.removeItem(k);
+  } catch { /* niente */ }
+}
+
+/** Stato della connessione col server: `since` è l'ora dei dati mostrati quando il server non risponde. */
+type Offline = { offline: boolean; since: string | null };
+let offline: Offline = { offline: false, since: null };
+const listeners = new Set<(o: Offline) => void>();
+function setOffline(next: Offline) {
+  if (next.offline === offline.offline && next.since === offline.since) return;
+  offline = next;
+  for (const l of listeners) l(offline);
+}
+export function getOffline() { return offline; }
+export function onOffline(fn: (o: Offline) => void) { listeners.add(fn); return () => { listeners.delete(fn); }; }
+
+/** Il server non ha risposto (rete assente o errore suo): la richiesta si può riprovare più tardi. */
+export const isUnreachable = (e: unknown) => e instanceof ApiError && e.status >= 500;
+
 export async function api<T = unknown>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
   const { json, ...rest } = init;
-  const res = await fetch(`/api${path}`, {
-    credentials: 'same-origin',
-    ...rest,
-    headers: { ...(json !== undefined ? { 'content-type': 'application/json' } : {}), ...(rest.headers ?? {}) },
-    body: json !== undefined ? JSON.stringify(json) : rest.body,
-  });
-  if (res.status === 401 && !AUTH_PATHS.includes(path)) onUnauthorized();
-  const data = res.headers.get('content-type')?.includes('json') ? await res.json() : await res.text();
-  if (!res.ok) throw new ApiError(res.status, (data as { error?: string })?.error ?? `Errore ${res.status}`, data);
+  const isGet = !rest.method || rest.method === 'GET';
+  let res: Response;
+  try {
+    res = await fetch(`/api${path}`, {
+      credentials: 'same-origin',
+      ...rest,
+      headers: { ...(json !== undefined ? { 'content-type': 'application/json' } : {}), ...(rest.headers ?? {}) },
+      body: json !== undefined ? JSON.stringify(json) : rest.body,
+    });
+  } catch {
+    res = new Response(JSON.stringify({ error: 'Server non raggiungibile' }), { status: 599, headers: { 'content-type': 'application/json' } });
+  }
+  if (res.status === 401 && !AUTH_PATHS.includes(path)) { clearCache(); onUnauthorized(); }
+  const data = res.headers.get('content-type')?.includes('json') ? await res.json().catch(() => ({})) : await res.text();
+  if (!res.ok) {
+    if (isGet && res.status >= 500) {
+      const cached = cacheRead<T>(path);
+      if (cached) {
+        setOffline({ offline: true, since: offline.since && offline.since < cached.at ? offline.since : cached.at });
+        return cached.data;
+      }
+    }
+    if (res.status >= 500) setOffline({ offline: true, since: offline.since });
+    throw new ApiError(res.status, (data as { error?: string })?.error ?? `Errore ${res.status}`, data);
+  }
+  if (isGet) cacheWrite(path, data);
+  if (offline.offline) setOffline({ offline: false, since: null });
   return data as T;
 }
 

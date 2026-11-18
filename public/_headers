@@ -8,3 +8,6 @@
 /ledgy.shortcut
   Content-Type: application/octet-stream
   Content-Disposition: attachment; filename="Ledgy.shortcut"
+
+/sw.js
+  Cache-Control: no-cache

@@ -4,9 +4,11 @@ import { isLikelyDuplicate, sha256Hex } from '../shared/dedupe';
 import { formatMoney, roundMilli, toMilli } from '../shared/money';
 import { cleanMerchantName, parseNotification, parseWithParser, type AiHint, type ParserDef } from '../shared/notification';
 import { normalizePostedAt } from '../shared/time';
-import { bad, body, getTimeZone, HttpError, newId, notFound, nowIso, randomToken, uid, type AppEnv } from './lib';
+import { bad, body, getTimeZone, HttpError, newId, notFound, nowIso, randomToken, uid, type AppEnv, type Env } from './lib';
 import { aiCategorizeLater } from './ai';
 import { learnSource } from './cards';
+import { accountInfo } from './auth';
+import { seedId } from './seed';
 import { classify, convertToEur, defaultAccountId, insertTransaction } from './transactions';
 
 interface CapturePayload {
@@ -30,9 +32,13 @@ export async function loadParsers(db: D1Database, userId: string): Promise<Parse
 }
 
 async function deviceForToken(db: D1Database, token: string) {
+  return deviceByHash(db, await sha256Hex(token));
+}
+
+async function deviceByHash(db: D1Database, tokenHash: string) {
   const dev = await db
     .prepare('SELECT id, user_id, name, platform FROM devices WHERE token_hash = ? AND revoked_at IS NULL')
-    .bind(await sha256Hex(token))
+    .bind(tokenHash)
     .first<{ id: string; user_id: string; name: string; platform: string }>();
   if (!dev) throw new HttpError(401, 'Indirizzo non valido o revocato');
   return dev;
@@ -134,6 +140,27 @@ export async function processCapture(db: D1Database, userId: string, deviceId: s
   if (rules.review) reasons.push('Da controllare per regola');
   const status = reasons.length ? 'review' : 'confirmed';
 
+  // Prelievo al bancomat (o cambio valuta): i soldi passano dal conto principale ai contanti della valuta prelevata.
+  // Non è una spesa: la spesa vera arriva quando si pagano i contanti. Si spegne in Funzioni (atm_transfer).
+  if (parsed.direction !== 'income' && category === seedId('cat_fin_atm', userId) && !twin && (await accountInfo(db, userId)).features.atm_transfer) {
+    const from = rules.account_id ?? source?.account_id ?? (await defaultAccountId(db, userId));
+    const cash = await cashAccountFor(db, userId, parsed.currency);
+    const group = newId('trf');
+    const abs = Math.abs(amount);
+    const absEur = conv ? Math.abs(conv.amount_eur) : 0;
+    const leg = (account: string | null, sign: number) => insertTransaction(db, userId, {
+      type: 'transfer', account_id: account, amount: abs * sign, currency: parsed.currency, occurred_at: occurred,
+      merchant_raw: merchantRaw, merchant: sign > 0 ? `Prelievo ${finalMerchant ?? ''}`.trim() : finalMerchant ?? 'Prelievo', category_id: null, nature: null, card,
+      source: 'capture', status: 'confirmed', transfer_group: group, capture_id: captureId, rule_ids: rules.matched, labels: [],
+      ...(conv ? { amount_eur: absEur * sign, fx_rate: conv.fx_rate, fx_date: conv.fx_date } : { amount_eur: 0 }),
+    });
+    const inId = await leg(cash, 1);
+    await leg(from, -1);
+    await save('created', [parsed.via, `prelievo verso ${parsed.currency === 'EUR' ? 'Contanti' : `Contanti ${parsed.currency}`}`].filter(Boolean).join(' · '), inId);
+    if (deviceId) await db.prepare('UPDATE devices SET last_capture_at = ? WHERE id = ?').bind(nowIso(), deviceId).run();
+    return { status: 'created', capture_id: captureId, transaction_id: inId, summary: `Prelievo ${formatMoney(abs, parsed.currency)}` };
+  }
+
   const txId = await insertTransaction(db, userId, {
     type: parsed.direction === 'income' ? 'income' : 'expense',
     account_id: rules.account_id ?? source?.account_id ?? (await defaultAccountId(db, userId)),
@@ -162,25 +189,85 @@ export async function processCapture(db: D1Database, userId: string, deviceId: s
   };
 }
 
+/** Il conto contanti di una valuta (tipo "cash"); se manca si crea "Contanti IDR", "Contanti USD"… */
+async function cashAccountFor(db: D1Database, userId: string, currency: string): Promise<string> {
+  const row = await db.prepare("SELECT id FROM accounts WHERE user_id = ? AND type = 'cash' AND currency = ? AND archived = 0 ORDER BY position, created_at LIMIT 1")
+    .bind(userId, currency).first<{ id: string }>();
+  if (row) return row.id;
+  const id = newId('acc');
+  await db.prepare("INSERT INTO accounts (id, user_id, name, type, currency, initial_balance, position, created_at) VALUES (?, ?, ?, 'cash', ?, 0, (SELECT COALESCE(MAX(position), 0) + 1 FROM accounts WHERE user_id = ?), ?)")
+    .bind(id, userId, `Contanti ${currency}`, currency, userId, nowIso()).run();
+  return id;
+}
+
 /** Ingresso pubblico per i telefoni: /api/in/<token>. Accetta JSON o testo semplice. */
 export const inboundApi = new Hono<AppEnv>();
 
-inboundApi.post('/:token', async (c) => {
-  const dev = await deviceForToken(c.env.DB, c.req.param('token'));
-  await c.env.DB.prepare('UPDATE devices SET last_seen_at = ? WHERE id = ?').bind(nowIso(), dev.id).run();
-  const type = c.req.header('content-type') ?? '';
+/** Legge la notifica dal corpo grezzo (JSON, modulo o testo semplice). */
+async function readPayload(type: string, raw: string): Promise<CapturePayload> {
   let payload: CapturePayload;
-  if (type.includes('application/json')) payload = await body<CapturePayload>(c);
-  else if (type.includes('form')) payload = Object.fromEntries((await c.req.formData()).entries()) as unknown as CapturePayload;
-  else payload = { text: await c.req.text() };
+  if (type.includes('application/json')) {
+    try { payload = JSON.parse(raw) as CapturePayload; } catch { throw new HttpError(400, 'JSON non valido'); }
+  } else if (type.includes('form')) {
+    payload = Object.fromEntries((await new Request('https://x/', { method: 'POST', headers: { 'content-type': type }, body: raw }).formData()).entries()) as unknown as CapturePayload;
+  } else payload = { text: raw };
   if (typeof payload.hint === 'string') {
     try { payload.hint = JSON.parse(payload.hint); } catch { payload.hint = null; }
   }
-  const { needs_ai, ...result } = await processCapture(c.env.DB, dev.user_id, dev.id, payload);
+  return payload;
+}
+
+async function receive(env: Env, ctx: Pick<ExecutionContext, 'waitUntil'>, tokenHash: string, type: string, raw: string, receivedAt?: string) {
+  if (env.TEST_DB_DOWN && !receivedAt && raw.includes(env.TEST_DB_DOWN)) throw new Error('D1_ERROR: database finto giù');
+  const dev = await deviceByHash(env.DB, tokenHash);
+  await env.DB.prepare('UPDATE devices SET last_seen_at = ? WHERE id = ?').bind(nowIso(), dev.id).run();
+  const payload = await readPayload(type, raw);
+  // Dalla coda: l'ora della spesa è quella in cui la notifica era arrivata, non quella in cui si registra.
+  if (receivedAt && !payload.posted_at) payload.posted_at = receivedAt;
+  const { needs_ai, ...result } = await processCapture(env.DB, dev.user_id, dev.id, payload);
   // Categoria mancante: la chiede all'AI dopo aver risposto, così il comando del telefono non aspetta.
-  if (needs_ai && result.transaction_id) c.executionCtx.waitUntil(aiCategorizeLater(c.env, dev.user_id, result.transaction_id));
-  return c.json(result);
+  if (needs_ai && result.transaction_id) ctx.waitUntil(aiCategorizeLater(env, dev.user_id, result.transaction_id));
+  return result;
+}
+
+inboundApi.post('/:token', async (c) => {
+  const type = c.req.header('content-type') ?? '';
+  const raw = (await c.req.text()).slice(0, 20_000);
+  const tokenHash = await sha256Hex(c.req.param('token'));
+  try {
+    const result = await receive(c.env, c.executionCtx, tokenHash, type, raw);
+    c.executionCtx.waitUntil(drainInbound(c.env, c.executionCtx).catch(() => {}));
+    return c.json(result);
+  } catch (e) {
+    if (e instanceof HttpError) throw e;
+    // Database non disponibile: la notifica non si perde, si mette in coda e si registra appena torna.
+    try {
+      await c.env.DB.prepare('INSERT INTO inbound_queue (token_hash, content_type, body, received_at) VALUES (?, ?, ?, ?)').bind(tokenHash, type, raw, nowIso()).run();
+    } catch {
+      console.error('Notifica persa: database non disponibile', e);
+      throw e;
+    }
+    return c.json({ status: 'queued', summary: 'Ricevuta: la registro appena il server risponde' }, 202);
+  }
 });
+
+/** Registra le notifiche rimaste in coda (al massimo 20 per volta, le più vecchie prima). */
+export async function drainInbound(env: Env, ctx: Pick<ExecutionContext, 'waitUntil'>): Promise<number> {
+  const { results } = await env.DB.prepare('SELECT id, token_hash, content_type, body, received_at FROM inbound_queue ORDER BY id LIMIT 20')
+    .all<{ id: number; token_hash: string; content_type: string | null; body: string; received_at: string }>();
+  let done = 0;
+  for (const q of results) {
+    try {
+      await receive(env, ctx, q.token_hash, q.content_type ?? '', q.body, q.received_at);
+    } catch (e) {
+      // Errori veri (token revocato, testo vuoto) si scartano; se il database è ancora giù si riprova dopo.
+      if (!(e instanceof HttpError)) break;
+    }
+    await env.DB.prepare('DELETE FROM inbound_queue WHERE id = ?').bind(q.id).run();
+    done++;
+  }
+  return done;
+}
 
 inboundApi.post('/:token/ping', async (c) => {
   const dev = await deviceForToken(c.env.DB, c.req.param('token'));

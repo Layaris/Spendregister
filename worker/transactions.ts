@@ -323,6 +323,8 @@ interface TxInput {
   place?: string | null;
   /** Carta o banca (solo modifica). */
   card?: string | null;
+  /** Id scelto dall'app per le spese messe in coda senza rete: lo stesso invio due volte crea un solo movimento. */
+  client_id?: string;
 }
 
 transactionsApi.post('/', async (c) => {
@@ -333,6 +335,11 @@ transactionsApi.post('/', async (c) => {
   const currency = (b.currency ?? 'EUR').toUpperCase();
   if (!/^[A-Z]{3}$/.test(currency)) bad('Valuta non valida');
   const userId = uid(c);
+  const externalId = b.client_id && /^[A-Za-z0-9-]{8,64}$/.test(b.client_id) ? `app:${b.client_id}` : null;
+  if (externalId) {
+    const seen = await c.env.DB.prepare('SELECT id FROM transactions WHERE user_id = ? AND external_id = ?').bind(userId, externalId).first<{ id: string }>();
+    if (seen) return c.json({ id: seen.id, repeated: true });
+  }
   await checkOwned(c.env.DB, 'categories', b.category_id, userId);
   await checkOwned(c.env.DB, 'accounts', b.account_id, userId);
   const occurred = normalizePostedAt(b.occurred_at, await getTimeZone(c.env.DB, userId));
@@ -355,6 +362,7 @@ transactionsApi.post('/', async (c) => {
   const id = await insertTransaction(c.env.DB, userId, {
     type, account_id: b.account_id ?? (await defaultAccountId(c.env.DB, userId)), amount: milli, currency, occurred_at: occurred, merchant_raw: merchantRaw,
     merchant: merchant ?? merchantRaw, note: b.note ?? null, category_id: category, nature, source: 'manual', labels, rule_ids: ruleIds, place: b.place ?? null,
+    external_id: externalId,
   });
   return c.json({ id }, 201);
 });

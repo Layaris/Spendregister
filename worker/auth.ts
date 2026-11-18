@@ -294,7 +294,7 @@ export async function recoverWithCode(c: AppContext, emailIn: unknown, code: str
 }
 
 /** Funzioni facoltative (Impostazioni › Funzioni) e se sono accese all'inizio. */
-export const FEATURE_DEFAULTS: Record<string, boolean> = { alerts: true, forecast: true, weekly_summary: false };
+export const FEATURE_DEFAULTS: Record<string, boolean> = { alerts: true, forecast: true, weekly_summary: false, atm_transfer: true };
 
 export async function accountInfo(db: D1Database, userId: string) {
   const u = await userById(db, userId);

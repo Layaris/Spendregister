@@ -1,7 +1,8 @@
 import { useRef, useState, type FormEvent } from 'react';
 import { parseAmount } from '../../shared/money';
 import { TIMEZONES } from '../../shared/time';
-import { api } from '../api';
+import { api, clearCache } from '../api';
+import { pending } from '../outbox';
 import { backupToCsv, downloadFile, exportBackup, importBackup, parseBackup, summarize, type Backup } from '../backup';
 import { Icon } from '../icons';
 import { applyTheme, useApi, useStore } from '../store';
@@ -46,7 +47,10 @@ export function More({ onAuthChange }: { onAuthChange: () => void }) {
   const guest = !store.account.email;
   const capture = useCaptureStatus();
   const logout = async () => {
+    // Le spese in attesa sono di questo account: non si esce finché non sono partite.
+    if (pending().length) { store.toast('Ci sono spese in attesa di invio: esci quando il server risponde'); return; }
     await api('/logout', { method: 'POST' });
+    clearCache();
     onAuthChange();
   };
   return (
@@ -372,6 +376,7 @@ const FEATURES: Array<[string, string, string]> = [
   ['alerts', 'Avvisi', 'Spese insolite, possibili doppioni, commissioni bancarie, budget quasi finito'],
   ['forecast', 'Previsione di fine mese', 'Spese, entrate e saldo previsti, dalla media degli ultimi mesi'],
   ['weekly_summary', 'Riepilogo settimanale', 'Una scheda in Home con la tua settimana: speso, confronto, categorie principali'],
+  ['atm_transfer', 'Prelievi verso i contanti', 'Un prelievo al bancomat sposta i soldi nel conto Contanti della sua valuta (es. Contanti IDR) e non conta come spesa: la spesa la registri quando paghi in contanti. Spento: il prelievo resta una spesa in Prelievi e cambio valuta'],
 ];
 
 /** Impostazioni › Funzioni: le funzioni facoltative si accendono e si spengono qui (sincronizzate con l'account). */

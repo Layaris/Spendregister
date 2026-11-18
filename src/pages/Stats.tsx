@@ -38,12 +38,13 @@ function Delta({ now, before, up }: { now: number; before: number; up: 'good' | 
 }
 
 export function Stats({ view }: { view?: string }) {
+  if (view === 'mesi') return <Months />;
   if (view === 'spese' || view === 'flusso' || view === 'entrate' || view === 'saldo') return <Detail view={view} />;
   return <Overview />;
 }
 
 function Overview() {
-  const { store, s, error, series } = useStatsData();
+  const { store, s, error, series, period } = useStatsData();
   const flow = s ? s.income - s.spent : 0;
   const prevFlow = s ? s.previous.income - s.previous.spent : 0;
   const ongoing = s ? s.days.elapsed > 0 && s.days.elapsed < s.days.total : false;
@@ -70,6 +71,14 @@ function Overview() {
             </a>
           )}
           <Tile to="entrate" label="Entrate" value={eur(s.income)} tone="pos" extra={<Delta now={s.income} before={s.previous.income} up="good" />} note={s.previous.income ? 'rispetto al periodo precedente' : undefined} />
+          <a href="#/statistiche/mesi" className="card" style={{ flexDirection: 'row', alignItems: 'center', gap: 12, textDecoration: 'none', color: 'inherit', padding: '16px 18px' }}>
+            <span className="grow stack" style={{ gap: 4 }}>
+              <span className="label">Mese per mese</span>
+              <span style={{ fontSize: 15 }}>Ogni categoria negli ultimi 6 mesi: dove la spesa cresce</span>
+            </span>
+            <Icon name="next" size={18} />
+          </a>
+          <FeesCard from={period.from} to={period.to} />
         </>
       )}
       <PeriodBar />
@@ -379,5 +388,79 @@ export function PeriodBar() {
       </div>
       {open && <PeriodSheet onClose={() => setOpen(false)} />}
     </>
+  );
+}
+
+/** Commissioni e prelievi del periodo, per carta. Nascosta se non ce ne sono. */
+function FeesCard({ from, to }: { from: string; to: string }) {
+  const store = useStore();
+  const r = useApi<{ cards: Array<{ card: string; fees: number; fees_n: number; cash: number; cash_n: number }>; fees: number; cash: number }>(`/stats/fees?from=${from}&to=${to}`, [store.review_count]);
+  if (!r.data || !r.data.cards.length) return null;
+  return (
+    <section className="card" style={{ padding: '16px 18px', gap: 10 }}>
+      <div className="row between">
+        <span className="label">Costi bancari</span>
+        <b className="num money">{eur(r.data.fees)}</b>
+      </div>
+      <span className="muted" style={{ fontSize: 13, marginTop: -4 }}>Commissioni pagate e contanti prelevati, per carta.</span>
+      {r.data.cards.map((c) => (
+        <div key={c.card} className="row between" style={{ fontSize: 15, alignItems: 'flex-start' }}>
+          <span>{c.card || <span className="muted">Senza carta</span>}</span>
+          <span className="stack" style={{ gap: 2, alignItems: 'flex-end' }}>
+            {c.fees > 0 && <span className="num money">{eur(c.fees)} <span className="muted" style={{ fontSize: 13 }}>{c.fees_n === 1 ? 'commissione' : `${c.fees_n} commissioni`}</span></span>}
+            {c.cash > 0 && <span className="num money muted" style={{ fontSize: 13 }}>{c.cash_n === 1 ? '1 prelievo' : `${c.cash_n} prelievi`} · {eur(c.cash)}</span>}
+          </span>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/** Mese per mese: le categorie principali negli ultimi mesi, con la variazione dell'ultimo mese intero sulla media. */
+function Months() {
+  const store = useStore();
+  const [n, setN] = useState(6);
+  const r = useApi<{ months: string[]; categories: Array<{ category_id: string | null; values: number[]; total: number }>; totals: number[] }>(`/stats/months?months=${n}&today=${localDay()}`, [store.review_count]);
+  const label = (m: string) => new Date(`${m}-01T00:00:00Z`).toLocaleDateString('it-IT', { month: 'short', timeZone: 'UTC' }).replace('.', '');
+  const short = (v: number) => (v ? eur(v).replace(/,\d+(?=\D*$)/, '') : '–');
+  return (
+    <div className={`stack ${store.discreet ? 'discreet' : ''}`} style={{ gap: 12, paddingBottom: 24 }}>
+      <TopBar title="Mese per mese" backTo="/statistiche" />
+      <div className="seg" role="group" aria-label="Quanti mesi">
+        {[3, 6, 12].map((k) => <button key={k} aria-pressed={n === k} onClick={() => setN(k)}>{k} mesi</button>)}
+      </div>
+      <ErrorBox error={r.error} />
+      {!r.data ? <Loading /> : !r.data.categories.length ? <p className="empty">Nessuna spesa in questi mesi.</p> : (
+        <section className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="mtable">
+              <thead>
+                <tr><th>Categoria</th>{r.data.months.map((m, i) => <th key={m} className="num">{label(m)}{i === r.data!.months.length - 1 ? '*' : ''}</th>)}<th className="num">Ultimo</th></tr>
+              </thead>
+              <tbody>
+                {r.data.categories.slice(0, 12).map((c) => {
+                  // Ultimo mese intero contro la media dei mesi interi prima: il mese in corso non è finito e non conta.
+                  const full = c.values.slice(0, -1);
+                  const lastFull = full.at(-1) ?? 0;
+                  const before = full.slice(0, -1);
+                  const avg = before.length ? before.reduce((a, b) => a + b, 0) / before.length : 0;
+                  const pct = avg > 0 ? Math.round(((lastFull - avg) / avg) * 100) : null;
+                  const max = Math.max(...c.values, 1);
+                  return (
+                    <tr key={c.category_id ?? 'none'} onClick={() => c.category_id && go(`/movimenti/${c.category_id}`)}>
+                      <td><span className="row" style={{ gap: 8 }}><span className="dot" style={{ background: store.cat(c.category_id)?.color ?? GREY }} />{store.catName(c.category_id)}</span></td>
+                      {c.values.map((v, i) => <td key={i} className="num money" style={{ background: v ? `color-mix(in srgb, ${store.cat(c.category_id)?.color ?? GREY} ${Math.round((v / max) * 22)}%, transparent)` : undefined }}>{short(v)}</td>)}
+                      <td className="num">{pct == null ? '' : <span style={{ color: pct > 10 ? 'var(--neg)' : pct < -10 ? 'var(--pos)' : 'var(--muted)', fontWeight: 600 }}>{pct > 0 ? '+' : ''}{pct}%</span>}</td>
+                    </tr>
+                  );
+                })}
+                <tr className="total"><td>Totale</td>{r.data.totals.map((v, i) => <td key={i} className="num money">{short(v)}</td>)}<td /></tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="muted" style={{ fontSize: 12.5, margin: 0, padding: '0 14px 12px' }}>* mese in corso. “Ultimo” confronta l’ultimo mese intero con la media dei mesi prima.</p>
+        </section>
+      )}
+    </div>
   );
 }

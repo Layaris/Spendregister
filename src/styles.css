@@ -25,6 +25,8 @@
   --blue-soft: #e3ecf8;
   --blue-ink: #234c8c;
   --shadow: 0 10px 30px rgba(16, 24, 20, 0.12);
+  /* Ombra morbida dei riquadri: un filo vicino al bordo e un alone largo, così sembrano appoggiati sopra lo sfondo. */
+  --shadow-card: 0 1px 2px rgba(16, 24, 20, 0.05), 0 6px 20px rgba(16, 24, 20, 0.07);
   --f-display: 'Space Grotesk', Inter, system-ui, sans-serif;
   --f-body: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --f-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
@@ -35,6 +37,7 @@
   --accent: #1f6fe0; --accent-ink: #ffffff; --accent-soft: #e2edfd; --accent-deep: #1557b8;
   --pos: #12804f; --pos-soft: #def3e8; --neg: #cf3b2e; --neg-soft: #fde6e3;
   --shadow: 0 8px 24px rgba(14, 26, 43, 0.10);
+  --shadow-card: 0 1px 2px rgba(14, 26, 43, 0.05), 0 6px 20px rgba(14, 26, 43, 0.08);
 }
 :root[data-theme='dark'] {
     --bg: #0d1210; --card: #161d1a; --sunken: #1d2622; --ink: #e8eeea; --muted: #9aa8a0; --line: #26312c;
@@ -42,6 +45,7 @@
     --pos: #3cc49f; --pos-soft: #143329; --neg: #f08a68; --neg-soft: #3a1f16;
     --warn: #f0b867; --warn-soft: #33270f; --warn-line: #5a4519; --danger: #f08a68; --danger-soft: #3a1f16;
     --blue-soft: #18243a; --blue-ink: #9cbcf0; --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.30);
     color-scheme: dark;
 }
 @media (prefers-color-scheme: dark) {
@@ -51,6 +55,7 @@
     --pos: #3cc49f; --pos-soft: #143329; --neg: #f08a68; --neg-soft: #3a1f16;
     --warn: #f0b867; --warn-soft: #33270f; --warn-line: #5a4519; --danger: #f08a68; --danger-soft: #3a1f16;
     --blue-soft: #18243a; --blue-ink: #9cbcf0; --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.30);
     color-scheme: dark;
   }
 }
@@ -74,8 +79,8 @@ a { color: var(--accent); }
 .wrap { flex-wrap: wrap; }
 .grow { flex: 1; min-width: 0; }
 
-.card { background: var(--card); border-radius: 20px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-.card.warn { box-shadow: inset 0 0 0 1.5px var(--warn-line); }
+.card { background: var(--card); border-radius: 20px; padding: 16px; display: flex; flex-direction: column; gap: 12px; box-shadow: var(--shadow-card); }
+.card.warn { box-shadow: inset 0 0 0 1.5px var(--warn-line), var(--shadow-card); }
 .h2 { font-family: var(--f-display); font-size: 18px; font-weight: 600; margin: 0; }
 .label { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
 .hero-amount { font-family: var(--f-display); font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.05; font-variant-numeric: tabular-nums; }
@@ -153,6 +158,15 @@ textarea.input { min-height: 90px; resize: vertical; }
 .pill[aria-pressed='true'] { background: var(--accent); color: var(--accent-ink); }
 .heat { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
 .heat div { height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; }
+.conn { display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; border-radius: 14px; background: var(--warn-soft); color: var(--warn); font-size: 14px; line-height: 1.4; box-shadow: inset 0 0 0 1px var(--warn-line); }
+.conn svg { flex-shrink: 0; margin-top: 1px; }
+.mtable { border-collapse: collapse; width: 100%; font-size: 13.5px; white-space: nowrap; }
+.mtable th, .mtable td { padding: 9px 10px; text-align: left; border-bottom: 1px solid var(--line); }
+.mtable th { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: capitalize; }
+.mtable .num { text-align: right; font-variant-numeric: tabular-nums; }
+.mtable td:first-child, .mtable th:first-child { position: sticky; left: 0; background: var(--card); z-index: 1; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+.mtable tbody tr { cursor: pointer; }
+.mtable tr.total td { font-weight: 700; border-bottom: 0; }
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(72px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 12px; font-size: 14px; z-index: 30; max-width: calc(100% - 32px); }
 .discreet .money { filter: blur(7px); }
 @media (prefers-reduced-motion: no-preference) { .btn, .pill, .key { transition: transform 0.08s; } .btn:active, .pill:active, .key:active { transform: scale(0.97); } }
@@ -184,7 +198,7 @@ textarea.input { min-height: 90px; resize: vertical; }
 
 /* ---- Elenchi a righe in stile iOS (Aggiungi, Dettaglio, Impostazioni) ---- */
 .section-title { font-size: 13px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); padding: 0 6px; margin: 6px 0 -4px; }
-.list { background: var(--card); border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; }
+.list { background: var(--card); border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; box-shadow: var(--shadow-card); }
 .lrow { position: relative; display: flex; align-items: center; gap: 12px; min-height: 54px; padding: 8px 16px; background: transparent; border: 0; width: 100%; color: var(--ink); text-align: left; font-size: 16px; text-decoration: none; cursor: pointer; }
 .lrow + .lrow::before { content: ''; position: absolute; top: 0; left: 60px; right: 0; border-top: 1px solid var(--line); }
 .lrow-ic { width: 32px; height: 32px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; background: var(--sunken); color: var(--muted); }

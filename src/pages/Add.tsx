@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { parseAmount } from '../../shared/money';
-import { api, type Tx } from '../api';
+import { api, isUnreachable, type Tx } from '../api';
+import { enqueue, newClientId } from '../outbox';
 import { Icon } from '../icons';
 import { back, go } from '../router';
 import { useApi, useStore } from '../store';
@@ -91,16 +92,22 @@ export function Add({ initialKind = 'expense' }: { initialKind?: Kind }) {
     if (!amount) return;
     setBusy(true);
     setError(null);
+    const offset = localIso().slice(16);
+    const json = { type: kind, amount, currency, merchant: merchant.trim() || null, category_id: category, account_id: account || null, note: note.trim() || null };
+    const clientId = newClientId();
     try {
-      const offset = localIso().slice(16);
-      const json = { type: kind, amount, currency, merchant: merchant.trim() || null, category_id: category, account_id: account || null, note: note.trim() || null };
-      const r = await api<{ id: string }>('/transactions', { method: 'POST', json: { ...json, occurred_at: `${when}:00${offset}` } });
+      const r = await api<{ id: string }>('/transactions', { method: 'POST', json: { ...json, occurred_at: `${when}:00${offset}`, client_id: clientId } });
       if (star) await api('/favorites', { method: 'POST', json: { ...json, name: merchant.trim() || note.trim() || store.catName(category) } });
       await store.refresh();
       store.toast(`${kind === 'expense' ? 'Spesa salvata' : 'Entrata salvata'}${star ? ' e aggiunta ai preferiti' : ''}`);
       go(`/m/${r.id}`);
     } catch (e) {
-      setError((e as Error).message);
+      if (isUnreachable(e)) {
+        // Server irraggiungibile: la spesa resta sul telefono e parte da sola appena risponde.
+        enqueue({ client_id: clientId, json: { ...json, occurred_at: `${when}:00${offset}` }, at: new Date().toISOString() });
+        store.toast('Server non raggiungibile: la spesa è salvata sul telefono e parte da sola');
+        go('/');
+      } else setError((e as Error).message);
     } finally {
       setBusy(false);
     }

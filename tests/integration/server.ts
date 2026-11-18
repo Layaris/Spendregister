@@ -19,11 +19,16 @@ export const OLD = {
   v1Session: 'sessione-account-categorie-v1',
   v1FullSession: 'sessione-account-tutte-le-categorie-v1',
   v3Session: 'sessione-account-catalogo-v3',
+  /** Account con 5.000 movimenti in 7 anni, come l'archivio del proprietario: per misurare le righe lette. */
+  perfSession: 'sessione-account-archivio-grande',
 };
 
 /** Tutte le categorie predefinite della versione 1, come le aveva chi si è registrato prima dell'aggiornamento. */
 export const V1_CATEGORIES: Array<{ id: string; name: string; parent: string | null; kind: string }> =
   JSON.parse(readFileSync(new URL('./categories-v1.json', import.meta.url), 'utf8'));
+
+/** Testo che, in una notifica, fa finta che il database non risponda (prova della coda delle notifiche). */
+export const TEST_DB_DOWN = 'SIMULA-DATABASE-GIU';
 
 let proc: ChildProcess | null = null;
 let ai: Server | null = null;
@@ -136,12 +141,33 @@ export default async function setup(project: TestProject) {
       `('tx_v1f_${i}', '${f}', '${c.kind}', 'acc_cash~${f}', ${c.kind === 'income' ? 1000 : -1000}, 'EUR', ${c.kind === 'income' ? 1000 : -1000}, '2026-11-01T10:00:00+08:00', '2026-11-01T02:00:00.000Z', 'Spesa ${i}', '${c.id}~${f}', 'manual', 'confirmed', '${jan}', '${jan}')`).join(', ')};`,
     `INSERT INTO rules (id, user_id, name, enabled, priority, definition, created_at, updated_at) VALUES ('rule_telco~${f}', '${f}', 'Telefono', 1, 22, '{"conditions":[{"field":"merchant","op":"regex","value":"telkomsel"}],"actions":{"category_id":"cat_comm_phone~${f}","nature":"need"}}', '${jan}', '${jan}');`,
   ].join(' ')]);
+  // Archivio grande: 5.000 movimenti dal 2019 a oggi, 300 negozi, spese e qualche entrata, su un conto.
+  {
+    const p = 'usr_perf';
+    const now = Date.now();
+    const start = now - 7 * 365 * 86400_000;
+    const rows: string[] = [];
+    for (let i = 0; i < 5000; i++) {
+      const t = new Date(start + Math.floor(((now - start) * i) / 5000)).toISOString();
+      const inc = i % 40 === 0;
+      const amt = inc ? 2_000_000 : -(5000 + ((i * 7919) % 200_000));
+      rows.push(`('tx_p${i}', '${p}', '${inc ? 'income' : 'expense'}', 'acc_cash~${p}', ${amt}, 'EUR', ${amt}, '${t.slice(0, 19)}+08:00', '${t}', 'Negozio ${i % 300}', '${i % 3 ? 'Visa' : 'Jenius'}', 'wallet', 'confirmed', '${t}', '${t}')`);
+    }
+    const file = join(dir, 'perf.sql');
+    writeFileSync(file, [
+      user(p, 'archivio@example.com'), session(OLD.perfSession, p),
+      `INSERT INTO accounts (id, user_id, name, type, currency, initial_balance, position, created_at) VALUES ('acc_cash~${p}', '${p}', 'Contanti', 'cash', 'EUR', 0, 0, '${jan}');`,
+      ...Array.from({ length: 50 }, (_, k) => `INSERT INTO transactions (id, user_id, type, account_id, amount, currency, amount_eur, occurred_at, occurred_utc, merchant, card, source, status, created_at, updated_at) VALUES ${rows.slice(k * 100, k * 100 + 100).join(', ')};`),
+    ].join('\n'));
+    run(['execute', 'ledgy', '--file', file]);
+  }
   ai = fakeAi();
   // File vuoto: evita che wrangler legga il .dev.vars dello sviluppatore.
   writeFileSync(join(dir, 'none.env'), '');
   proc = spawn('npx', [
     'wrangler', 'dev', '--port', String(PORT), '--ip', '127.0.0.1', '--persist-to', dir, '--env-file', join(dir, 'none.env'),
     '--test-scheduled', '--var', `AI_ENDPOINTS:${JSON.stringify({ gemini: `http://127.0.0.1:${AI_PORT}/gemini`, nanogpt: `http://127.0.0.1:${AI_PORT}/nanogpt` })}`, '--var', 'FX_FIXED:IDR:0.00005,SGD:0.7,USD:0.9,AED:0.25', '--var', `WALLET_API:http://127.0.0.1:${AI_PORT}/wallet/v1/api`,
+    '--var', 'D1_ROWS:1', '--var', `TEST_DB_DOWN:${TEST_DB_DOWN}`,
   ], { stdio: 'ignore', env: { ...process.env, CI: '1' }, detached: true });
   const base = `http://127.0.0.1:${PORT}`;
   let ready = false;

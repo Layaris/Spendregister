@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { getEurRate } from './fx';
+import { seedId } from './seed';
 import { bad, uid, type AppEnv } from './lib';
 
 export const statsApi = new Hono<AppEnv>();
@@ -130,4 +131,58 @@ statsApi.get('/balance', async (c) => {
     series.push({ day, balance: running });
   }
   return c.json({ series });
+});
+
+/**
+ * Costi bancari del periodo per carta: commissioni (categoria Commissioni bancarie e sotto), prelievi e cambi
+ * (spostamenti dei prelievi e vecchie spese in Prelievi e cambio valuta). Il ricarico sul cambio non si può
+ * calcolare: le notifiche dicono quanto hai pagato in valuta, non quanto ti ha addebitato la banca in euro.
+ */
+statsApi.get('/fees', async (c) => {
+  const from = c.req.query('from');
+  const to = c.req.query('to');
+  if (!from || !to) bad('Servono from e to');
+  const u = uid(c);
+  const fees = seedId('cat_fin_fees', u);
+  const atm = seedId('cat_fin_atm', u);
+  const { results } = await c.env.DB.prepare(`SELECT COALESCE(t.card, '') AS card,
+      SUM(CASE WHEN t.type = 'expense' AND (t.category_id = ?2 OR t.category_id IN (SELECT id FROM categories WHERE parent_id = ?2 AND user_id = ?1)) THEN -t.amount_eur ELSE 0 END) AS fees,
+      SUM(CASE WHEN t.type = 'expense' AND (t.category_id = ?2 OR t.category_id IN (SELECT id FROM categories WHERE parent_id = ?2 AND user_id = ?1)) THEN 1 ELSE 0 END) AS fees_n,
+      SUM(CASE WHEN (t.type = 'expense' AND t.category_id = ?3) OR (t.type = 'transfer' AND t.transfer_group IS NOT NULL AND t.source = 'capture' AND t.amount < 0) THEN abs(t.amount_eur) ELSE 0 END) AS cash,
+      SUM(CASE WHEN (t.type = 'expense' AND t.category_id = ?3) OR (t.type = 'transfer' AND t.transfer_group IS NOT NULL AND t.source = 'capture' AND t.amount < 0) THEN 1 ELSE 0 END) AS cash_n
+    FROM transactions t INDEXED BY tx_user_occurred
+    WHERE t.user_id = ?1 AND t.deleted_at IS NULL AND t.duplicate_of IS NULL AND t.occurred_at >= ?4 AND t.occurred_at < ?5
+    GROUP BY COALESCE(t.card, '') HAVING fees > 0 OR cash > 0 ORDER BY fees DESC, cash DESC`)
+    .bind(u, fees, atm, from, to).all<{ card: string; fees: number; fees_n: number; cash: number; cash_n: number }>();
+  return c.json({ cards: results, fees: results.reduce((a, r) => a + r.fees, 0), cash: results.reduce((a, r) => a + r.cash, 0) });
+});
+
+/** Mese per mese: spesa di ogni categoria principale negli ultimi N mesi interi più quello in corso (al massimo 12). */
+statsApi.get('/months', async (c) => {
+  const today = /^\d{4}-\d{2}-\d{2}$/.test(c.req.query('today') ?? '') ? c.req.query('today')! : new Date().toISOString().slice(0, 10);
+  const n = Math.min(Math.max(Number(c.req.query('months')) || 6, 2), 12);
+  const [y, m] = today.split('-').map(Number);
+  const months = Array.from({ length: n }, (_, i) => new Date(Date.UTC(y, m - 1 - (n - 1 - i), 1)).toISOString().slice(0, 7));
+  const u = uid(c);
+  const db = c.env.DB;
+  const [rows, cats] = await Promise.all([
+    db.prepare(`SELECT substr(occurred_at, 1, 7) AS m, category_id, SUM(-amount_eur) AS total FROM transactions INDEXED BY tx_user_occurred
+      WHERE user_id = ? AND deleted_at IS NULL AND duplicate_of IS NULL AND type = 'expense' AND occurred_at >= ? AND occurred_at < date(?, '+1 day')
+      GROUP BY m, category_id`).bind(u, `${months[0]}-01`, today).all<{ m: string; category_id: string | null; total: number }>(),
+    db.prepare('SELECT id, parent_id FROM categories WHERE user_id = ?').bind(u).all<{ id: string; parent_id: string | null }>(),
+  ]);
+  const parentOf = new Map(cats.results.map((x) => [x.id, x.parent_id ?? x.id]));
+  const by = new Map<string, number[]>();
+  for (const r of rows.results) {
+    const k = (r.category_id ? parentOf.get(r.category_id) : null) ?? '';
+    const i = months.indexOf(r.m);
+    if (i < 0) continue;
+    const arr = by.get(k) ?? new Array(n).fill(0);
+    arr[i] += r.total;
+    by.set(k, arr);
+  }
+  const categories = [...by].map(([category_id, values]) => ({ category_id: category_id || null, values, total: values.reduce((a, b) => a + b, 0) }))
+    .sort((a, b) => b.total - a.total);
+  const totals = months.map((_, i) => categories.reduce((a, x) => a + x.values[i], 0));
+  return c.json({ months, categories, totals, current_partial: true });
 });
