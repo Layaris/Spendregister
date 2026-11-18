@@ -481,6 +481,9 @@ textarea.input { min-height: 90px; resize: vertical; }
 }
 
 /* Barra in basso più vicina al bordo: sopra la riga di iPhone resta solo lo stretto necessario. */
-.tabbar { height: calc(58px + max(env(safe-area-inset-bottom, 0px) - 18px, 4px)); padding-bottom: max(env(safe-area-inset-bottom, 0px) - 18px, 4px); }
-.app { padding-bottom: calc(76px + max(env(safe-area-inset-bottom, 0px) - 18px, 4px)); }
-.periodbar, .toast { bottom: calc(66px + max(env(safe-area-inset-bottom, 0px) - 18px, 4px)); }
+.tabbar { height: calc(56px + max(env(safe-area-inset-bottom, 0px) - 24px, 4px)); padding-bottom: max(env(safe-area-inset-bottom, 0px) - 24px, 4px); }
+.app { padding-bottom: calc(74px + max(env(safe-area-inset-bottom, 0px) - 24px, 4px)); }
+.periodbar, .toast { bottom: calc(64px + max(env(safe-area-inset-bottom, 0px) - 24px, 4px)); }
+/* Navy nell'app installata: l'orologio è bianco e la pagina disegna sotto di esso; una fascia blu fissa lo tiene
+   leggibile anche nelle pagine con lo sfondo chiaro e quando si scorre. Alta zero nel browser normale. */
+:root[data-theme='navy'] body::before { content: ''; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); background: #172d52; z-index: 30; pointer-events: none; }

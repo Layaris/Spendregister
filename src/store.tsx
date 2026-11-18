@@ -79,6 +79,7 @@ export function setThemeColor(theme: Theme) {
   const dark = theme === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches;
   const color = TOP_COLOR[theme === 'system' ? (dark ? 'dark' : 'light') : theme] ?? TOP_COLOR.light;
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', color);
+  document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')?.setAttribute('content', theme === 'navy' || theme === 'dark' || dark ? 'black-translucent' : 'default');
 }
 
 /** Applica il tema e lo ricorda per il prossimo avvio (public/theme.js lo legge prima del primo disegno). */
