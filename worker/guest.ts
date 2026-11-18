@@ -146,7 +146,10 @@ export async function adoptGuest(db: D1Database, g: string, a: string, mode: Log
   for (const [from, to] of accMap) stmts.push(db.prepare('UPDATE favorites SET account_id = ? WHERE user_id = ? AND account_id = ?').bind(to, g, from));
   stmts.push(move('favorites'));
   // Carte riconosciute: se l'account ne ha già una per la stessa fonte vince quella dell'account.
-  for (const [from, to] of accMap) stmts.push(db.prepare('UPDATE capture_sources SET account_id = ? WHERE user_id = ? AND account_id = ?').bind(to, g, from));
+  for (const [from, to] of accMap) {
+    stmts.push(db.prepare('UPDATE capture_sources SET account_id = ? WHERE user_id = ? AND account_id = ?').bind(to, g, from));
+    stmts.push(db.prepare('UPDATE recurring SET account_id = ? WHERE user_id = ? AND account_id = ?').bind(to, g, from));
+  }
   stmts.push(db.prepare('UPDATE OR IGNORE capture_sources SET user_id = ? WHERE user_id = ?').bind(a, g));
   // Budget e spese ricorrenti: categorie tradotte; se l'account ne ha già uno uguale vince quello dell'account. Viaggi: passano.
   for (const [from, to] of catMap) {

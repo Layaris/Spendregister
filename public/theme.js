@@ -6,7 +6,7 @@
   // Scuro e Auto sono tolti finché il tema scuro non viene rifatto: chi li aveva vede Salvia.
   if (t === 'dark' || t === 'system') t = 'light';
   document.documentElement.dataset.theme = t;
-  var top = { light: '#e7eee3', aqua1: '#ebf2f7', blue: '#dceef7', navy: '#182b4d', minimal: '#eceef2', dark: '#111816' };
+  var top = { light: '#e7eee3', aqua1: '#ebf2f7', blue: '#dceef7', navy: '#182b4d', minimal: '#eceef2', sakura: '#fff1f6', dark: '#111816' };
   var dark = t === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
   var c = top[t === 'system' ? (dark ? 'dark' : 'light') : t] || top.light;
   var m = document.querySelector('meta[name="theme-color"]');

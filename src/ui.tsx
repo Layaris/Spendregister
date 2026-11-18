@@ -28,7 +28,7 @@ export function TxRow({ t }: { t: Tx }) {
   const same = t.currency === displayCurrency();
   const foreign = !same;
   return (
-    <a href={`#/m/${t.id}`} className="txrow">
+    <a href={`#/m/${t.id}`} className="txrow" data-expense={t.type === 'expense' && t.amount_eur < 0}>
       {t.type === 'transfer'
         ? <div className="ic" style={{ width: 40, height: 40, background: 'var(--blue-soft)', color: 'var(--blue-ink)' }}><Icon name={t.source === 'adjustment' ? 'wallet' : 'transfer'} size={22} /></div>
         : <CategoryIcon id={t.category_id} />}

@@ -5,6 +5,7 @@ import { formatMoney, roundMilli, toMilli } from '../shared/money';
 import { canonicalMerchant } from './merchants';
 import { parseMacroBody } from '../shared/macrodroid';
 import { budgetPush } from './push';
+import { replaceAutoTwin } from './recurring';
 import { cleanMerchantName, parseNotification, parseWithParser, type AiHint, type ParserDef } from '../shared/notification';
 import { normalizePostedAt } from '../shared/time';
 import { bad, body, getTimeZone, HttpError, newId, notFound, nowIso, randomToken, uid, type AppEnv, type Env } from './lib';
@@ -238,7 +239,10 @@ async function receive(env: Env, ctx: Pick<ExecutionContext, 'waitUntil'>, token
   await env.DB.prepare('UPDATE devices SET last_seen_at = ?, client_version = COALESCE(?, client_version) WHERE id = ?').bind(nowIso(), version, dev.id).run();
   // Dalla coda: l'ora della spesa è quella in cui la notifica era arrivata, non quella in cui si registra.
   if (receivedAt && !payload.posted_at) payload.posted_at = receivedAt;
-  const { needs_ai, direction, ...result } = await processCapture(env.DB, dev.user_id, dev.id, payload);
+  const { needs_ai: needsAi, direction, ...result } = await processCapture(env.DB, dev.user_id, dev.id, payload);
+  // Spesa ricorrente già registrata da sola nei giorni vicini: vale questa vera (niente doppione), con la sua categoria.
+  const twin = result.transaction_id && direction !== 'income' ? await replaceAutoTwin(env.DB, dev.user_id, result.transaction_id) : null;
+  const needs_ai = needsAi && !twin?.category_id;
   // Budget all'80% o superato: avviso sul telefono (solo per chi ha attivato le notifiche).
   if (result.transaction_id && direction !== 'income') ctx.waitUntil(budgetPush(env, dev.user_id).catch(() => {}));
   if (needs_ai && result.transaction_id) {

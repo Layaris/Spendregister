@@ -2098,3 +2098,67 @@ describe('MacroDroid', () => {
     expect(t).toMatchObject({ amount: -55_600_000, currency: 'IDR', card: 'Revolut' });
   });
 });
+
+describe('spese ricorrenti senza doppioni', () => {
+  const tz = 'Asia/Makassar';
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
+  const shift = (n: number) => new Date(Date.parse(`${today}T12:00:00Z`) + n * 86400_000).toISOString().slice(0, 10);
+  const cron = async () => expect((await fetch(`${BASE}/__scheduled?cron=0+1+*+*+*`)).status).toBe(200);
+  const byMerchant = async (c: Client, q: string) => (await c.get(`/api/transactions?limit=50&q=${encodeURIComponent(q)}`)).json.items as any[];
+
+  it('pagata con PayPal: la registra Ledgy alla data, una volta sola; se arriva anche la notifica tiene quella vera', async () => {
+    const c = new Client('10.81.0.1');
+    await c.post('/api/guest');
+    const o: Record<string, string> = {};
+    await loadOwn(c, o);
+    const acc = (await c.get('/api/bootstrap')).json.accounts[0].id;
+    await c.post('/api/recurring', { merchant: 'Netflix', period: 'month', every: 1, amount_eur: -9_990, amount: -10_990, currency: 'USD', category_id: o.cat_bills ?? null,
+      status: 'confirmed', next_date: today, auto_add: true, account_id: acc });
+    const rec = (await c.get(`/api/recurring/of/Netflix?today=${today}`)).json.item;
+    expect(rec).toMatchObject({ auto_add: true, account_id: acc, next_date: today });
+    await cron();
+    let items = await byMerchant(c, 'Netflix');
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ source: 'recurring', amount: -10_990, currency: 'USD', account_id: acc, status: 'confirmed' });
+    expect(items[0].occurred_at.slice(0, 10)).toBe(today);
+    await cron(); // il giorno dopo il cron non la ripete
+    expect(await byMerchant(c, 'Netflix')).toHaveLength(1);
+    // La prossima è fra un mese.
+    expect((await c.get(`/api/recurring/of/Netflix?today=${today}`)).json.item.next_date > shift(25)).toBe(true);
+    // Arriva comunque la notifica, 2 giorni dopo e con un nome diverso: vale quella vera, senza categoria prende la sua.
+    const real = (await c.post('/api/transactions', { amount: 11.2, currency: 'USD', merchant: 'NETFLIX.COM', occurred_at: `${shift(2)}T10:00:00+08:00` })).json.id;
+    items = await byMerchant(c, 'Netflix');
+    expect(items.map((t: any) => t.id)).toEqual([real]);
+    if (o.cat_bills) expect(items[0].category_id).toBe(o.cat_bills);
+  });
+
+  it('addebito vero arrivato 2 giorni prima con un altro nome: Ledgy non la registra di nuovo', async () => {
+    const c = new Client('10.81.0.2');
+    await c.post('/api/guest');
+    await c.post('/api/transactions', { amount: 350_000, currency: 'IDR', merchant: 'BIZNET HOME 0021', occurred_at: `${shift(-2)}T08:00:00+08:00` });
+    await c.post('/api/recurring', { merchant: 'Biznet', period: 'month', every: 1, amount_eur: -17_500, status: 'confirmed', next_date: today, auto_add: true });
+    await cron();
+    expect(await byMerchant(c, 'Biznet')).toHaveLength(1);
+    const next = (await c.get(`/api/recurring/of/Biznet?today=${today}`)).json.item.next_date;
+    expect(next > shift(25)).toBe(true);
+  });
+
+  it('pagata con una carta letta da Ledgy: niente registrazioni automatiche, la data segue l\'addebito vero', async () => {
+    const c = new Client('10.81.0.3');
+    await c.post('/api/guest');
+    const id = (await c.post('/api/transactions', { amount: 400_000, currency: 'IDR', merchant: 'Indihome', occurred_at: `${shift(-31)}T08:00:00+08:00` })).json.id;
+    await c.put(`/api/transactions/${id}`, { card: 'BCA' });
+    await c.post('/api/recurring', { merchant: 'Indihome', period: 'month', every: 1, amount_eur: -20_000, status: 'confirmed', next_date: shift(-1), auto_add: false });
+    await cron();
+    expect(await byMerchant(c, 'Indihome')).toHaveLength(1);
+    // L'addebito arriva 3 giorni dopo la data scelta: è quella spesa, la prossima si conta da lì.
+    await c.post('/api/transactions', { amount: 400_000, currency: 'IDR', merchant: 'Indihome', occurred_at: `${shift(2)}T08:00:00+08:00` });
+    expect(await byMerchant(c, 'Indihome')).toHaveLength(2);
+    const r = (await c.get(`/api/recurring?today=${shift(2)}`)).json.confirmed.find((x: any) => x.merchant === 'Indihome');
+    expect(r.late).toBe(false);
+    expect(r.next_date > shift(28)).toBe(true);
+    // Nel backup con il modo di pagamento.
+    const rows = (await c.get('/api/backup/export?table=recurring')).json.rows;
+    expect(rows[0]).toMatchObject({ merchant: 'Indihome', auto_add: 0 });
+  });
+});

@@ -359,3 +359,26 @@ describe('macro per MacroDroid', () => {
     expect(parseMacroBody('Paid 5 EUR')).toBeNull();
   });
 });
+
+describe('stesso negozio scritto diverso', () => {
+  it('riconosce Netflix in NETFLIX.COM e PAYPAL *NETFLIX, non confonde negozi diversi', async () => {
+    const { sameMerchant } = await import('../shared/merchants');
+    expect(sameMerchant('Netflix', 'NETFLIX.COM')).toBe(true);
+    expect(sameMerchant('Netflix', 'PAYPAL *NETFLIX')).toBe(true);
+    expect(sameMerchant('Biznet Home', 'BIZNET')).toBe(true);
+    expect(sameMerchant('Spotify', 'Netflix')).toBe(false);
+    expect(sameMerchant('Warung Made', 'Warung Babi Guling')).toBe(false);
+    expect(sameMerchant('', 'Netflix')).toBe(false);
+  });
+});
+
+describe('prossimo addebito di una ricorrente', () => {
+  it('la data scelta a mano vale finché non arriva una spesa dopo di lei', async () => {
+    const { nextDue } = await import('../shared/recurring');
+    expect(nextDue('month', 1, '2026-10-10', null, '2026-11-01')).toEqual({ next: '2026-11-10', fromTx: true });
+    expect(nextDue('month', 1, '2026-10-10', '2026-11-07', '2026-11-01')).toEqual({ next: '2026-11-07', fromTx: false });
+    // Addebito arrivato 3 giorni dopo la data scelta: si riparte da lì.
+    expect(nextDue('month', 1, '2026-11-10', '2026-11-07', '2026-11-12')).toEqual({ next: '2026-12-10', fromTx: true });
+    expect(nextDue('month', 1, null, '2026-09-05', '2026-11-01')).toEqual({ next: '2026-11-05', fromTx: false });
+  });
+});

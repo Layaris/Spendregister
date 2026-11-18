@@ -592,3 +592,111 @@ html { background: var(--chrome); }
   background: linear-gradient(180deg, transparent calc(100% - 70px), #e1e4e9 100%) top center / 100% calc(var(--home-sky-height, 0px) + 70px) no-repeat,
     var(--home-sky) top center / 100% calc(var(--home-sky-height, 0px) + 70px) no-repeat, var(--bg-grad);
 }
+
+/* Sakura Pop · palette chiara. La foglia e le icone restano quelle di Ledgy. */
+:root[data-theme='sakura'] {
+  --chrome: #fff1f6;
+  --bg: #fff1f6;
+  --bg-grad: linear-gradient(160deg, #fff1f6 5%, #fcf1fa 70%, #f8f2fc);
+  --card: #ffffff;
+  --card-grad: linear-gradient(#fff, #fffcfe);
+  --card-border: #533b60;
+  --tile: #fffafd;
+  --tile-end: #fff2f8;
+  --sunken: #f6e6f0;
+  --ink: #2b1840;
+  --muted: #655076;
+  --line: #dbc6d6;
+  --accent: #84305c;
+  --accent-ink: #ffffff;
+  --accent-deep: #70234f;
+  --accent-soft: #fbe4ee;
+  --primary-grad: linear-gradient(135deg, #963d70, #75244f);
+  --pos: #005b43;
+  --pos-soft: #d9f4e6;
+  --neg: #9c1239;
+  --neg-soft: #ffe1e8;
+  --out: #ab2847;
+  --warn: #704414;
+  --warn-soft: #fff1d8;
+  --warn-line: #b68246;
+  --danger: #9c1239;
+  --danger-soft: #ffe1e8;
+  --blue-soft: #ede7fc;
+  --blue-ink: #533878;
+  --hero-bg: linear-gradient(112deg, #ffc5dd 0%, #e9d5ff 59%, #c4eaff);
+  --hero-ink: var(--ink);
+  --hero-muted: #594064;
+  --hero-line: var(--pos);
+  --hero-fill: #125f411b;
+  --head-ink: var(--ink);
+  --head-btn: #fffafd;
+  --tabbar-bg: linear-gradient(#fffafd, #fff8fc);
+  --tabbar-ink: #664864;
+  --tabbar-active: #72234f;
+  --tabbar-active-bg: #f9ddea;
+  --brand-light: #bd6598;
+  --brand-mid: #913d78;
+  --brand-dark: #612c56;
+  --wallet-light: #a25a86;
+  --wallet-dark: #6e305b;
+  --wallet-paper: #ffebf6;
+  --daypill-bg: linear-gradient(120deg, #fdf0f8, #f1e7fa);
+  --wave: #deb1ce45;
+  --ring-track: #e6dbe4;
+  --income-bar: #006748;
+  --budget-warning: #824d11;
+  --shadow: 0 8px 26px #39203c26;
+  --shadow-card: 2px 3px 0 #442d4e;
+  --glass-edge: #fffcfe;
+  --f-display: ui-rounded, 'Arial Rounded MT Bold', system-ui, sans-serif;
+  color-scheme: light;
+}
+:root[data-theme='sakura'] body {
+  background-image: radial-gradient(circle, #a4638523 0.7px, transparent 0.9px), var(--bg-grad);
+  background-size: 14px 14px, auto;
+}
+:root[data-theme='sakura'] :is(.card, .list, .amount-card) {
+  border: 1.5px solid var(--card-border);
+  border-radius: 19px;
+}
+:root[data-theme='sakura'] .home { gap: 12px; }
+:root[data-theme='sakura'] .card.saldo {
+  border: 2px solid var(--ink);
+  border-radius: 20px;
+}
+:root[data-theme='sakura'] .saldo::before {
+  /* Un fiore e tre petali disegnati sul saldo, lontano dagli importi. */
+  width: 76px;
+  height: 43px;
+  top: 3px;
+  right: 3px;
+  mask: none;
+  -webkit-mask: none;
+  background:
+    radial-gradient(circle at 51px 18px, #975277 1.8px, transparent 2.3px),
+    radial-gradient(ellipse 4.4px 7px at 51px 12px, #fff9 96%, transparent),
+    radial-gradient(ellipse 6px 4.7px at 57px 17px, #fffa 96%, transparent),
+    radial-gradient(ellipse 5px 6px at 55px 23px, #fff9 96%, transparent),
+    radial-gradient(ellipse 5px 6px at 47px 23px, #fffa 96%, transparent),
+    radial-gradient(ellipse 6px 4.5px at 45px 17px, #fff9 96%, transparent),
+    radial-gradient(ellipse 2px 4px at 33px 25px, #b474a382 90%, transparent),
+    radial-gradient(ellipse 2.5px 4px at 69px 9px, #b474a37d 90%, transparent),
+    radial-gradient(ellipse 2px 3px at 22px 12px, #b474a37d 90%, transparent);
+}
+:root[data-theme='sakura'] .tile {
+  border-color: #caa8c0;
+  box-shadow: none;
+}
+:root[data-theme='sakura'] :is(.head-btn, .periodpill) {
+  border: 1px solid var(--card-border);
+  box-shadow: 1px 2px 0 #724f70;
+}
+:root[data-theme='sakura'] .tabbar { border-color: #916f89; }
+:root[data-theme='sakura'] .fab {
+  border: 2px solid var(--ink);
+  box-shadow: 2px 2px 0 var(--ink);
+}
+:root[data-theme='sakura'] .txrow[data-expense='true'] .amt > .money:first-child {
+  color: var(--neg);
+}

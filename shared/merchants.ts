@@ -68,3 +68,20 @@ export function suggestMerges(items: MerchantCount[], max = 30): { into: string;
   }
   return groups.sort((a, b) => b.n - a.n).slice(0, max);
 }
+
+/**
+ * Stesso negozio anche se scritto diverso ("Netflix", "NETFLIX.COM", "PAYPAL *NETFLIX"): stessa chiave, una che
+ * inizia con l'altra, o la parola di marca dell'uno tra le parole dell'altro. Serve a non registrare due volte
+ * una spesa ricorrente quando arriva anche la notifica vera.
+ */
+export function sameMerchant(a: string | null | undefined, b: string | null | undefined): boolean {
+  const ka = merchantKey(a);
+  const kb = merchantKey(b);
+  if (!ka || !kb) return false;
+  if (ka === kb || ka.startsWith(`${kb} `) || kb.startsWith(`${ka} `)) return true;
+  const wa = ka.split(' ');
+  const wb = kb.split(' ');
+  const ba = brandWord(ka) ?? (wa.length === 1 && ka.length >= 4 ? ka : null);
+  const bb = brandWord(kb) ?? (wb.length === 1 && kb.length >= 4 ? kb : null);
+  return (!!ba && wb.includes(ba)) || (!!bb && wa.includes(bb));
+}

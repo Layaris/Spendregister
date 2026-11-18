@@ -105,14 +105,18 @@ export function detectRecurring(rows: Occurrence[], today: string, skip: Set<str
 }
 
 /**
- * Prossimo addebito di una spesa ricorrente confermata: dall'ultima spesa del negozio (`lastDay`), salvo una data più
- * avanti scelta a mano (`anchor`); senza spese, dalla data scelta a mano, la prima da oggi in poi.
+ * Prossimo addebito di una spesa ricorrente confermata: la data scelta a mano (`anchor`) se è dopo l'ultima spesa del
+ * negozio (`lastDay`), altrimenti dall'ultima spesa; senza spese, dalla data scelta a mano, la prima da oggi in poi.
  */
 export function nextDue(period: Period, every: number, lastDay: string | null, anchor: string | null, today: string): { next: string | null; fromTx: boolean } {
   const fromTx = lastDay ? nextDate(lastDay, period, every) : null;
-  if (fromTx && !(anchor && anchor > fromTx)) return { next: fromTx, fromTx: true };
+  if (anchor && lastDay && anchor > lastDay) return { next: anchor, fromTx: false };
+  if (fromTx) return { next: fromTx, fromTx: true };
   if (!anchor) return { next: null, fromTx: false };
   let next = anchor;
   for (let i = 0; i < 600 && next < today; i++) next = nextDate(next, period, every);
   return { next, fromTx: false };
 }
+
+/** Giorni di tolleranza tra la data prevista di una ricorrente e quella vera (le banche addebitano anche 2-3 giorni dopo). */
+export const matchWindowDays = (period: Period, every = 1) => (period === 'week' && every === 1 ? 2 : 5);

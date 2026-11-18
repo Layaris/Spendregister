@@ -3,6 +3,7 @@ import { roundMilli, toMilli } from '../shared/money';
 import { cleanMerchantName } from '../shared/notification';
 import { canonicalMerchant } from './merchants';
 import { budgetPush } from './push';
+import { replaceAutoTwin } from './recurring';
 import { evaluateRules, type Rule, type RuleDefinition, type RuleInput } from '../shared/rules';
 import { getEurRate } from './fx';
 import { normalizePostedAt } from '../shared/time';
@@ -374,7 +375,10 @@ transactionsApi.post('/', async (c) => {
     merchant: merchant ?? merchantRaw, note: b.note ?? null, category_id: category, nature, source: 'manual', labels, rule_ids: ruleIds, place: b.place ?? null,
     external_id: externalId,
   });
-  if (type === 'expense') c.executionCtx.waitUntil(budgetPush(c.env, userId).catch(() => {}));
+  if (type === 'expense') {
+    await replaceAutoTwin(c.env.DB, userId, id);
+    c.executionCtx.waitUntil(budgetPush(c.env, userId).catch(() => {}));
+  }
   return c.json({ id }, 201);
 });
 

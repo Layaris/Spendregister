@@ -17,7 +17,7 @@ import { transactionsApi } from './transactions';
 import { walletApi } from './wallet';
 import { budgetsApi } from './budgets';
 import { tripsApi } from './trips';
-import { recurringApi } from './recurring';
+import { recurringApi, runRecurring } from './recurring';
 import { insightsApi } from './insights';
 import { assistantApi } from './assistant';
 import { countingDb } from './rows';
@@ -137,6 +137,7 @@ export default {
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     await drainInbound(env, ctx).catch(() => 0);
     await pendingHints(env, ctx).catch(() => {});
+    await runRecurring(env).catch(() => 0);
     await dailyPush(env).catch(() => {});
     // Pulizia notturna: sessioni scadute, tentativi vecchi, notifiche scartate da oltre 90 giorni.
     const now = new Date().toISOString();

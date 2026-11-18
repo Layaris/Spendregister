@@ -30,7 +30,7 @@ export const TABLES: Record<string, string[]> = {
   budgets: ['category_id', 'amount', 'updated_at'],
   trips: ['id', 'name', 'place', 'start_date', 'end_date', 'created_at'],
   trip_items: ['trip_id', 'transaction_id', 'mode'],
-  recurring: ['id', 'merchant', 'category_id', 'amount_eur', 'period', 'every', 'status', 'last_date', 'created_at', 'updated_at'],
+  recurring: ['id', 'merchant', 'category_id', 'amount_eur', 'period', 'every', 'status', 'last_date', 'auto_add', 'account_id', 'amount', 'currency', 'created_at', 'updated_at'],
   card_settings: ['card', 'currency', 'markup_bp', 'sample_tx_id', 'sample_charged', 'updated_at'],
   merchant_aliases: ['alias', 'merchant', 'created_at'],
 };
@@ -200,7 +200,7 @@ backupApi.post('/import/chunk', async (c) => {
       const cur = get('display_currency');
       if (typeof cur === 'string' && /^[A-Z]{3}$/.test(cur)) await db.prepare('UPDATE users SET display_currency = ? WHERE id = ?').bind(cur, u).run();
       const theme = get('theme');
-      if (typeof theme === 'string' && ['light', 'aqua1', 'blue', 'navy', 'minimal', 'dark', 'system'].includes(theme)) await db.prepare('UPDATE users SET theme = ? WHERE id = ?').bind(theme, u).run();
+      if (typeof theme === 'string' && ['light', 'aqua1', 'blue', 'navy', 'minimal', 'sakura', 'dark', 'system'].includes(theme)) await db.prepare('UPDATE users SET theme = ? WHERE id = ?').bind(theme, u).run();
       const home = get('home_layout');
       if (typeof home === 'string') {
         try { if (Array.isArray(JSON.parse(home))) await db.prepare('UPDATE users SET home_layout = ? WHERE id = ?').bind(home, u).run(); } catch { /* ignora */ }
@@ -287,10 +287,12 @@ backupApi.post('/import/chunk', async (c) => {
   } else if (table === 'recurring') {
     const id = await translator(db, 'recurring', rows.map((r) => r.id), u);
     const cat = await catTr(rows.map((r) => r.category_id));
+    const acc = await accTr(rows.map((r) => r.account_id));
     const cats = new Set((await db.prepare('SELECT id FROM categories WHERE user_id = ?').bind(u).all<{ id: string }>()).results.map((x) => x.id));
     out = rows.map((r) => {
       const cid = cat(r.category_id);
-      return { ...r, id: id(r.id), category_id: cid && cats.has(cid) ? cid : null, every: Number(r.every) >= 1 ? Number(r.every) : 1, created_at: r.created_at ?? nowIso(), updated_at: r.updated_at ?? nowIso() };
+      return { ...r, id: id(r.id), category_id: cid && cats.has(cid) ? cid : null, every: Number(r.every) >= 1 ? Number(r.every) : 1, auto_add: r.auto_add ? 1 : 0, account_id: acc(r.account_id),
+        created_at: r.created_at ?? nowIso(), updated_at: r.updated_at ?? nowIso() };
     });
   } else if (table === 'trip_items') {
     // Solo se viaggio e movimento esistono e sono dell'account.
