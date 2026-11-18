@@ -29,6 +29,8 @@ import uuid
 from pathlib import Path
 
 OBJ = '￼'
+# Versione del comando: va anche in SHORTCUT_VERSION (src/pages/Capture.tsx), così l'app avvisa chi ha quella vecchia.
+VERSION = '3'
 
 
 def new_uuid() -> str:
@@ -114,6 +116,7 @@ def build() -> dict:
                    ('title', token([notification_part('Title')])),
                    ('text', token([full])),
                    ('can_hint', text('1')),
+                   ('v', text(VERSION)),
                    ('posted_at', token([{'Type': 'CurrentDate', 'Aggrandizements': [{'Type': 'WFDateFormatVariableAggrandizement', 'WFDateFormatStyle': 'ISO 8601', 'WFISO8601IncludeTime': True}]}])),
                ])),
         # 7-8. Il server dice se gli serve la categoria (campo "hint" con l'elenco) e quale notifica è.

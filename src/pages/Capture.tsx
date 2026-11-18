@@ -6,7 +6,10 @@ import { useApi, useStore } from '../store';
 import { CardSheet, ErrorBox, Loading, TopBar } from '../ui';
 import { relativeTime } from '../util';
 
-interface Device { id: string; name: string; platform: string; method: string; token_hint: string; last_seen_at: string | null; last_capture_at: string | null }
+interface Device { id: string; name: string; platform: string; method: string; token_hint: string; last_seen_at: string | null; last_capture_at: string | null; client_version: string | null }
+
+/** Versione del comando iPhone servito a /ledgy.shortcut (uguale a VERSION in tools/shortcut/build_shortcut.py). */
+const SHORTCUT_VERSION = 3;
 interface Capture { id: string; received_at: string; app: string | null; title: string | null; text: string; status: string; detail: string | null; transaction_id: string | null; card?: string | null }
 interface Parser { id: string; name: string; app: string; pattern: string; default_currency: string | null; sample: string | null; enabled: number }
 
@@ -23,6 +26,7 @@ export function Capture() {
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [hasShortcut, setHasShortcut] = useState(false);
+  const [renew, setRenew] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/ledgy.shortcut', { method: 'HEAD' }).then((r) => setHasShortcut(r.ok && !r.headers.get('content-type')?.includes('html'))).catch(() => {});
@@ -42,6 +46,20 @@ export function Capture() {
 
   const copy = async (text: string) => {
     try { await navigator.clipboard.writeText(text); store.toast('Indirizzo copiato'); } catch { store.toast('Copia non riuscita: selezionalo a mano'); }
+  };
+
+  /** Nuovo indirizzo per un telefono già collegato (es. comando perso): il vecchio smette di funzionare. */
+  const newAddress = async (d: Device) => {
+    if (renew !== d.id) { setRenew(d.id); return; }
+    setRenew(null);
+    try {
+      const r = await api<{ url: string }>(`/capture/devices/${d.id}/token`, { method: 'POST' });
+      setConnect({ platform: d.platform === 'android' ? 'android' : 'ios', url: r.url });
+      devices.reload();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (e) {
+      setError((e as Error).message);
+    }
   };
 
   const revoke = async (d: Device) => {
@@ -99,6 +117,22 @@ export function Capture() {
         )}
       </section>
 
+      {hasShortcut && (
+        <section className="card">
+          <div className="row between"><h2 className="h2">Comando iPhone</h2><span className="chip">versione {SHORTCUT_VERSION}</span></div>
+          <span className="muted" style={{ fontSize: 14 }}>Manda subito la spesa a Ledgy; chiede la categoria ad Apple Intelligence solo se Ledgy non la trova. Nessuna notifica.</span>
+          <a className="btn primary" href="/ledgy.shortcut" download="Ledgy.shortcut"><Icon name="download" size={18} />Scarica il comando</a>
+          <details>
+            <summary className="muted" style={{ fontSize: 14, cursor: 'pointer' }}>Come aggiornarlo o reinstallarlo</summary>
+            <ol style={{ margin: '8px 0 0', paddingLeft: 20, display: 'grid', gap: 6, fontSize: 14 }}>
+              <li>Ti serve l’indirizzo privato del telefono. Se hai ancora il comando vecchio: Comandi → tieni premuto Ledgy → Modifica → copia il testo del primo riquadro (inizia con https://). Se l’hai perso: tocca <b>Nuovo indirizzo</b> accanto al telefono qui sotto.</li>
+              <li>Scarica il comando, aprilo dai download di Safari, scegli <b>Sostituisci</b> e incolla l’indirizzo quando lo chiede.</li>
+              <li>Le automazioni restano: usano il comando con lo stesso nome. Controlla solo che “Notifica all’esecuzione” sia spenta.</li>
+            </ol>
+          </details>
+        </section>
+      )}
+
       <section className="card">
         <h2 className="h2">Dispositivi</h2>
         {!devices.data ? <Loading /> : !devices.data.items.length ? <p className="muted" style={{ margin: 0 }}>Nessun telefono collegato.</p> : devices.data.items.map((d) => {
@@ -108,10 +142,17 @@ export function Capture() {
               <span className={`dot ${stale ? 'warn' : ''}`} />
               <div className="grow stack" style={{ gap: 2, fontSize: 14 }}>
                 <b>{d.name}</b>
-                <span className="muted">{d.method === 'shortcut' ? 'Comandi' : 'MacroDroid'} · segnale {relativeTime(d.last_seen_at)} · ultima spesa {relativeTime(d.last_capture_at)}</span>
+                <span className="muted">{d.method === 'shortcut' ? `Comandi${d.client_version ? ` v${d.client_version}` : ''}` : 'MacroDroid'} · segnale {relativeTime(d.last_seen_at)} · ultima spesa {relativeTime(d.last_capture_at)}</span>
                 {stale && <span style={{ color: 'var(--warn)' }}>Nessun segnale da oltre un giorno: controlla il risparmio batteria.</span>}
+                {d.method === 'shortcut' && d.client_version && Number(d.client_version) < SHORTCUT_VERSION && hasShortcut && (
+                  <span style={{ color: 'var(--warn)' }}>C’è la versione {SHORTCUT_VERSION} del comando: <a href="/ledgy.shortcut" download="Ledgy.shortcut">riscaricalo</a>.</span>
+                )}
+                {renew === d.id && <span style={{ color: 'var(--warn)' }}>Il vecchio indirizzo smetterà di funzionare: tocca di nuovo per confermare.</span>}
               </div>
-              <button className="btn small" onClick={() => revoke(d)}>Scollega</button>
+              <div className="stack" style={{ gap: 6 }}>
+                <button className="btn small" onClick={() => newAddress(d)}>{renew === d.id ? 'Conferma' : 'Nuovo indirizzo'}</button>
+                <button className="btn small" onClick={() => revoke(d)}>Scollega</button>
+              </div>
             </div>
           );
         })}

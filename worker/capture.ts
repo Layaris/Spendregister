@@ -23,6 +23,9 @@ interface CapturePayload {
   category?: string | null;
   /** Il comando del telefono sa chiedere la categoria ad Apple Intelligence se il server non la trova (comando v3). */
   can_hint?: string | boolean | null;
+  /** Versione del comando iPhone (dalla 3). */
+  v?: string | null;
+  source?: string | null;
 }
 
 export async function loadParsers(db: D1Database, userId: string): Promise<ParserDef[]> {
@@ -226,8 +229,10 @@ async function readPayload(type: string, raw: string): Promise<CapturePayload> {
 async function receive(env: Env, ctx: Pick<ExecutionContext, 'waitUntil'>, tokenHash: string, type: string, raw: string, receivedAt?: string) {
   if (env.TEST_DB_DOWN && !receivedAt && raw.includes(env.TEST_DB_DOWN)) throw new Error('D1_ERROR: database finto giù');
   const dev = await deviceByHash(env.DB, tokenHash);
-  await env.DB.prepare('UPDATE devices SET last_seen_at = ? WHERE id = ?').bind(nowIso(), dev.id).run();
   const payload = await readPayload(type, raw);
+  // Versione del comando: la v3 la manda; il comando vecchio (v1) si riconosce dai campi letti con Apple Intelligence.
+  const version = payload.v ? String(payload.v).slice(0, 10) : payload.can_hint ? '3' : payload.source === 'ios-shortcut' ? '1' : null;
+  await env.DB.prepare('UPDATE devices SET last_seen_at = ?, client_version = COALESCE(?, client_version) WHERE id = ?').bind(nowIso(), version, dev.id).run();
   // Dalla coda: l'ora della spesa è quella in cui la notifica era arrivata, non quella in cui si registra.
   if (receivedAt && !payload.posted_at) payload.posted_at = receivedAt;
   const { needs_ai, direction, ...result } = await processCapture(env.DB, dev.user_id, dev.id, payload);
@@ -352,7 +357,7 @@ export const captureAdminApi = new Hono<AppEnv>();
 
 captureAdminApi.get('/devices', async (c) => {
   const { results } = await c.env.DB
-    .prepare('SELECT id, name, platform, method, token_hint, created_at, last_seen_at, last_capture_at FROM devices WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at')
+    .prepare('SELECT id, name, platform, method, token_hint, created_at, last_seen_at, last_capture_at, client_version FROM devices WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at')
     .bind(uid(c))
     .all();
   return c.json({ items: results });

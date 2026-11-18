@@ -19,7 +19,7 @@ export const TABLES: Record<string, string[]> = {
   labels: ['id', 'name', 'color', 'external_id'],
   rules: ['id', 'name', 'enabled', 'priority', 'definition', 'created_at', 'updated_at'],
   parsers: ['id', 'name', 'app', 'pattern', 'flags', 'direction', 'default_currency', 'sample', 'enabled', 'created_at'],
-  devices: ['id', 'name', 'platform', 'method', 'token_hash', 'token_hint', 'created_at', 'last_seen_at', 'last_capture_at', 'revoked_at'],
+  devices: ['id', 'name', 'platform', 'method', 'token_hash', 'token_hint', 'created_at', 'last_seen_at', 'last_capture_at', 'revoked_at', 'client_version'],
   transactions: ['id', 'type', 'account_id', 'amount', 'currency', 'amount_eur', 'fx_rate', 'fx_date', 'occurred_at', 'occurred_utc', 'merchant_raw',
     'merchant', 'note', 'category_id', 'nature', 'card', 'source', 'status', 'review_reason', 'review_choices', 'transfer_group', 'duplicate_of',
     'capture_id', 'rule_ids', 'place', 'lat', 'lng', 'external_id', 'created_at', 'updated_at', 'deleted_at'],

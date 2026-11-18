@@ -1876,6 +1876,20 @@ describe('comando iPhone v3: Apple Intelligence solo quando serve', () => {
     const r = await c.post(phone, { title: '💳 Card payment', text: '💳 Card payment\n\n45,000.00 IDR | CK BEDUGUL CANGGU | Card payment', can_hint: '1' });
     expect(r.json.hint).toBeUndefined();
   });
+  it('il telefono ricorda la versione del comando e si può dargli un nuovo indirizzo', async () => {
+    const c = new Client('10.74.0.4');
+    await c.post('/api/guest');
+    const phone = await newDevice(c);
+    await c.post(phone, { source: 'ios-shortcut', text: 'Paid 10,000.00 IDR to Circle K', amount: '10,000.00' });
+    expect((await c.get('/api/capture/devices')).json.items[0].client_version).toBe('1');
+    await c.post(phone, { source: 'ios-shortcut', text: 'Paid 12,000.00 IDR to Circle K', can_hint: '1', v: '3' });
+    const dev = (await c.get('/api/capture/devices')).json.items[0];
+    expect(dev.client_version).toBe('3');
+    const fresh = (await c.post(`/api/capture/devices/${dev.id}/token`)).json.url.replace(BASE, '');
+    expect((await c.post(phone, { text: 'Paid 13,000.00 IDR to Circle K' })).status).toBe(401);
+    expect((await c.post(fresh, { text: 'Paid 13,000.00 IDR to Circle K' })).status).toBe(200);
+    expect((await c.get('/api/capture/devices')).json.items).toHaveLength(1);
+  });
   it('se Apple Intelligence dà un nome che non c\'è, ci pensa l\'AI del server', async () => {
     const c = new Client('10.74.0.3');
     await c.post('/api/guest');
