@@ -1,9 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { api, type Stats, type Tx } from '../api';
+import { api, type Stats, type Theme, type Tx } from '../api';
 import { Icon } from '../icons';
 import { setPeriod, usePeriodSpec } from '../period';
 import { PeriodSheet, periodArrows } from '../PeriodSheet';
-import { useApi, useStore } from '../store';
+import { applyTheme, useApi, useStore } from '../store';
 import { CategoryIcon, TxRow } from '../ui';
 import { eur, fitSize, formatDayShort, formatMoney, localDay, monthPeriod, pct, periodOf } from '../util';
 import { BudgetBar, budgetTone, type BudgetView } from './Budget';
@@ -451,6 +451,13 @@ function CustomizeHome({ layout, onClose }: { layout: string[]; onClose: () => v
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal card sheet" role="dialog" aria-modal="true" aria-label="Personalizza la Home" onClick={(e) => e.stopPropagation()}>
         <div className="row between"><h2 className="h2">Personalizza la Home</h2><button className="btn ghost" onClick={onClose}>Fatto</button></div>
+        <span className="label">Tema</span>
+        <div className="seg" role="group" aria-label="Tema">
+          {([['light', 'Salvia'], ['blue', 'Acqua'], ['navy', 'Navy'], ['dark', 'Scuro'], ['system', 'Auto']] as Array<[Theme, string]>).map(([t, l]) => (
+            <button key={t} aria-pressed={store.settings.theme === t}
+              onClick={async () => { applyTheme(t); await api('/settings', { method: 'PUT', json: { theme: t } }); await store.refresh(); }}>{l}</button>
+          ))}
+        </div>
         <div className="lrow" style={{ cursor: 'default', padding: '4px 0' }}>
           <span className="grow" style={{ fontWeight: 600 }}>Nascondi gli importi</span>
           <button role="switch" aria-checked={store.discreet} aria-label="Nascondi gli importi" onClick={() => store.setDiscreet(!store.discreet)}
