@@ -104,8 +104,8 @@ export function Home() {
               <circle cx="60" cy="60" r="50" fill="none" stroke="var(--sunken)" strokeWidth="12" />
               <circle cx="60" cy="60" r="50" fill="none" stroke={pct != null ? budgetTone(pct) : 'var(--accent)'} strokeWidth="12" strokeLinecap="round"
                 strokeDasharray={C} strokeDashoffset={C * (1 - ringPct / 100)} transform="rotate(-90 60 60)" />
-              <text x="60" y="58" textAnchor="middle" fontFamily="Space Grotesk, Inter, sans-serif" fontWeight="700" fontSize="24" fill="var(--ink)">{pct != null ? `${pct}%` : s ? `${s.days.elapsed}/${s.days.total}` : '…'}</text>
-              <text x="60" y="77" textAnchor="middle" fontFamily="Inter, sans-serif" fontSize="11" fill="var(--muted)">{pct != null ? 'del budget' : 'giorni'}</text>
+              <text x="60" y="58" textAnchor="middle" style={{ fontFamily: 'var(--f-display)' }} fontWeight="700" fontSize="24" fill="var(--ink)">{pct != null ? `${pct}%` : s ? `${s.days.elapsed}/${s.days.total}` : '…'}</text>
+              <text x="60" y="77" textAnchor="middle" style={{ fontFamily: 'var(--f-body)' }} fontSize="11" fill="var(--muted)">{pct != null ? 'del budget' : 'giorni'}</text>
             </svg>
             <div className="stack" style={{ gap: 4, minWidth: 0 }}>
               {bud ? (
