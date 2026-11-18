@@ -488,8 +488,8 @@ function CustomizeHome({ layout, onClose }: { layout: string[]; onClose: () => v
 
 /** "Saldo totale dei conti": il totale di oggi, la variazione sui 30 giorni e l'andamento. */
 function BalanceCard({ series, total }: { series: Array<{ day: string; balance: number }>; total: number }) {
-  const w = 220;
-  const h = 56;
+  const w = 320;
+  const h = 44;
   const values = series.map((p) => p.balance);
   const first = values[0];
   const last = values[values.length - 1];
@@ -520,15 +520,13 @@ function BalanceCard({ series, total }: { series: Array<{ day: string; balance: 
   }
   return (
     <a href="#/statistiche/saldo" className="card saldo" style={{ textDecoration: 'none' }}>
-      <div className="ctitle"><Icon name="coins" size={23} /><h2 className="h2">Saldo totale dei conti</h2></div>
-      <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-        <span className="saldo-amount money" style={{ fontSize: fitSize(eur(total), 40) }}>{eur(total)}</span>
+      <span className="saldo-title">Saldo totale dei conti</span>
+      <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+        <span className="saldo-amount money" style={{ fontSize: fitSize(eur(total), 26) }}>{eur(total)}</span>
         {pct != null && <span className={`chip ${pct >= 0 ? 'pos' : 'neg'}`}>{pct > 0 ? '+' : ''}{pct}%</span>}
       </div>
-      <div className="row" style={{ gap: 12, alignItems: 'flex-end' }}>
-        <span className="saldo-sub" style={{ flexShrink: 0, maxWidth: '42%' }}>{values.length > 1 ? 'Andamento ultimi 30 giorni' : 'Somma di tutti i conti'}</span>
-        <div className="grow" style={{ minWidth: 0 }}>{chart}</div>
-      </div>
+      {chart}
+      {values.length > 1 && <div className="row between saldo-sub"><span>30 giorni fa</span><span>Oggi</span></div>}
     </a>
   );
 }

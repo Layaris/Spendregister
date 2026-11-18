@@ -1,13 +1,13 @@
 // Statistiche come in Wallet: schede riassuntive (Saldo, Spesa, Flusso di cassa, Previsioni, Entrate),
 // ognuna con il suo dettaglio, e il periodo scelto in basso uguale per tutte.
 import { useState } from 'react';
-import type { Stats as StatsData } from '../api';
+import type { Stats as StatsData, Tx } from '../api';
 import { Icon } from '../icons';
 import { setPeriod, usePeriodSpec } from '../period';
 import { PeriodSheet, periodArrows } from '../PeriodSheet';
 import { go } from '../router';
 import { useApi, useStore } from '../store';
-import { ErrorBox, Loading, TopBar } from '../ui';
+import { ErrorBox, Loading, TopBar, TxRow } from '../ui';
 import { bucketize, eur, localDay, NATURE_LABEL, PERIOD_KINDS, periodOf, type PeriodKind } from '../util';
 
 const NATURE_COLOR: Record<string, string> = { must: '#D9483B', need: '#F09A2E', want: '#2BB673', none: '#A9B6C7' };
@@ -215,6 +215,45 @@ function Cashflow({ s }: { s: StatsData }) {
         <span className="label">Andamento</span>
         <PairBars buckets={buckets.map((b) => ({ label: b.label, a: b.income, b: b.spent }))} max={max} />
         <div className="row" style={{ gap: 14, fontSize: 13 }}><Legend color="var(--pos)" label="Entrate" /><Legend color="var(--neg)" label="Spese" /></div>
+      </section>
+      <FlowDetail s={s} />
+    </>
+  );
+}
+
+/** Dettaglio di entrate e spese nella stessa pagina del flusso: per categoria e movimento per movimento. */
+function FlowDetail({ s }: { s: StatsData }) {
+  const store = useStore();
+  const [kind, setKind] = useState<'expense' | 'income'>('expense');
+  const rows = kind === 'income' ? s.income_by_category : s.by_category;
+  const total = kind === 'income' ? s.income : s.spent;
+  const top = Math.max(1, ...rows.map((c) => c.total));
+  const txs = useApi<{ items: Tx[] }>(`/transactions?from=${s.from}&to=${s.to}&type=${kind}&limit=200`, [store.review_count, kind]);
+  const color = kind === 'income' ? 'var(--pos)' : 'var(--neg)';
+  return (
+    <>
+      <div className="seg" role="group" aria-label="Dettaglio">
+        <button aria-pressed={kind === 'expense'} onClick={() => setKind('expense')}>Spese {eur(s.spent)}</button>
+        <button aria-pressed={kind === 'income'} onClick={() => setKind('income')}>Entrate {eur(s.income)}</button>
+      </div>
+      <section className="card">
+        <span className="label">{kind === 'income' ? 'Entrate' : 'Spese'} per categoria</span>
+        {!rows.length && <p className="empty" style={{ padding: 8 }}>{kind === 'income' ? 'Nessuna entrata' : 'Nessuna spesa'} in questo periodo.</p>}
+        {rows.map((c) => (
+          <a key={c.category_id ?? 'none'} href={c.category_id ? `#/movimenti/${c.category_id}` : '#/movimenti'} className="stack" style={{ gap: 6, textDecoration: 'none', color: 'inherit' }}>
+            <span className="row between" style={{ fontSize: 15 }}>
+              <span>{store.catName(c.category_id)} <span className="muted" style={{ fontSize: 13 }}>· {c.count}</span></span>
+              <span className="num money" style={{ fontWeight: 600 }}>{eur(c.total)} <span className="muted" style={{ fontWeight: 400, fontSize: 13 }}>{total ? Math.round((c.total / total) * 100) : 0}%</span></span>
+            </span>
+            <div className="bar"><div style={{ width: `${(c.total / top) * 100}%`, background: store.cat(c.category_id)?.color ?? color }} /></div>
+          </a>
+        ))}
+      </section>
+      <section className="card">
+        <span className="label">Tutti i movimenti</span>
+        {!txs.data ? <Loading /> : !txs.data.items.length ? <p className="empty" style={{ padding: 8 }}>Niente in questo periodo.</p>
+          : txs.data.items.map((t) => <TxRow key={t.id} t={t} />)}
+        {txs.data && txs.data.items.length >= 200 && <span className="muted" style={{ fontSize: 13 }}>Sono i 200 più recenti: gli altri in Movimenti.</span>}
       </section>
     </>
   );
