@@ -402,7 +402,9 @@ textarea.input { min-height: 90px; resize: vertical; }
   --tabbar-bg: linear-gradient(110deg, #233c65, #112340);
 }
 :root[data-theme='navy'] body:has(.home) {
-  background: var(--home-sky) top center / 100% calc(200px + env(safe-area-inset-top, 0px)) no-repeat, var(--bg-grad);
+  /* Il blu scende un po' sotto il riquadro del saldo e sfuma nello sfondo invece di tagliarlo. */
+  background: linear-gradient(180deg, transparent calc(100% - 70px), #e9ecf0 100%) top center / 100% calc(300px + env(safe-area-inset-top, 0px)) no-repeat,
+    var(--home-sky) top center / 100% calc(300px + env(safe-area-inset-top, 0px)) no-repeat, var(--bg-grad);
 }
 .app {
   padding-inline: max(10px, env(safe-area-inset-left)) max(10px, env(safe-area-inset-right));
@@ -477,3 +479,8 @@ textarea.input { min-height: 90px; resize: vertical; }
 [data-widget='cashflow'] > .card > .row { grid-column: 1 / -1; }
 .iorow { grid-column: 1 / -1; grid-template-columns: subgrid; }
 }
+
+/* Barra in basso più vicina al bordo: sopra la riga di iPhone resta solo lo stretto necessario. */
+.tabbar { height: calc(58px + max(env(safe-area-inset-bottom, 0px) - 18px, 4px)); padding-bottom: max(env(safe-area-inset-bottom, 0px) - 18px, 4px); }
+.app { padding-bottom: calc(76px + max(env(safe-area-inset-bottom, 0px) - 18px, 4px)); }
+.periodbar, .toast { bottom: calc(66px + max(env(safe-area-inset-bottom, 0px) - 18px, 4px)); }
