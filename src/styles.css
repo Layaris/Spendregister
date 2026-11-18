@@ -401,11 +401,7 @@ textarea.input { min-height: 90px; resize: vertical; }
   --primary-grad: linear-gradient(145deg, #8bbfeb, #4c83bb 60%, #274c79);
   --tabbar-bg: linear-gradient(110deg, #233c65, #112340);
 }
-:root[data-theme='navy'] body:has(.home) {
-  /* Il blu scende un po' sotto il riquadro del saldo e sfuma nello sfondo invece di tagliarlo. */
-  background: linear-gradient(180deg, transparent calc(100% - 70px), #e9ecf0 100%) top center / 100% calc(300px + env(safe-area-inset-top, 0px)) no-repeat,
-    var(--home-sky) top center / 100% calc(300px + env(safe-area-inset-top, 0px)) no-repeat, var(--bg-grad);
-}
+
 .app {
   padding-inline: max(10px, env(safe-area-inset-left)) max(10px, env(safe-area-inset-right));
   padding-top: calc(12px + env(safe-area-inset-top));
@@ -435,7 +431,7 @@ textarea.input { min-height: 90px; resize: vertical; }
 :root[data-theme='navy'] .saldo .chip.pos { background: #0d6555; color: #e4fff0; }
 .home-head { gap: 7px; min-height: 46px; padding: 0 3px; }
 .logo { width: 37px; height: 37px; border-radius: 11px; }
-.logo svg { fill: currentColor; stroke: var(--accent); }
+.logo svg { width: 100%; height: 100%; display: block; }
 .head-btn { width: 34px; height: 34px; }
 .periodpill-title, .periodpill-sub { white-space: normal; overflow: visible; text-align: center; line-height: 1.2; }
 .home-head .periodpill .iconbtn { width: 21px; height: 36px; padding: 0; }
@@ -444,7 +440,7 @@ textarea.input { min-height: 90px; resize: vertical; }
 .ctitle > svg { width: 20px; height: 20px; }
 .hero-card { line-height: 1.25; }
 .bud-top { align-items: center; gap: 5px; }
-.daypill { padding: 4px 8px; border-radius: 12px; font-size: 10.5px; background: linear-gradient(125deg, var(--pos-soft), var(--accent-soft)); }
+.daypill { padding: 4px 8px; border-radius: 12px; font-size: 10.5px; background: var(--daypill-bg); }
 .daypill b { font-size: 13px; }
 .daypill small { display: block; font-size: inherit; }
 .bud-body { gap: 12px; }
@@ -480,10 +476,119 @@ textarea.input { min-height: 90px; resize: vertical; }
 .iorow { grid-column: 1 / -1; grid-template-columns: subgrid; }
 }
 
+/* Revisione fedeltà — tavola mockup-5-temi, temi 1/2/3/5.
+   Badge giornaliero e superfici NON derivano dal verde degli importi. */
+:root {
+ --ink: #090d16; --muted: #525b56; --pos: #08752d;
+ --bg: #e0e7da; --bg-grad: linear-gradient(150deg,#edf1e9,#dce5d6 65%,#eae8dd);
+ --card-grad: linear-gradient(145deg,#fdfdf7,#f6f4e9);
+ --hero-bg: linear-gradient(125deg,#f8fbf5,#e8f0e3); --tile-end: #f7f6ec;
+ --daypill-bg: linear-gradient(125deg,#e7efdf,#d2e1cc);
+ --ring-track: #cbd9c5; --sunken: #dce2d5; --line: #e1e3d8;
+ --brand-light: #8ebca5; --brand-mid: #16704d; --brand-dark: #064b35;
+ --wallet-light: #389b76; --wallet-dark: #07573e; --wallet-paper: #e6f2e7;
+ --chrome: #e7eee3; --income-bar: #0b6540;
+}
+:root[data-theme='blue'] {
+ --ink: #090d16; --muted: #52616c; --pos: #08752d;
+ --bg: #d4e6ee; --bg-grad: linear-gradient(145deg,#e2f2f8,#cce2ee 65%,#e4eff4);
+ --card-grad: linear-gradient(145deg,#fbfdfd,#edf6f9);
+ --hero-bg: linear-gradient(120deg,#f4fbff,#d9eef6); --tile-end: #edf6fc;
+ --daypill-bg: linear-gradient(125deg,#e0f3f9,#c2dfe9);
+ --ring-track: #c3dbe0; --sunken: #dbe6ec; --line: #e1e8eb;
+ --brand-light: #5bb4ca; --brand-mid: #14758d; --brand-dark: #06465c;
+ --wallet-light: #369eb3; --wallet-dark: #08516a; --wallet-paper: #e0f4fa;
+ --chrome: #dceef7;
+}
+:root[data-theme='navy'] {
+ --ink: #090d16; --muted: #575c65; --pos: #08752d;
+ --bg: #dce0e5; --bg-grad: linear-gradient(#e1e4e9,#d4d9df);
+ --card-grad: linear-gradient(145deg,#fcfbf8,#f5f3ee); --tile-end: #f8f8f6;
+ --daypill-bg: linear-gradient(125deg,#eeede9,#e1e1de);
+ --ring-track: #d3d4d2; --sunken: #dedfdd; --line: #e6e4df;
+ --brand-light: #94c9ee; --brand-mid: #417fb5; --brand-dark: #1c446d;
+ --wallet-light: #507eab; --wallet-dark: #112e52; --wallet-paper: #edf2f6;
+ --chrome: #182b4d;
+ --hero-bg: linear-gradient(145deg,#2b5483,#123a59 65%,#0a2b43);
+}
+:root[data-theme='minimal'] {
+ --ink: #090d16; --muted: #5f626e; --pos: #08752d;
+ --bg: #e3e4e9; --bg-grad: linear-gradient(145deg,#eff0f3,#dedfe6);
+ --card: #ffffff; --card-grad: linear-gradient(145deg,#fdfdfe,#f3f3f6);
+ --tile: #fafbfd; --tile-end: #f4f5f8; --sunken: #dedfe5; --line: #e1e2e8;
+ --accent: #454e69; --accent-deep: #30384e; --accent-soft: #e4e6ee;
+ --primary-grad: linear-gradient(145deg,#9b9fb8,#626a85 55%,#30394f);
+ --hero-bg: linear-gradient(125deg,#fcfcfd,#e8eaf0); --hero-line: #148244;
+ --wave: #c9cdd980; --ring-track: #dadce3;
+ --daypill-bg: linear-gradient(125deg,#edeef2,#e0e2e8);
+ --head-ink: var(--ink); --head-btn: #f9fafc;
+ --tabbar-bg: linear-gradient(#fcfcfe,#f0f0f5); --tabbar-ink: #53586b;
+ --tabbar-active: #444c65; --tabbar-active-bg: #e4e6ef;
+ --brand-light: #959dbb; --brand-mid: #505c7a; --brand-dark: #252f45;
+ --wallet-light: #697d9e; --wallet-dark: #283953; --wallet-paper: #f0f2f8;
+ --chrome: #eceef2; --income-bar: #0b6540;
+}
+/* Lo sfondo della safe area è opaco anche durante il rimbalzo di Safari. */
+html { background: var(--chrome); }
+:root[data-theme='navy'] body:has(.home) { background: var(--home-sky) top center / 100% var(--home-sky-height, 0px) no-repeat, var(--bg-grad); }
+/* Il blu del saldo appartiene solo alla card: nessuna fascia ad altezza fissa. */
+.card.saldo { min-width: 0; max-width: 100%; overflow: hidden; border-radius: 16px; }
+.saldo > svg { min-width: 0; max-width: 100%; }
+.logo { background: none; border-radius: 11px; overflow: hidden; }
+.ctitle > .budget-wallet { width: 26px; height: 26px; }
+.daypill > svg { color: var(--wallet-dark); }
+.seg[aria-label='Tema'] { flex-wrap: wrap; }
+.tile { min-width: 0; }
+@media (max-width: 390px) {
+ .bud-top .h2 { font-size: 15px; }
+ .bud-top .ctitle { gap: 5px; }
+ .daypill { padding: 5px 6px; gap: 5px; font-size: 9px; }
+ .daypill b { font-size: 12px; }
+ .bstats span { font-size: 11px; }
+}
+/* Scuro/Auto: non ereditare le superfici chiare aggiunte per i mockup. */
+:root[data-theme='dark'] {
+ --ink:#e8eeea; --muted:#9aa8a0; --pos:#3cc49f; --bg:#0d1210;
+ --bg-grad:linear-gradient(#111816,#0b100e); --card-grad:linear-gradient(#18201c,#141b18);
+ --hero-bg:linear-gradient(#1a2420,#142019); --tile-end:#1d2622; --sunken:#1d2622; --line:#26312c;
+ --daypill-bg:#213b30; --ring-track:#314b40; --chrome:#111816; --wallet-dark:#69d0ad;
+}
+@media (prefers-color-scheme: dark) {
+ :root[data-theme='system'] {
+ --ink:#e8eeea; --muted:#9aa8a0; --pos:#3cc49f; --bg:#0d1210;
+ --bg-grad:linear-gradient(#111816,#0b100e); --card-grad:linear-gradient(#18201c,#141b18);
+ --hero-bg:linear-gradient(#1a2420,#142019); --tile-end:#1d2622; --sunken:#1d2622; --line:#26312c;
+ --daypill-bg:#213b30; --ring-track:#314b40; --chrome:#111816; --wallet-dark:#69d0ad;
+ }
+}
+/* A 375 px anche la freccia del mese resta sulla riga del titolo. */
+@media (max-width: 390px) {
+ .home-head { gap: 5px; }
+ .home-head .logo { width: 34px; height: 34px; }
+ .home-head .head-btn { width: 32px; height: 32px; }
+ .home-head .periodpill-title { font-size: 13px; white-space: nowrap; }
+ .home-head .periodpill-sub { font-size: 10px; }
+ .home-head .periodpill .iconbtn { width: 16px; }
+}
+
 /* Barra in basso più vicina al bordo: sopra la riga di iPhone resta solo lo stretto necessario. */
 .tabbar { height: calc(56px + max(env(safe-area-inset-bottom, 0px) - 24px, 4px)); padding-bottom: max(env(safe-area-inset-bottom, 0px) - 24px, 4px); }
 .app { padding-bottom: calc(74px + max(env(safe-area-inset-bottom, 0px) - 24px, 4px)); }
 .periodbar, .toast { bottom: calc(64px + max(env(safe-area-inset-bottom, 0px) - 24px, 4px)); }
 /* Navy nell'app installata: l'orologio è bianco e la pagina disegna sotto di esso; una fascia blu fissa lo tiene
    leggibile anche nelle pagine con lo sfondo chiaro e quando si scorre. Alta zero nel browser normale. */
-:root[data-theme='navy'] body::before { content: ''; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); background: #172d52; z-index: 30; pointer-events: none; }
+:root[data-theme='navy'] body::before { content: ''; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); background: var(--chrome); z-index: 30; pointer-events: none; }
+
+/* Acqua 1 (la prima versione dell'azzurro): logo, portafoglio, badge e fascia come Acqua, superfici sue. */
+:root[data-theme='aqua1'] {
+ --brand-light: #5bb4ca; --brand-mid: #14758d; --brand-dark: #06465c;
+ --wallet-light: #369eb3; --wallet-dark: #08516a; --wallet-paper: #e0f4fa;
+ --daypill-bg: linear-gradient(125deg,#e0f3f9,#c2dfe9); --ring-track: #c3dbe0;
+ --chrome: #ebf2f7;
+}
+/* Navy: il blu scende 70 px oltre il saldo e sfuma nello sfondo invece di tagliarlo al bordo del riquadro
+   (richiesta del proprietario; l'altezza del saldo la misura Home.tsx in --home-sky-height). */
+:root[data-theme='navy'] body:has(.home) {
+  background: linear-gradient(180deg, transparent calc(100% - 70px), #e1e4e9 100%) top center / 100% calc(var(--home-sky-height, 0px) + 70px) no-repeat,
+    var(--home-sky) top center / 100% calc(var(--home-sky-height, 0px) + 70px) no-repeat, var(--bg-grad);
+}

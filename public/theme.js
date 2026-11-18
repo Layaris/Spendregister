@@ -4,7 +4,7 @@
   var t = 'light';
   try { t = localStorage.getItem('ledgy-theme') || 'light'; } catch (e) { /* niente */ }
   document.documentElement.dataset.theme = t;
-  var top = { light: '#edf1e8', aqua1: '#ebf2f7', blue: '#e3eef5', navy: '#172d52', dark: '#111816' };
+  var top = { light: '#e7eee3', aqua1: '#ebf2f7', blue: '#dceef7', navy: '#182b4d', minimal: '#eceef2', dark: '#111816' };
   var dark = t === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
   var c = top[t === 'system' ? (dark ? 'dark' : 'light') : t] || top.light;
   var m = document.querySelector('meta[name="theme-color"]');

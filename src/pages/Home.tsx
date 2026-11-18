@@ -1,6 +1,7 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { api, type Stats, type Theme, type Tx } from '../api';
 import { Icon } from '../icons';
+import { BrandMark, BudgetWallet } from '../Brand';
 import { setPeriod, usePeriodSpec } from '../period';
 import { PeriodSheet, periodArrows } from '../PeriodSheet';
 import { applyTheme, THEMES, useApi, useStore } from '../store';
@@ -48,6 +49,21 @@ const CURRENT_LABEL: Record<string, string> = {
 };
 
 export function Home() {
+  const homeRef = useRef<HTMLDivElement>(null);
+  // Il fondo Navy segue il bordo effettivo del saldo, anche con testi più grandi.
+  useEffect(() => {
+    const home = homeRef.current;
+    if (!home) return;
+    const measure = () => {
+      const edge = home.querySelector('[data-widget="balance"]') ?? home.querySelector('.home-head');
+      if (edge) document.documentElement.style.setProperty('--home-sky-height', `${edge.getBoundingClientRect().bottom + window.scrollY + 5}px`);
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(home);
+    window.addEventListener('resize', measure);
+    measure();
+    return () => { observer.disconnect(); window.removeEventListener('resize', measure); document.documentElement.style.removeProperty('--home-sky-height'); };
+  }, []);
   const store = useStore();
   const spec = usePeriodSpec();
   const [picker, setPicker] = useState(false);
@@ -134,7 +150,7 @@ export function Home() {
         return (
           <a href="#/budget" className="card hero-card" style={{ textDecoration: 'none', color: 'inherit', gap: 12 }}>
             <div className="bud-top" style={{ flexWrap: 'wrap' }}>
-              <div className="ctitle"><Icon name="wallet" size={23} /><h2 className="h2">Budget mensile</h2></div>
+              <div className="ctitle"><BudgetWallet /><h2 className="h2">Budget mensile</h2></div>
               {bud.left > 0 && dayPct != null && (
                 <div className="daypill"><Icon name="days" size={18} /><span>Puoi ancora spendere<br /><b className="num money">{eur(bud.per_day)}</b> al giorno<small>fino a fine mese</small></span></div>
               )}
@@ -375,9 +391,9 @@ export function Home() {
   };
 
   return (
-    <div className={`home stack ${store.discreet ? 'discreet' : ''}`}>
+    <div ref={homeRef} className={`home stack ${store.discreet ? 'discreet' : ''}`}>
       <div className="home-head">
-        <span className="logo" aria-hidden="true"><Icon name="leaf" size={22} stroke={2.2} /></span>
+        <span className="logo" aria-hidden="true"><BrandMark /></span>
         <span className="vdiv" aria-hidden="true" />
         <div className="periodpill">
           <button className="iconbtn" aria-label="Periodo precedente" disabled={!periodArrows(spec.kind)} onClick={() => setPeriod({ ...spec, offset: spec.offset - 1 })}><Icon name="back" size={18} /></button>

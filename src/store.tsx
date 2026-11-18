@@ -71,10 +71,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 }
 
 /** Temi tra cui scegliere (Personalizza e Altro › Impostazioni): Acqua 1 è la prima versione, Acqua 2 quella della tavola. */
-export const THEMES: Array<[Theme, string]> = [['light', 'Salvia'], ['aqua1', 'Acqua 1'], ['blue', 'Acqua 2'], ['navy', 'Navy'], ['dark', 'Scuro'], ['system', 'Auto']];
+export const THEMES: Array<[Theme, string]> = [['light', 'Salvia'], ['aqua1', 'Acqua 1'], ['blue', 'Acqua 2'], ['navy', 'Navy'], ['minimal', 'Minimal'], ['dark', 'Scuro'], ['system', 'Auto']];
 
 /** Colore della fascia della barra di stato (iPhone, Android): uguale alla parte alta della pagina di ogni tema. */
-const TOP_COLOR: Record<string, string> = { light: '#edf1e8', aqua1: '#ebf2f7', blue: '#e3eef5', navy: '#172d52', dark: '#111816' };
+const TOP_COLOR: Record<string, string> = { light: '#e7eee3', aqua1: '#ebf2f7', blue: '#dceef7', navy: '#182b4d', minimal: '#eceef2', dark: '#111816' };
 export function setThemeColor(theme: Theme) {
   const dark = theme === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches;
   const color = TOP_COLOR[theme === 'system' ? (dark ? 'dark' : 'light') : theme] ?? TOP_COLOR.light;
