@@ -20,7 +20,7 @@ Funzioni scelte, decisioni e note tecniche: [docs/funzioni.md](docs/funzioni.md)
 - `npm run typecheck`: controllo dei tipi di web app e Worker.
 - `npm run build`: compila la web app in `dist/`.
 - Sviluppo in locale: `npm run db:migrate:local`, poi `npm run build && npx wrangler dev` e si crea un account dalla schermata di accesso.
-- `python3 tools/shortcut/build_shortcut.py`: rigenera il comando iPhone non firmato in `tools/shortcut/out/` (ignorata da git). La versione firmata con HubSign, servita dall'app a `/ledgy.shortcut`, è `public/ledgy.shortcut`: se cambia lo script, va rifirmata e sostituita.
+- `python3 tools/shortcut/build_shortcut.py`: rigenera il comando iPhone non firmato in `tools/shortcut/out/` (ignorata da git). La versione firmata con HubSign, servita dall'app a `/ledgy.shortcut`, è `public/ledgy.shortcut`: se cambia lo script, va rifirmata e sostituita. Versione 2 dello script (18 nov 2026): niente Apple Intelligence ("Usa modello" a volte rifiutava e il comando si fermava prima dell'invio) e nessuna notifica mostrata; manda solo testo, titolo e ora. Finché il proprietario non la rifirma, `public/ledgy.shortcut` è ancora la versione 1.
 - Pubblicazione: [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Struttura
