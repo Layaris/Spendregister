@@ -12,6 +12,36 @@ Brainstorm concluso il 15 novembre 2026. Il proprietario ha scelto ogni funzione
 - **Più telefoni Android**: la stessa notifica può arrivare da due telefoni, quindi l'anti-duplicati confronta importo, merchant e orario. Ogni telefono manda il suo segnale giornaliero.
 - **Scelta delle app da seguire su Android**: si mostrano le app che hanno mandato notifiche di recente, con in cima quelle che contengono importi. Non si chiede `QUERY_ALL_PACKAGES`.
 
+## App Android e iPhone (decisioni del 19 novembre 2026)
+
+Prese prima di fare APK e IPA, per farle uscire nel modo migliore. Valgono finché il proprietario non le cambia.
+
+### Dati: server + copia completa sul telefono
+
+- Il server (Worker + D1) resta l'archivio vero e continua a lavorare ad app chiusa: cattura dalle notifiche, categoria con l'AI, avvisi, ricorrenti registrate da sole. Niente cifratura end-to-end (vedi Decisioni sopra).
+- In più l'app tiene una **copia completa** dei dati dell'account sul telefono: si apre subito e funziona tutta senza rete (liste, ricerca, statistiche, modifiche). Scartato "prima sul telefono, cifrato": costava la riscrittura della parte dati e faceva perdere cattura immediata, AI e avvisi ad app chiusa.
+- Come: database nel browser/WebView in IndexedDB (stesso codice per web app e app native). Sincronizzazione a pezzi: `GET /api/sync?since=<ultima volta>` restituisce solo le righe cambiate (`updated_at`, cancellazioni con `deleted_at`), così le righe lette da D1 restano poche. Le modifiche fatte senza rete partono dalla coda che esiste già (`ledgy-outbox`, `client_id`); se la stessa riga cambia su due dispositivi vince l'ultima modifica.
+- Si fa prima nella web app (serve anche oggi), poi le app native la usano così com'è.
+
+### Android
+
+- Capacitor con una parte nativa piccola in Kotlin: `NotificationListenerService` legge le notifiche delle app di banca scelte e manda il testo grezzo all'API come fa oggi MacroDroid: un solo lettore delle notifiche, quello del server. Coda sul telefono se manca la rete, segnale giornaliero, scelta delle app tra quelle che hanno mandato notifiche di recente (niente `QUERY_ALL_PACKAGES`). MacroDroid resta come alternativa.
+- Distribuzione: **Google Play in test interno** (account sviluppatore da 25 $ una volta sola, lo apre il proprietario) per installare senza blocchi di Play Protect e della verifica sviluppatori in Indonesia; **lo stesso APK anche su DMReleases**, come le altre app.
+- Avvisi ad app chiusa: Firebase Cloud Messaging (gratis) per gli avvisi del server; prima di attivarlo chiedere conferma al proprietario (servizio esterno nuovo). Promemoria degli abbonamenti anche come notifiche locali programmate dall'app.
+- Da scegliere prima del primo APK, e poi mai più cambiare: `applicationId` (il nome Ledgy è provvisorio) e chiave di firma (la tiene il proprietario; a Claude non serve).
+
+### iPhone
+
+- All'inizio: **IPA non firmata su DMReleases**, installata dal proprietario con un metodo gratuito (Apple ID gratuito: la firma va rinnovata, di solito ogni 7 giorni, e alcune capacità non ci sono, come le notifiche push dal server; widget ed estensione Condividi da verificare). Più avanti forse **TestFlight** (Apple Developer, 99 $ l'anno): da decidere.
+- La cattura resta su Comandi (nessuna app iPhone può leggere le notifiche delle altre). L'app aggiunge l'azione nativa "Aggiungi spesa" in Swift (App Intent), usabile da automazioni, Siri, tasto Azione e widget, che salva anche senza aprire l'app.
+- Senza push dal server: promemoria e avvisi come notifiche locali programmate dall'app quando si apre.
+
+### Regole per le build (già nelle regole di lavoro)
+
+- APK e IPA solo con il permesso esplicito del proprietario, da un workflow manuale (`workflow_dispatch`); `actions/upload-artifact` con `retention-days: 1`.
+- Pubblicazione su DMReleases con la stessa struttura di Multifolio e PackSnap (release per build, `latest.json`, voce nel CHANGELOG): chiedere i dettagli al proprietario prima della prima build.
+- Ordine: 1) copia completa nella web app; 2) app Android (cattura nativa, Play test interno + DMReleases); 3) app iPhone (IPA su DMReleases, App Intent); widget e aggiornamenti in background dopo.
+
 ## Note tecniche dalla ricerca
 
 ### Import da Wallet
