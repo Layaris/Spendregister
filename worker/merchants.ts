@@ -43,7 +43,7 @@ merchantsApi.post('/merge', async (c) => {
   // Anche lo stesso nome scritto con maiuscole diverse prende la forma scelta.
   for (const n of [...others, into]) {
     txStmts.push(
-      db.prepare(`UPDATE transactions INDEXED BY tx_user_merchant SET merchant = ?, updated_at = ? WHERE user_id = ? AND merchant = ? COLLATE NOCASE AND merchant <> ? COLLATE BINARY`)
+      db.prepare(`UPDATE transactions INDEXED BY tx_user_merchant SET merchant = ?, updated_at = ? WHERE user_id = ? AND merchant = ? COLLATE NOCASE AND merchant <> ? COLLATE BINARY RETURNING 1`)
         .bind(into, now, u, n, into),
     );
     stmts.push(db.prepare('UPDATE recurring SET merchant = ?, updated_at = ? WHERE user_id = ? AND merchant = ? COLLATE NOCASE AND merchant <> ? COLLATE BINARY').bind(into, now, u, n, into));
@@ -59,7 +59,7 @@ merchantsApi.post('/merge', async (c) => {
   // Il nome scelto non può essere a sua volta un alias.
   stmts.push(db.prepare('DELETE FROM merchant_aliases WHERE user_id = ? AND alias = ?').bind(u, into.toLowerCase()));
   let changed = 0;
-  for (const r of await db.batch(txStmts)) changed += r.meta.changes ?? 0;
+  for (const r of await db.batch(txStmts)) changed += r.results?.length ?? 0;
   for (let i = 0; i < stmts.length; i += 50) await db.batch(stmts.slice(i, i + 50));
   return c.json({ into, changed });
 });
@@ -67,6 +67,6 @@ merchantsApi.post('/merge', async (c) => {
 /** Toglie un nome unito: i movimenti vecchi restano col nome scelto, quelli nuovi tengono il proprio. */
 merchantsApi.delete('/alias/:alias', async (c) => {
   const alias = decodeURIComponent(c.req.param('alias')).toLowerCase();
-  const r = await c.env.DB.prepare('DELETE FROM merchant_aliases WHERE user_id = ? AND alias = ?').bind(uid(c), alias).run();
-  return c.json({ deleted: r.meta.changes ?? 0 });
+  const r = await c.env.DB.prepare('DELETE FROM merchant_aliases WHERE user_id = ? AND alias = ? RETURNING 1').bind(uid(c), alias).all();
+  return c.json({ deleted: r.results.length });
 });

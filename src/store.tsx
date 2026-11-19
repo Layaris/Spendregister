@@ -1,3 +1,4 @@
+import { onLocalChange } from './localcopy';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, type Bootstrap, type Category, type Theme } from './api';
 import { setDisplayCurrency } from './util';
@@ -39,6 +40,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => { refresh().catch(() => setLoaded(true)); }, [refresh]);
+  // La copia sul telefono è cambiata (dati nuovi dal server): conti, categorie e impostazioni si rileggono.
+  useEffect(() => onLocalChange(() => { refresh().catch(() => {}); }), [refresh]);
 
   useEffect(() => {
     if (!message) return;
@@ -102,6 +105,8 @@ export function useApi<T>(path: string | null, deps: unknown[] = []) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  // Dati cambiati nella copia sul telefono (sincronizzazione): si rilegge.
+  useEffect(() => onLocalChange(() => setTick((t) => t + 1)), []);
   useEffect(() => {
     if (!path) return;
     let alive = true;

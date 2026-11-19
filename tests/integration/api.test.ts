@@ -4,6 +4,7 @@
 import { beforeAll, describe, expect, inject, it } from 'vitest';
 import { suggestPattern } from '../../shared/notification';
 import { AI_PORT, OLD, TEST_DB_DOWN, V1_CATEGORIES } from './server';
+import { LOCAL_TABLES, LocalDb } from '../../shared/local';
 
 const BASE = inject('baseUrl');
 const EMAIL = 'anna@example.com';
@@ -2160,5 +2161,165 @@ describe('spese ricorrenti senza doppioni', () => {
     // Nel backup con il modo di pagamento.
     const rows = (await c.get('/api/backup/export?table=recurring')).json.rows;
     expect(rows[0]).toMatchObject({ merchant: 'Indihome', auto_add: 0 });
+  });
+});
+
+describe('copia completa sul telefono', () => {
+  /** Scarica tutto come farà l'app: /sync dice "da capo", poi ogni tabella a pagine. */
+  async function download(c: Client): Promise<LocalDb> {
+    const first = (await c.get('/api/sync?since=0')).json;
+    expect(first.reset).toBe(true);
+    const tables: Record<string, any[]> = {};
+    for (const t of LOCAL_TABLES) {
+      tables[t] = [];
+      let after = 0;
+      for (;;) {
+        const r = (await c.get(`/api/sync/full?table=${t}&after=${after}&limit=700`)).json;
+        tables[t].push(...r.rows);
+        if (r.next == null) break;
+        after = r.next;
+      }
+    }
+    const { cursor, reset, ...extras } = first;
+    void reset;
+    return new LocalDb({ cursor, extras, tables });
+  }
+
+  /** Toglie quello che il server mette in più (user_id) e mette in ordine fisso le parti senza un ordine deciso. */
+  function norm(path: string, v: any): any {
+    const strip = (x: any): any => (Array.isArray(x) ? x.map(strip) : x && typeof x === 'object' ? Object.fromEntries(Object.entries(x).filter(([k]) => k !== 'user_id').map(([k, y]) => [k, strip(y)])) : x);
+    const o = strip(v);
+    const txOrder = (a: any, b: any) => (b.occurred_utc > a.occurred_utc ? 1 : b.occurred_utc < a.occurred_utc ? -1 : b.created_at > a.created_at ? 1 : b.created_at < a.created_at ? -1 : b.id > a.id ? 1 : -1);
+    if (o?.items && path.startsWith('/transactions')) o.items = o.items.map((t: any) => ({ ...t, labels: [...t.labels].sort() })).sort(txOrder);
+    if (o?.by_nature) o.by_nature.sort((a: any, b: any) => String(a.nature).localeCompare(String(b.nature)));
+    if (o?.by_merchant) o.by_merchant.sort((a: any, b: any) => b.total - a.total || (a.merchant < b.merchant ? -1 : 1));
+    if (o?.week?.top) o.week.top.sort((a: any, b: any) => b.total - a.total || String(a.category_id).localeCompare(String(b.category_id)));
+    return o;
+  }
+
+  async function same(c: Client, db: LocalDb, paths: string[]) {
+    for (const p of paths) {
+      const server = (await c.get(`/api${p}`)).json;
+      const local = db.get(p);
+      expect(local, `percorso non servito in locale: ${p}`).not.toBeUndefined();
+      expect(norm(p, local), p).toEqual(norm(p, server));
+    }
+  }
+
+  function pathsFor(db: LocalDb, today: string): string[] {
+    const y = Number(today.slice(0, 4));
+    const month = today.slice(0, 7);
+    const b = db.bootstrap();
+    const cat = b.categories.find((x: any) => x.parent_id == null && x.kind === 'expense')?.id;
+    const label = b.labels[0]?.id;
+    const trip = db.trips().items[0]?.id;
+    return [
+      '/bootstrap', '/cards', '/trips',
+      '/transactions?limit=500', '/transactions?status=review&limit=200', '/transactions?limit=50&offset=50', '/transactions?q=pe&sum=1&limit=500',
+      '/transactions?type=expense&sum=1&limit=500', `/transactions?from=${y - 1}-01-01&to=${y}-07-01&sum=1&limit=500`, '/transactions?card=-&limit=500',
+      '/transactions?min=20000&max=500000&limit=500', '/transactions?currency=IDR&sum=1&limit=500',
+      ...(cat ? [`/transactions?category=${cat}&sum=1&limit=500`] : []), ...(label ? [`/transactions?label=${label}&limit=500`] : []), ...(trip ? [`/transactions?trip=${trip}&sum=1&limit=500`] : []),
+      `/stats?from=${month}-01&to=${today}`, `/stats?from=${y}-01-01&to=${y + 1}-01-01`, '/stats?from=2000-01-01&to=2100-01-01', `/stats?from=${y - 2}-01-01&to=${y + 1}-01-01&currency=IDR`,
+      '/stats/balance?days=30', `/stats/balance?from=${y}-01-01&to=${y + 1}-01-01`,
+      '/stats/fees?from=2000-01-01&to=2100-01-01', `/stats/countries?from=${y - 1}-01-01&to=${y + 1}-01-01`, `/stats/months?months=12&today=${today}`,
+      `/budgets?today=${today}`, `/budgets?today=${today}&month=${month}`, `/insights?today=${today}`, `/recurring?today=${today}`,
+    ];
+  }
+
+  it('archivio da 5.000 movimenti: ogni risposta locale è uguale a quella del server', async () => {
+    const c = new Client('10.90.0.1');
+    c.cookie = `ledgy_session=${OLD.perfSession}`;
+    await c.get('/api/sync?since=0'); // primo avvio dell'account: crea le categorie
+    const r0 = await c.get('/api/sync?since=0');
+    expect(r0.rows).toBeLessThan(200); // chiedere "da capo" non legge l'archivio
+    const db = await download(c);
+    expect(db.tables.transactions.size).toBe(5000);
+    const today = new Date().toISOString().slice(0, 10);
+    await same(c, db, pathsFor(db, today));
+    // Nessuna modifica: la sincronizzazione legge pochissimo.
+    const again = await c.get(`/api/sync?since=${db.cursor}`);
+    expect(again.json.reset).toBeUndefined();
+    expect(Object.keys(again.json.changes)).toEqual([]);
+    expect(again.rows).toBeLessThan(60);
+  });
+
+  /** Un account con un po' di tutto: conti in valute diverse, etichette, carte, divise, viaggi, ricorrenti, budget, doppioni. */
+  async function richAccount(): Promise<Client> {
+    const c = new Client('10.90.0.2');
+    await c.post('/api/guest');
+    const o: Record<string, string> = {};
+    await loadOwn(c, o);
+    const today = new Date().toISOString().slice(0, 10);
+    const d = (n: number) => new Date(Date.now() - n * 86400_000).toISOString().slice(0, 10);
+    const usd = (await c.post('/api/accounts', { name: 'Wise USD', currency: 'USD', initial_balance: 500 })).json.id;
+    const ids: string[] = [];
+    const add = async (b: any) => { const id = (await c.post('/api/transactions', b)).json.id; ids.push(id); return id; };
+    for (let i = 0; i < 40; i++) {
+      await add({ amount: 50_000 + i * 1000, currency: 'IDR', merchant: ['Pepito', 'Starbucks', 'Grab', 'STARBUCKS SEMINYAK'][i % 4], occurred_at: `${d(i * 3)}T1${i % 10}:00:00+08:00`, labels: i % 5 ? [] : ['casa', 'bali'] });
+    }
+    await add({ amount: 12, currency: 'USD', merchant: 'Netflix', account_id: usd, category_id: o.cat_bills ?? null, occurred_at: `${d(2)}T08:00:00+08:00` });
+    await add({ amount: 300, currency: 'THB', merchant: 'Pad thai', occurred_at: `${d(10)}T12:00:00+07:00` });
+    await add({ amount: 300, currency: 'THB', merchant: 'Pad thai', occurred_at: `${d(11)}T12:00:00+07:00` });
+    await add({ amount: 2500, currency: 'EUR', merchant: 'Stipendio', type: 'income', occurred_at: `${d(5)}T08:00:00+08:00` });
+    await add({ amount: 2.5, currency: 'EUR', merchant: 'Biaya admin', category_id: o.cat_fin_fees, occurred_at: `${today}T07:00:00+08:00` });
+    await c.put(`/api/transactions/${ids[1]}`, { card: 'Revolut' });
+    await c.put(`/api/transactions/${ids[5]}`, { card: 'Revolut' });
+    await c.post('/api/cards/calibrate', { tx_id: ids[1], charged: 3.0, currency: 'USD' });
+    await c.post(`/api/transactions/${ids[2]}/split`, { parts: [{ amount: 30_000, category_id: o.cat_food }, { amount: 22_000, category_id: o.cat_home }] });
+    const trip = (await c.post('/api/trips', { name: 'Bangkok', start_date: d(12), end_date: d(9) })).json.id;
+    await c.put(`/api/trips/of/${ids[0]}`, { trip_id: trip });
+    await c.put('/api/budgets', { category_id: '*', amount: 400_000 });
+    await c.put('/api/budgets', { category_id: o.cat_food, amount: 50_000 });
+    await c.post('/api/recurring', { merchant: 'Netflix', period: 'month', every: 1, amount_eur: -10_800, status: 'confirmed', next_date: d(-20), auto_add: true });
+    await c.post('/api/merchants/merge', { into: 'Starbucks', names: ['Starbucks', 'STARBUCKS SEMINYAK'] });
+    await c.post(`/api/accounts/${usd}/adjust`, { balance: 480 });
+    await c.del(`/api/transactions/${ids[3]}`);
+    // Notifiche: una da rivedere e un doppione da un secondo telefono.
+    const phone = await newDevice(c);
+    await c.post(phone, { title: 'Jago', text: `Pembayaran Rp 88.000 ke TOKO SCONOSCIUTO XYZ berhasil` });
+    await c.post(phone, { title: 'Jago', text: `Pembayaran Rp 88.000 ke TOKO SCONOSCIUTO XYZ berhasil` });
+    await c.put('/api/settings', { features: { weekly_summary: true } });
+    return c;
+  }
+
+  it('account con tutto (viaggi, etichette, divise, ricorrenti, carte, budget): uguale anche dopo le modifiche, scaricando solo i cambi', async () => {
+    const me = await richAccount();
+    const db = await download(me);
+    const today = new Date().toISOString().slice(0, 10);
+    await same(me, db, pathsFor(db, today));
+    // Modifiche di ogni tipo, poi solo i cambi.
+    const b = db.bootstrap();
+    const cat = b.categories.find((x: any) => x.parent_id != null && x.kind === 'expense')!.id;
+    const id = (await me.post('/api/transactions', { amount: 77, currency: 'EUR', merchant: 'Copia locale', category_id: cat, labels: ['copia'], occurred_at: `${today}T09:00:00+08:00` })).json.id;
+    const other = db.transactions({ limit: '3' }).items.find((t: any) => t.id !== id && t.type === 'expense');
+    await me.put(`/api/transactions/${other.id}`, { note: 'cambiata', card: 'Carta copia' });
+    const gone = db.transactions({ limit: '5', offset: '3' }).items[0];
+    await me.del(`/api/transactions/${gone.id}`);
+    await me.put('/api/budgets', { category_id: cat, amount: 12_345 });
+    const newCat = (await me.post('/api/categories', { name: 'Categoria copia', kind: 'expense' })).json.id;
+    await me.put('/api/settings', { theme: 'sakura' });
+    const r = await me.get(`/api/sync?since=${db.cursor}`);
+    expect(r.json.reset).toBeUndefined();
+    expect(db.apply(r.json)).toBe(true);
+    expect(db.tables.transactions.get(id)).toBeTruthy();
+    expect(db.tables.categories.get(newCat)).toBeTruthy();
+    expect(db.extras.settings.theme).toBe('sakura');
+    expect(r.rows).toBeLessThan(200);
+    await same(me, db, pathsFor(db, today));
+    // Cancellazione vera (categoria tolta): sparisce anche dalla copia.
+    await me.del(`/api/categories/${newCat}`);
+    db.apply((await me.get(`/api/sync?since=${db.cursor}`)).json);
+    expect(db.tables.categories.get(newCat)).toBeUndefined();
+    await me.put('/api/settings', { theme: 'light' });
+  });
+
+  it('un altro account non vede i cambi di questo, e un cursore troppo vecchio fa riscaricare tutto', async () => {
+    const c = new Client('10.90.0.3');
+    await c.post('/api/guest');
+    const db = await download(c);
+    await me.post('/api/transactions', { amount: 5, currency: 'EUR', merchant: 'Non tuo' });
+    const r = (await c.get(`/api/sync?since=${db.cursor}`)).json;
+    expect(r.changes).toEqual({});
+    expect((await c.get('/api/sync?since=999999999')).json.reset).toBe(true);
   });
 });

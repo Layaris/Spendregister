@@ -1,4 +1,6 @@
 // Accesso all'API del Worker. In caso di 401 (sessione persa) l'app riparte, come ospite se serve.
+// Le letture che la copia completa sul telefono sa fare (src/localcopy.ts) non vanno al server.
+import { clearLocal, localGet, onSyncStatus, sync } from './localcopy';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public data?: unknown) {
@@ -58,9 +60,24 @@ export function onOffline(fn: (o: Offline) => void) { listeners.add(fn); return 
 /** Il server non ha risposto (rete assente o errore suo): la richiesta si può riprovare più tardi. */
 export const isUnreachable = (e: unknown) => e instanceof ApiError && e.status >= 500;
 
+/** Dettaglio di un movimento: prima il server (testo della notifica, regole), la copia solo senza rete. */
+const SERVER_FIRST = /^\/transactions\/[^/?]+(\?|$)/;
+/** Operazioni a pagine (import, regole sullo storico): la copia si aggiorna dopo, senza aspettarla a ogni pagina. */
+const BULK = /^\/(backup\/import|import\/wallet|rules\/[^/]+\/apply)/;
+
+// Se la copia non riesce ad aggiornarsi, l'avviso in alto dice da quando sono i dati mostrati.
+onSyncStatus((ok, since) => {
+  if (ok) { if (offline.offline) setOffline({ offline: false, since: null }); }
+  else setOffline({ offline: true, since: since ?? offline.since });
+});
+
 export async function api<T = unknown>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
   const { json, ...rest } = init;
   const isGet = !rest.method || rest.method === 'GET';
+  if (isGet && !SERVER_FIRST.test(path)) {
+    const local = localGet(path);
+    if (local !== undefined) return local as T;
+  }
   let res: Response;
   try {
     res = await fetch(`/api${path}`, {
@@ -72,10 +89,12 @@ export async function api<T = unknown>(path: string, init: RequestInit & { json?
   } catch {
     res = new Response(JSON.stringify({ error: 'Server non raggiungibile' }), { status: 599, headers: { 'content-type': 'application/json' } });
   }
-  if (res.status === 401 && !AUTH_PATHS.includes(path)) { clearCache(); onUnauthorized(); }
+  if (res.status === 401 && !AUTH_PATHS.includes(path)) { clearCache(); void clearLocal(); onUnauthorized(); }
   const data = res.headers.get('content-type')?.includes('json') ? await res.json().catch(() => ({})) : await res.text();
   if (!res.ok) {
     if (isGet && res.status >= 500) {
+      const local = localGet(path);
+      if (local !== undefined) { setOffline({ offline: true, since: offline.since }); return local as T; }
       const cached = cacheRead<T>(path);
       if (cached) {
         setOffline({ offline: true, since: offline.since && offline.since < cached.at ? offline.since : cached.at });
@@ -87,6 +106,13 @@ export async function api<T = unknown>(path: string, init: RequestInit & { json?
   }
   if (isGet) cacheWrite(path, data);
   if (offline.offline) setOffline({ offline: false, since: null });
+  if (!isGet) {
+    // Accesso, uscita, cambio di account: la copia ricomincia da capo. Ogni altra modifica: la copia si aggiorna
+    // prima di rispondere, così la schermata che si ridisegna subito dopo vede già il cambiamento.
+    if (AUTH_PATHS.includes(path) || path === '/logout') { await clearLocal(); void sync(); }
+    else if (BULK.test(path)) void sync();
+    else await sync().catch(() => {});
+  }
   return data as T;
 }
 

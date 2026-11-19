@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError, clearCache, getOffline, onOffline, setUnauthorizedHandler } from './api';
+import { clearLocal, sync } from './localcopy';
 import { flushOutbox, onOutbox, pending } from './outbox';
 import { Icon } from './icons';
 import { Add } from './pages/Add';
@@ -63,7 +64,7 @@ export function App() {
     );
   }
   // Dopo accesso, registrazione o uscita si ricarica tutto da capo.
-  const changed = () => { clearCache(); go('/'); enter(); };
+  const changed = () => { clearCache(); void clearLocal().then(() => sync()); go('/'); enter(); };
   return (
     <StoreProvider key={generation}>
       <Shell onAuthChange={changed} />

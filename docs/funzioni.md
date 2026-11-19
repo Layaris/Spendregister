@@ -20,8 +20,8 @@ Prese prima di fare APK e IPA, per farle uscire nel modo migliore. Valgono finch
 
 - Il server (Worker + D1) resta l'archivio vero e continua a lavorare ad app chiusa: cattura dalle notifiche, categoria con l'AI, avvisi, ricorrenti registrate da sole. Niente cifratura end-to-end (vedi Decisioni sopra).
 - In più l'app tiene una **copia completa** dei dati dell'account sul telefono: si apre subito e funziona tutta senza rete (liste, ricerca, statistiche, modifiche). Scartato "prima sul telefono, cifrato": costava la riscrittura della parte dati e faceva perdere cattura immediata, AI e avvisi ad app chiusa.
-- Come: database nel browser/WebView in IndexedDB (stesso codice per web app e app native). Sincronizzazione a pezzi: `GET /api/sync?since=<ultima volta>` restituisce solo le righe cambiate (`updated_at`, cancellazioni con `deleted_at`), così le righe lette da D1 restano poche. Le modifiche fatte senza rete partono dalla coda che esiste già (`ledgy-outbox`, `client_id`); se la stessa riga cambia su due dispositivi vince l'ultima modifica.
-- Si fa prima nella web app (serve anche oggi), poi le app native la usano così com'è.
+- Come: database nel browser/WebView in IndexedDB (stesso codice per web app e app native). Sincronizzazione a pezzi: `GET /api/sync?since=<cursore>` restituisce solo le righe cambiate, prese da un registro scritto dai trigger del database (così nessuna modifica sfugge, anche le cancellazioni), e le righe lette da D1 restano poche. Le modifiche fatte senza rete partono dalla coda che esiste già (`ledgy-outbox`, `client_id`); se la stessa riga cambia su due dispositivi vince l'ultima modifica.
+- Fatto nella web app il 19 novembre 2026 (`src/localcopy.ts`, `shared/local.ts`, `worker/sync.ts`, migrazione 0017): le app native la useranno così com'è. Con la copia pronta la Home fa solo due richieste leggere (`/sync`, `/me`) invece di circa 3.000 righe lette; Statistiche, Movimenti e Budget nessuna.
 
 ### Android
 

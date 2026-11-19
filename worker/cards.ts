@@ -6,6 +6,8 @@ import { appLabel } from '../shared/apps';
 import { bad, body, notFound, nowIso, uid, type AppEnv } from './lib';
 import { getEurRate } from './fx';
 import { roundMilli, toMilli } from '../shared/money';
+import { fxFeeEstimate, type CardFx } from '../shared/cardfx';
+export { fxFeeEstimate, type CardFx };
 
 const clean = (v: string | null | undefined) => (v == null ? null : v.trim().slice(0, 60) || null);
 
@@ -22,9 +24,9 @@ export async function learnSource(db: D1Database, userId: string, key: string, c
     db.prepare(`INSERT INTO capture_sources (user_id, key, card, account_id, updated_at) VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT (user_id, key) DO UPDATE SET card = excluded.card, account_id = excluded.account_id, updated_at = excluded.updated_at`)
       .bind(userId, key, nextCard, nextAccount, nowIso()),
-    db.prepare(`UPDATE transactions SET card = ? WHERE user_id = ? AND ${same}`).bind(nextCard, userId, userId, key),
+    db.prepare(`UPDATE transactions SET card = ? WHERE user_id = ? AND ${same} RETURNING 1`).bind(nextCard, userId, userId, key),
   ]);
-  return { card: nextCard, applied: res[1].meta.changes ?? 0 };
+  return { card: nextCard, applied: res[1].results?.length ?? 0 };
 }
 
 export const cardsApi = new Hono<AppEnv>();
@@ -65,29 +67,24 @@ cardsApi.post('/rename', async (c) => {
   const db = c.env.DB;
   const u = uid(c);
   const res = await db.batch([
-    db.prepare('UPDATE transactions SET card = ? WHERE user_id = ? AND card = ?').bind(to, u, from),
+    db.prepare('UPDATE transactions SET card = ? WHERE user_id = ? AND card = ? RETURNING 1').bind(to, u, from),
     db.prepare('UPDATE capture_sources SET card = ?, updated_at = ? WHERE user_id = ? AND card = ?').bind(to, nowIso(), u, from),
     ...(to ? [db.prepare('UPDATE parsers SET name = ? WHERE user_id = ? AND name = ?').bind(to, u, from)] : []),
     to ? db.prepare('UPDATE OR IGNORE card_settings SET card = ? WHERE user_id = ? AND card = ?').bind(to, u, from) : db.prepare('DELETE FROM card_settings WHERE user_id = ? AND card = ?').bind(u, from),
   ]);
-  return c.json({ ok: true, changed: res[0].meta.changes ?? 0 });
+  return c.json({ ok: true, changed: res[0].results?.length ?? 0 });
 });
 
 // ---- Costo del cambio di ogni carta ----
 // La notifica dice quanto hai pagato in rupie, non quanto ti ha addebitato la carta. Basta scriverlo una volta su una
 // spesa: confrontando con il cambio ufficiale di quel giorno si ricava il ricarico della carta e si stima per le altre.
 
-export interface CardFx { card: string; currency: string | null; markup_bp: number | null; sample_tx_id: string | null; sample_charged: number | null; updated_at: string }
 
 export async function cardFxAll(db: D1Database, u: string): Promise<CardFx[]> {
   return (await db.prepare('SELECT card, currency, markup_bp, sample_tx_id, sample_charged, updated_at FROM card_settings WHERE user_id = ?').bind(u).all<CardFx>()).results;
 }
 
 /** Costo del cambio stimato (millesimi di euro) di un movimento pagato con una carta di cui si conosce il ricarico. */
-export function fxFeeEstimate(fx: CardFx | null | undefined, currency: string, amountEur: number): number | null {
-  if (!fx || fx.markup_bp == null || !fx.currency || fx.currency === currency) return null;
-  return Math.round((Math.abs(amountEur) * Math.max(0, fx.markup_bp)) / 10000);
-}
 
 /** Su una spesa: quanto ha addebitato la carta nella sua valuta → ricarico della carta. */
 cardsApi.post('/calibrate', async (c) => {

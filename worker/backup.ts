@@ -152,10 +152,10 @@ function ruleRefs(json: unknown): { cats: string[]; accs: string[] } {
 }
 
 async function insertAll(db: D1Database, table: string, cols: string[], rows: Row[], userId: string) {
-  const sql = `INSERT OR IGNORE INTO ${table} (user_id, ${cols.join(', ')}) VALUES (?, ${cols.map(() => '?').join(', ')})`;
+  const sql = `INSERT OR IGNORE INTO ${table} (user_id, ${cols.join(', ')}) VALUES (?, ${cols.map(() => '?').join(', ')}) RETURNING 1`;
   const stmts = rows.map((r) => db.prepare(sql).bind(userId, ...pick(r, cols)));
   let inserted = 0;
-  for (let i = 0; i < stmts.length; i += 50) for (const res of await db.batch(stmts.slice(i, i + 50))) inserted += res.meta.changes ?? 0;
+  for (let i = 0; i < stmts.length; i += 50) for (const res of await db.batch(stmts.slice(i, i + 50))) inserted += res.results?.length ?? 0;
   return inserted;
 }
 
@@ -302,11 +302,11 @@ backupApi.post('/import/chunk', async (c) => {
       const t = trip(r.trip_id);
       const x = txId(r.transaction_id);
       return db.prepare(
-        "INSERT OR IGNORE INTO trip_items (user_id, trip_id, transaction_id, mode) SELECT ?, ?, ?, ? WHERE ? IN ('in', 'out') AND EXISTS (SELECT 1 FROM trips WHERE id = ? AND user_id = ?) AND EXISTS (SELECT 1 FROM transactions WHERE id = ? AND user_id = ?)",
+        "INSERT OR IGNORE INTO trip_items (user_id, trip_id, transaction_id, mode) SELECT ?, ?, ?, ? WHERE ? IN ('in', 'out') AND EXISTS (SELECT 1 FROM trips WHERE id = ? AND user_id = ?) AND EXISTS (SELECT 1 FROM transactions WHERE id = ? AND user_id = ?) RETURNING 1",
       ).bind(u, t, x, r.mode, r.mode, t, u, x, u);
     });
     let inserted = 0;
-    for (let i = 0; i < stmts.length; i += 50) for (const res of await db.batch(stmts.slice(i, i + 50))) inserted += res.meta.changes ?? 0;
+    for (let i = 0; i < stmts.length; i += 50) for (const res of await db.batch(stmts.slice(i, i + 50))) inserted += res.results?.length ?? 0;
     return c.json({ inserted, skipped: rows.length - inserted });
   } else if (table === 'card_settings') {
     const txId = await translator(db, 'transactions', rows.map((r) => r.sample_tx_id), u);
@@ -333,11 +333,11 @@ backupApi.post('/import/chunk', async (c) => {
       const t = txId(r.transaction_id);
       const l = lab(r.label_id);
       return db.prepare(
-        'INSERT OR IGNORE INTO transaction_labels (transaction_id, label_id) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM transactions WHERE id = ? AND user_id = ?) AND EXISTS (SELECT 1 FROM labels WHERE id = ? AND user_id = ?)',
+        'INSERT OR IGNORE INTO transaction_labels (transaction_id, label_id) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM transactions WHERE id = ? AND user_id = ?) AND EXISTS (SELECT 1 FROM labels WHERE id = ? AND user_id = ?) RETURNING 1',
       ).bind(t, l, t, u, l, u);
     });
     let inserted = 0;
-    for (let i = 0; i < stmts.length; i += 50) for (const res of await db.batch(stmts.slice(i, i + 50))) inserted += res.meta.changes ?? 0;
+    for (let i = 0; i < stmts.length; i += 50) for (const res of await db.batch(stmts.slice(i, i + 50))) inserted += res.results?.length ?? 0;
     return c.json({ inserted, skipped: rows.length - inserted });
   }
 

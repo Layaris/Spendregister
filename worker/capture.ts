@@ -480,10 +480,10 @@ captureAdminApi.post('/parsers', async (c) => {
   // Le spese già arrivate da quella fonte e senza carta prendono il nome del lettore.
   const applied = await c.env.DB
     .prepare(`UPDATE transactions SET card = ? WHERE user_id = ? AND card IS NULL AND capture_id IN (
-                SELECT id FROM captures WHERE user_id = ? AND instr(lower(COALESCE(title, '') || ' ' || COALESCE(app, '')), lower(?)) > 0)`)
+                SELECT id FROM captures WHERE user_id = ? AND instr(lower(COALESCE(title, '') || ' ' || COALESCE(app, '')), lower(?)) > 0) RETURNING 1`)
     .bind(b.name.trim(), uid(c), uid(c), b.app.trim())
-    .run();
-  return c.json({ id, applied: applied.meta.changes ?? 0 }, 201);
+    .all();
+  return c.json({ id, applied: applied.results.length }, 201);
 });
 
 captureAdminApi.put('/parsers/:id', async (c) => {

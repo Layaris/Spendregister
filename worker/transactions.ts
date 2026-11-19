@@ -465,10 +465,10 @@ transactionsApi.post('/recategorize', async (c) => {
                 status = CASE WHEN status = 'review' AND duplicate_of IS NULL THEN 'confirmed' ELSE status END,
                 review_reason = CASE WHEN status = 'review' AND duplicate_of IS NULL THEN NULL ELSE review_reason END,
                 review_choices = CASE WHEN status = 'review' AND duplicate_of IS NULL THEN NULL ELSE review_choices END
-              WHERE user_id = ? AND merchant = ? COLLATE NOCASE AND deleted_at IS NULL AND (category_id IS NULL OR category_id <> ?)`)
+              WHERE user_id = ? AND merchant = ? COLLATE NOCASE AND deleted_at IS NULL AND (category_id IS NULL OR category_id <> ?) RETURNING 1`)
     .bind(b.category_id, nature, nowIso(), userId, b.merchant.trim(), b.category_id)
-    .run();
-  return c.json({ changed: r.meta.changes ?? 0 });
+    .all();
+  return c.json({ changed: r.results.length });
 });
 
 transactionsApi.delete('/:id', async (c) => {
@@ -593,8 +593,8 @@ transactionsApi.post('/:id/not-duplicate', async (c) => {
 /** Conferma in blocco i movimenti da rivedere che hanno già una categoria. */
 transactionsApi.post('/confirm-ready', async (c) => {
   const r = await c.env.DB
-    .prepare("UPDATE transactions SET status = 'confirmed', review_reason = NULL, updated_at = ? WHERE user_id = ? AND status = 'review' AND category_id IS NOT NULL AND duplicate_of IS NULL AND review_choices IS NULL AND deleted_at IS NULL")
+    .prepare("UPDATE transactions SET status = 'confirmed', review_reason = NULL, updated_at = ? WHERE user_id = ? AND status = 'review' AND category_id IS NOT NULL AND duplicate_of IS NULL AND review_choices IS NULL AND deleted_at IS NULL RETURNING 1")
     .bind(nowIso(), uid(c))
-    .run();
-  return c.json({ confirmed: r.meta.changes ?? 0 });
+    .all();
+  return c.json({ confirmed: r.results.length });
 });
